@@ -7,7 +7,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
-const { bookingConfirmationEmail, flightCancelledEmail, sendEmail } = require('../email-templates');
+const { sendBookingConfirmationEmails, sendBookingCancellationEmails } = require('../lib/booking-notifications');
 const {
   getPolicySettings,
   validateBookingTimes,
@@ -18,7 +18,7 @@ const {
 
 const router = express.Router();
 
-const MAX_BOOKING_DURATION_HOURS = 12; // reject bookings longer than 12 hours
+const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -524,6 +524,7 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
     );
     await client.query('COMMIT');
     res.status(201).json(ins.rows[0]);
+    sendBookingConfirmationEmails(ins.rows[0].id).catch((err) => console.error('[booking-email] duplicate:', err.message));
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Failed to duplicate booking' });
@@ -567,7 +568,10 @@ router.post('/recurring', authenticateToken, async (req, res) => {
         const fakeReq = { body, user: req.user };
         const result = await createBookingInternal(client, fakeReq);
         if (result.error) skipped.push({ week: w + 1, reason: result.error });
-        else created.push(result.booking);
+        else {
+          created.push(result.booking);
+          sendBookingConfirmationEmails(result.booking.id, client).catch((err) => console.error('[booking-email] recurring:', err.message));
+        }
       } catch (e) {
         skipped.push({ week: w + 1, reason: e.message });
       }
@@ -616,6 +620,7 @@ async function createBookingInternal(client, req) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
     [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
   );
+  sendBookingConfirmationEmails(result.rows[0].id, client).catch((err) => console.error('[booking-email] create:', err.message));
   return { booking: result.rows[0] };
 }
 
@@ -637,7 +642,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const end = new Date(end_time);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return res.status(400).json({ error: 'Invalid date format for start or end time' });
     if (end <= start) return res.status(400).json({ error: 'End time must be after start time' });
-    // Duration cap — reject bookings longer than 12 hours
+    // Duration cap — multi-day rentals up to 7 days
     const durationHrs = (end - start) / (1000 * 60 * 60);
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const policy = await getPolicySettings();
@@ -658,16 +663,32 @@ router.post('/', authenticateToken, async (req, res) => {
       /* solo endorsement not required */
     }
 
-    // Check aircraft downtime window
+    // Check aircraft downtime overlap across full booking span
     if (aircraft_id) {
-      const bookingDate = start.toISOString().slice(0, 10);
+      const bookingStartDate = start.toISOString().slice(0, 10);
+      const bookingEndDate = end.toISOString().slice(0, 10);
       const downtimeCheck = await client.query(
-        `SELECT id, reason FROM aircraft_downtime WHERE aircraft_id = $1 AND $2::date BETWEEN start_date AND end_date LIMIT 1`,
-        [aircraft_id, bookingDate]
+        `SELECT id, reason FROM aircraft_downtime
+         WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date LIMIT 1`,
+        [aircraft_id, bookingStartDate, bookingEndDate]
       );
       if (downtimeCheck.rows.length > 0) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance on this date', reason: downtimeCheck.rows[0].reason });
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeCheck.rows[0].reason });
       }
+    }
+
+    const preflight = await runPreflightChecks(client, {
+      aircraft_id: parseInt(aircraft_id, 10),
+      student_id: sid,
+      instructor_id: iid,
+      start_time,
+      end_time,
+      booking_type,
+      local_start,
+      local_end,
+    }, req.user.role);
+    if (!preflight.ok) {
+      return res.status(409).json({ error: preflight.errors[0], errors: preflight.errors, warnings: preflight.warnings });
     }
     const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
     if (aircraft.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
@@ -680,7 +701,7 @@ router.post('/', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
-    const selfService = ['student', 'renter'].includes(req.user.role);
+    const selfService = ['student', 'renter', 'instructor'].includes(req.user.role);
     if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true' && !selfService) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
@@ -731,19 +752,7 @@ router.post('/', authenticateToken, async (req, res) => {
       [result.rows[0].id]
     );
     res.status(201).json(booking.rows[0]);
-    const bk = booking.rows[0];
-    const emailParams = { studentName: bk.student_name || null, instructorName: bk.instructor_name || null, aircraftTailNumber: bk.tail_number || null, startTime: bk.start_time, endTime: bk.end_time };
-    const participantIds = [sid, iid].filter(Boolean);
-    if (participantIds.length > 0) {
-      pool.query('SELECT id, name, email FROM users WHERE id = ANY($1)', [participantIds])
-        .then(emailResult => {
-          for (const u of emailResult.rows) {
-            const { subject, html, text } = bookingConfirmationEmail({ ...emailParams, recipientName: u.name, isStudent: u.id === sid });
-            require('../email-templates').sendEmail(u.email, subject, html, text).catch(err => console.error('[booking-email] error:', err.message));
-          }
-        })
-        .catch(err => console.error('[booking-email] lookup error:', err.message));
-    }
+    sendBookingConfirmationEmails(result.rows[0].id).catch((err) => console.error('[booking-email] error:', err.message));
   } catch (err) {
     await client.query('ROLLBACK');
     const ts = new Date().toISOString();
@@ -786,15 +795,17 @@ router.put('/:id', authenticateToken, async (req, res) => {
     // Duration cap on updates
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
-    // Downtime check on updates with changed aircraft or dates
+    // Downtime check on updates — full span overlap
     if (acId) {
-      const updBookingDate = stTime.toISOString().slice(0, 10);
+      const updStartDate = stTime.toISOString().slice(0, 10);
+      const updEndDate = enTime.toISOString().slice(0, 10);
       const updDowntime = await client.query(
-        `SELECT id, reason FROM aircraft_downtime WHERE aircraft_id = $1 AND $2::date BETWEEN start_date AND end_date LIMIT 1`,
-        [acId, updBookingDate]
+        `SELECT id, reason FROM aircraft_downtime
+         WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date LIMIT 1`,
+        [acId, updStartDate, updEndDate]
       );
       if (updDowntime.rows.length > 0) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance on this date', reason: updDowntime.rows[0].reason });
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: updDowntime.rows[0].reason });
       }
     }
     if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
@@ -851,7 +862,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     res.json({ ok: true });
 
     // Send cancellation email to student + instructor (fire-and-forget)
-    sendFlightCancelledEmail(req.params.id, req.user.id, req.user.role, reason);
+    sendBookingCancellationEmails(req.params.id, req.user.id, req.user.role, reason).catch((err) => console.error('[bookings] cancellation email error:', err.message));
   } catch (err) {
     await client.query('ROLLBACK');
     const ts = new Date().toISOString();
@@ -861,70 +872,6 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     client.release();
   }
 });
-
-/**
- * Send flight cancelled notification emails to student and instructor.
- * Called as fire-and-forget after the booking is marked cancelled.
- */
-async function sendFlightCancelledEmail(bookingId, cancelledById, cancelledByRole, cancellationReason) {
-  try {
-    const result = await pool.query(`
-      SELECT b.*, s.name as student_name, s.email as student_email,
-             i.name as instructor_name, i.email as instructor_email,
-             a.tail_number, a.make_model
-      FROM bookings b
-      LEFT JOIN users s ON b.student_id = s.id
-      LEFT JOIN users i ON b.instructor_id = i.id
-      JOIN aircraft a ON b.aircraft_id = a.id
-      WHERE b.id = $1
-    `, [bookingId]);
-    if (result.rows.length === 0) return;
-    const b = result.rows[0];
-    if (!b.student_email) return;
-
-    const cancelledByName = await pool.query('SELECT name FROM users WHERE id = $1', [cancelledById])
-      .then(r => r.rows[0]?.name || 'Unknown')
-      .catch(() => 'Unknown');
-
-    // Send to student
-    const studentEmail = flightCancelledEmail({
-      recipientName: b.student_name || 'Student',
-      studentName: b.student_name,
-      instructorName: b.instructor_name,
-      tailNumber: b.tail_number,
-      makeModel: b.make_model,
-      flightDate: b.start_time,
-      startTime: b.start_time,
-      endTime: b.end_time,
-      cancelledBy: cancelledByName,
-      cancelledByRole: cancelledByRole,
-      cancellationReason: cancellationReason,
-    });
-    sendEmail(b.student_email, studentEmail.subject, studentEmail.html, studentEmail.text)
-      .catch(e => console.error('[bookings] cancellation student email error:', e.message));
-
-    // Send to instructor if assigned
-    if (b.instructor_id && b.instructor_email) {
-      const instructorEmail = flightCancelledEmail({
-        recipientName: b.instructor_name || 'Instructor',
-        studentName: b.student_name,
-        instructorName: b.instructor_name,
-        tailNumber: b.tail_number,
-        makeModel: b.make_model,
-        flightDate: b.start_time,
-        startTime: b.start_time,
-        endTime: b.end_time,
-        cancelledBy: cancelledByName,
-        cancelledByRole: cancelledByRole,
-        cancellationReason: cancellationReason,
-      });
-      sendEmail(b.instructor_email, instructorEmail.subject, instructorEmail.html, instructorEmail.text)
-        .catch(e => console.error('[bookings] cancellation instructor email error:', e.message));
-    }
-  } catch (err) {
-    console.error('[bookings] sendFlightCancelledEmail error:', err.message);
-  }
-}
 
 module.exports = router;
 module.exports.checkConflicts = checkConflicts;

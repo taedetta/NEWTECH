@@ -6,34 +6,14 @@
 
 const LOGO_URL = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
-const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-const EMAIL_ENDPOINT = 'https://polsia.com/api/proxy/email/send';
+const { sendMail } = require('./lib/mailer');
 
 /**
- * Send an email via the Polsia email proxy.
- * @param {string} to
- * @param {string} subject
- * @param {string} html
- * @param {string} text  - plain text fallback
+ * Send an email via SMTP (Brevo, Gmail, etc.).
  */
 async function sendEmail(to, subject, html, text) {
-  if (!POLSIA_API_KEY) {
-    console.error('[email] POLSIA_API_KEY not set — email not sent');
-    return;
-  }
   try {
-    const resp = await fetch(EMAIL_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${POLSIA_API_KEY}`,
-      },
-      body: JSON.stringify({ to, subject, body: text || subject, html }),
-    });
-    if (!resp.ok) {
-      const err = await resp.text();
-      console.error(`[email] Failed to send to ${to}: ${resp.status} ${err}`);
-    }
+    await sendMail({ to, subject, html, text });
   } catch (err) {
     console.error('[email] sendEmail error:', err.message);
   }
@@ -158,13 +138,16 @@ function welcomeEmail({ name, email, role }) {
 /**
  * Approval confirmation — sent when admin/owner approves a pending user.
  */
-function approvalConfirmationEmail({ name, role }) {
+function approvalConfirmationEmail({ name, role, approvedBy }) {
   const roleLabel = roleDisplayLabel(role);
+  const approverLine = approvedBy
+    ? `Your account was reviewed and approved by <strong>${escEmailHtml(approvedBy)}</strong> at New Tech Aviation.`
+    : 'Your account has been approved by <strong>New Tech Aviation</strong>.';
   const html = wrapEmailHtml(`
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#080E1A;">Your Account Has Been Approved! ✈️</h2>
     <p style="margin:0 0 16px;">Hi ${escEmailHtml(name)},</p>
-    <p style="margin:0 0 20px;">Great news — your New Tech Aviation account (<strong>${roleLabel}</strong>) has been approved and is now active.</p>
-    <p style="margin:0 0 24px;">You can now log in and start scheduling flights.</p>
+    <p style="margin:0 0 20px;">Great news — ${approverLine} Your <strong>${roleLabel}</strong> account is now active.</p>
+    <p style="margin:0 0 24px;">You can now log in, schedule flights, and manage your bookings.</p>
     <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
@@ -174,8 +157,8 @@ function approvalConfirmationEmail({ name, role }) {
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">If you have any questions, reply to this email and we'll get right back to you.</p>
   `);
-  const text = `Hi ${name},\n\nYour New Tech Aviation account has been approved! You can now log in and start scheduling flights.\n\nLogin at: ${APP_URL}/app\n\nQuestions? Just reply to this email.`;
-  return { subject: `Your Account Has Been Approved — New Tech Aviation`, html, text };
+  const text = `Hi ${name},\n\nYour New Tech Aviation account has been approved${approvedBy ? ` by ${approvedBy}` : ''}! Your ${roleLabel} account is now active.\n\nLogin at: ${APP_URL}/app\n\nQuestions? Just reply to this email.`;
+  return { subject: `Account Approved — New Tech Aviation`, html, text };
 }
 
 /**
@@ -307,8 +290,8 @@ function bookingConfirmationEmail({ recipientName, studentName, instructorName, 
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Need to cancel or reschedule? Log in to manage your bookings.</p>
   `);
-  const text = `Flight Booking Confirmed\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${aircraftTailNumber ? `Aircraft: ${aircraftTailNumber}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}\nView schedule: ${APP_URL}/app`;
-  return { subject: `Flight Confirmed — ${dateStr}`, html, text };
+  const text = `Flight Booking Confirmed — New Tech Aviation\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${aircraftTailNumber ? `Aircraft: ${aircraftTailNumber}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}\nView schedule: ${APP_URL}/app`;
+  return { subject: `Flight Confirmed — ${dateStr} | New Tech Aviation`, html, text };
 }
 
 /**
@@ -357,7 +340,7 @@ function preflightReminderEmailStudent({ recipientName, flightDate, flightTime, 
 
     <div style="background:#FFF7ED;border-left:4px solid #D97706;padding:12px 16px;border-radius:4px;margin:0 0 24px;">
       <p style="margin:0;color:#92400E;font-size:13px;">
-        <strong>Need to cancel or reschedule?</strong> Please do so at least 24 hours in advance so your instructor and the aircraft are available for others.
+        <strong>Need to cancel or reschedule?</strong> Log in anytime to manage your bookings.
       </p>
     </div>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to view your schedule: ${APP_URL}/app</p>
@@ -374,7 +357,7 @@ Your flight is scheduled for tomorrow:
 
 Manage your booking: ${manageUrl}
 
-Need to cancel? Please do so at least 24 hours in advance.
+Need to cancel? Log in anytime to manage your bookings.
 
 — New Tech Aviation`;
 
@@ -577,7 +560,7 @@ function flightCancelledEmail({ recipientName, studentName, instructorName, tail
 
   const text = `Flight Cancelled\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${tailNumber ? `Aircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}Cancelled By: ${cancelledBy} (${cancelledByLabel})${cancellationReason ? `\nReason: ${cancellationReason}` : ''}\n\nView schedule: ${APP_URL}/app`;
 
-  return { subject: `Flight Cancelled — ${dateStr}`, html, text };
+  return { subject: `Flight Cancelled — ${dateStr} | New Tech Aviation`, html, text };
 }
 
 /**

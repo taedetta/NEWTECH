@@ -4,9 +4,9 @@
 
 const nodeFetch = require('node-fetch');
 const FormData = require('form-data');
+const { sendEmail } = require('./email-templates');
 
 const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-const EMAIL_ENDPOINT = 'https://polsia.com/api/proxy/email/send';
 const R2_UPLOAD_ENDPOINT = 'https://polsia.com/api/proxy/r2/upload';
 const RECIPIENTS = ['blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
 
@@ -392,15 +392,8 @@ async function sendExportEmail(dateLabel, files) {
     files.map(f => `${f.folder}: ${f.count} records — ${f.url || 'Upload failed'}`).join('\n');
 
   for (const recipient of RECIPIENTS) {
-    try {
-      const resp = await fetch(EMAIL_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${POLSIA_API_KEY}` },
-        body: JSON.stringify({ to: recipient, subject, body: bodyText, html: bodyHtml }),
-      });
-      if (!resp.ok) console.error(`[export] Email failed to ${recipient}: ${resp.status} ${await resp.text()}`);
-      else console.log(`[export] Export email sent to ${recipient}`);
-    } catch (err) { console.error(`[export] Email error to ${recipient}:`, err.message); }
+    sendEmail(recipient, subject, bodyHtml, bodyText)
+      .catch((err) => console.error(`[export] Email error to ${recipient}:`, err.message));
   }
 }
 

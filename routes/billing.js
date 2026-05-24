@@ -89,7 +89,10 @@ router.get('/my-activity', authenticateToken, async (req, res) => {
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
       WHERE b.status = 'completed'
         AND COALESCE(b.billing_voided, FALSE) = FALSE
-        AND (b.instructor_id = $1 OR b.student_id = $1)
+        AND (
+          b.student_id = $1
+          OR (b.instructor_id = $1 AND b.student_id IS NULL)
+        )
       ORDER BY b.start_time DESC
     `;
     const result = await pool.query(sql, [uid]);

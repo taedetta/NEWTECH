@@ -1420,7 +1420,7 @@
           <div class="nav-section-label">Operations</div>
           <a onclick="navigate('dashboard')" data-page="dashboard"><span class="nav-icon">&#9633;</span> Dashboard</a>
           <a onclick="navigate('schedule')" data-page="schedule"><span class="nav-icon">&#128197;</span> Schedule</a>
-          <a onclick="navigate('history')" data-page="history" id="nav-history"><span class="nav-icon">&#128218;</span> Booking History</a>
+          <a onclick="openOpsHistory()" data-page="history" id="nav-history"><span class="nav-icon">&#128218;</span> Booking History</a>
           <a onclick="navigate('fleet')" data-page="fleet"><span class="nav-icon">&#9992;</span> Fleet</a>
           <a onclick="navigate('tracking')" data-page="tracking" id="nav-tracking"><span class="nav-icon">&#127979;</span> Track Flights</a>
           <a onclick="navigate('maintenance')" data-page="maintenance"><span class="nav-icon">&#128295;</span> Maintenance</a>
@@ -1433,6 +1433,7 @@
           <a onclick="navigate('discrepancies')" data-page="discrepancies" id="nav-discrepancies" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#9888;&#65039;</span> Discrepancies <span id="discrepancies-badge" class="hidden" style="display:inline-block;background:#F59E0B;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('people')" data-page="people" id="nav-people"><span class="nav-icon">&#128100;</span> People</a>
           <a onclick="openMgmtBilling()" data-page="billing-mgmt" id="nav-billing-mgmt" class="hidden"><span class="nav-icon">&#128176;</span> Billing</a>
+          <a onclick="openMgmtHistory()" data-page="history-mgmt" id="nav-history-mgmt" class="hidden"><span class="nav-icon">&#128218;</span> Booking History</a>
           <a onclick="navigate('progress')" data-page="progress" id="nav-progress"><span class="nav-icon">&#128200;</span> Progress</a>
           <a onclick="navigate('at-risk')" data-page="at-risk" id="nav-at-risk" class="hidden"><span class="nav-icon">&#9888;</span> At-Risk</a>
           <a onclick="navigate('leads')" data-page="leads" id="nav-leads" class="hidden"><span class="nav-icon">&#128231;</span> Leads</a>
@@ -3322,8 +3323,18 @@
           <select id="booking-aircraft" onchange="refreshBookingPreflight()"></select>
         </div>
         <div class="form-group">
-          <label>Date</label>
-          <input type="date" id="booking-date" onchange="rebuildBookingTimePickers();refreshBookingAvailability();refreshBookingAircraft()">
+          <label>Start Date</label>
+          <input type="date" id="booking-date" onchange="onBookingStartDateChange()">
+        </div>
+        <div class="form-group" style="margin-bottom:0.5rem">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-size:0.88rem;color:var(--gray-300)">
+            <input type="checkbox" id="booking-multiday" onchange="toggleBookingMultiday()" style="width:auto">
+            Multi-day / overnight (keep aircraft past midnight)
+          </label>
+        </div>
+        <div class="form-group hidden" id="booking-end-date-group">
+          <label>End Date</label>
+          <input type="date" id="booking-end-date" onchange="rebuildBookingTimePickers()">
         </div>
         <div id="booking-avail-notice" class="avail-notice hidden"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
@@ -4232,6 +4243,7 @@ let pendingPermChanges = {}; // { [userId]: { can_manage_aircraft: bool, ... } }
 let completableBookings = []; // bookings awaiting hour entry
 let bookingEditId = null;
 let billingNavSource = 'ops';
+let historyNavSource = 'ops';
 
 // ─── API HELPER ───
 async function api(path, opts = {}) {
@@ -4746,6 +4758,10 @@ async function enterApp() {
   const navBillingMgmt = document.getElementById('nav-billing-mgmt');
   if (navBillingMgmt) {
     navBillingMgmt.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
+  }
+  const navHistoryMgmt = document.getElementById('nav-history-mgmt');
+  if (navHistoryMgmt) {
+    navHistoryMgmt.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
   }
 
   // Daily roster: staff only (not students/renters)
@@ -7502,6 +7518,9 @@ async function openBookingModal(editBookingId) {
   // Preserve the date pre-filled by clicking a calendar day, so reset() doesn't wipe it
   const savedDate = document.getElementById('booking-date').value;
   document.getElementById('booking-form').reset();
+  document.getElementById('booking-multiday')?.removeAttribute('checked');
+  const endDateGrp = document.getElementById('booking-end-date-group');
+  if (endDateGrp) endDateGrp.classList.add('hidden');
   document.getElementById('booking-submit-btn').textContent = bookingEditId ? 'Save Changes' : 'Book Flight';
   currentBookingAvailSlots = null;
 
@@ -7570,6 +7589,11 @@ async function openBookingModal(editBookingId) {
   const finalDate = (savedDate && savedDate >= todayISO) ? savedDate : todayISO;
   dateInput.value = finalDate;
   selectedBookingDate = finalDate;
+  const endDateEl = document.getElementById('booking-end-date');
+  if (endDateEl) {
+    endDateEl.min = finalDate;
+    endDateEl.value = finalDate;
+  }
 
   const startSel = document.getElementById('booking-start');
   const endSel = document.getElementById('booking-end');
@@ -7597,9 +7621,18 @@ async function openBookingModal(editBookingId) {
       const localDate = bd.toLocaleDateString('en-CA');
       document.getElementById('booking-date').value = localDate;
       selectedBookingDate = localDate;
+      const endD = new Date(b.end_time);
+      const endLocalDate = endD.toLocaleDateString('en-CA');
+      const multidayEl = document.getElementById('booking-multiday');
+      const endDateEl = document.getElementById('booking-end-date');
+      if (multidayEl && endDateEl && endLocalDate > localDate) {
+        multidayEl.checked = true;
+        document.getElementById('booking-end-date-group')?.classList.remove('hidden');
+        endDateEl.value = endLocalDate;
+        endDateEl.min = localDate;
+      }
       rebuildBookingTimePickers();
       const startHM = `${String(bd.getHours()).padStart(2,'0')}:${String(bd.getMinutes()).padStart(2,'0')}`;
-      const endD = new Date(b.end_time);
       const endHM = `${String(endD.getHours()).padStart(2,'0')}:${String(endD.getMinutes()).padStart(2,'0')}`;
       if (document.getElementById('booking-start').querySelector(`option[value="${startHM}"]`)) {
         document.getElementById('booking-start').value = startHM;
@@ -7619,6 +7652,25 @@ async function openBookingModal(editBookingId) {
 async function openEditBookingModal(bookingId) {
   closeDayModal();
   await openBookingModal(bookingId);
+}
+
+function onBookingStartDateChange() {
+  const dateVal = document.getElementById('booking-date').value;
+  const endDateEl = document.getElementById('booking-end-date');
+  if (endDateEl) {
+    endDateEl.min = dateVal || '';
+    if (dateVal && (!endDateEl.value || endDateEl.value < dateVal)) endDateEl.value = dateVal;
+  }
+  rebuildBookingTimePickers();
+  refreshBookingAvailability();
+  refreshBookingAircraft();
+}
+
+function toggleBookingMultiday() {
+  const multiday = document.getElementById('booking-multiday')?.checked;
+  const grp = document.getElementById('booking-end-date-group');
+  if (grp) grp.classList.toggle('hidden', !multiday);
+  onBookingStartDateChange();
 }
 
 // Build time <option> HTML for start or end pickers.
@@ -7642,7 +7694,7 @@ function buildTimeOptions(minTime, forDate) {
   }
 
   let opts = '';
-  for (let h = 6; h <= 23; h++) {
+  for (let h = 0; h <= 23; h++) {
     for (let m = 0; m < 60; m += 30) {
       // Skip past times when booking today
       if (isToday && (h < nowH || (h === nowH && m <= nowM))) continue;
@@ -7657,10 +7709,9 @@ function buildTimeOptions(minTime, forDate) {
   if (minTime && minH < 24) {
     opts += `<option value="24:00">12:00 AM</option>`;
   }
-  // Cross-midnight: when start time is >= 21:00 (9pm), generate end times past midnight (00:00-05:59)
-  // These flights span into the next calendar day (e.g., 11:30pm start → 3:00am end next day)
-  if (minTime && minH >= 21) {
-    for (let h = 0; h <= 5; h++) {
+  // Cross-midnight / overnight end times (00:00–05:59 next day)
+  if (minTime && minH >= 18) {
+    for (let h = 0; h <= 23; h++) {
       for (let m = 0; m < 60; m += 30) {
         const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         opts += `<option value="${time}">${formatTimeStr(h, m)} (+1 day)</option>`;
@@ -7694,9 +7745,16 @@ function rebuildBookingTimePickers() {
     startSel.value = prevStart && startSel.querySelector(`option[value="${prevStart}"]`) ? prevStart : '09:00';
   }
 
-  // Rebuild end time options (must be after start)
+  // Rebuild end time options
   const chosenStart = startSel.value;
-  const endOpts = buildTimeOptions(chosenStart, dateVal);
+  const multiday = document.getElementById('booking-multiday')?.checked;
+  const endDateVal = document.getElementById('booking-end-date')?.value || dateVal;
+  let endOpts;
+  if (multiday && endDateVal > dateVal) {
+    endOpts = buildTimeOptions(null, endDateVal);
+  } else {
+    endOpts = buildTimeOptions(chosenStart, dateVal);
+  }
   if (endOpts === '') {
     endSel.innerHTML = '<option value="">— no valid end time —</option>';
     endSel.disabled = true;
@@ -7857,8 +7915,8 @@ async function refreshBookingAvailability() {
     }
 
     if (!data.available) {
-      notice.innerHTML = `<strong>🚫 Instructor unavailable</strong><br><span style="font-size:0.82rem;">${data.reason || 'Not available on this date'}</span>`;
-      notice.className = 'avail-notice warn';
+      notice.innerHTML = `<strong>ℹ Instructor note</strong><br><span style="font-size:0.82rem;">${data.reason || 'Marked unavailable on this date'}</span><br><span style="font-size:0.78rem;color:var(--gray-400);">You can still book any time — subject to aircraft availability.</span>`;
+      notice.className = 'avail-notice';
       notice.classList.remove('hidden');
       return;
     }
@@ -7869,38 +7927,10 @@ async function refreshBookingAvailability() {
         const [eh, em] = w.end.split(':').map(Number);
         return `${formatTimeStr(sh, sm)} – ${formatTimeStr(eh, em)}`;
       }).join(', ');
-      notice.innerHTML = `<strong>✅ Available ${data.day || ''}</strong> &nbsp;${windowLabels}`;
+      notice.innerHTML = `<strong>ℹ Instructor typical hours ${data.day || ''}</strong> &nbsp;${windowLabels}<br><span style="font-size:0.78rem;color:var(--gray-400);">You can still book any time — subject to aircraft availability.</span>`;
       notice.className = 'avail-notice';
       notice.classList.remove('hidden');
-
-      // Build set of valid time slots from availability windows
-      const validSlots = new Set();
-      for (const w of data.windows) {
-        const [sh, sm] = w.start.split(':').map(Number);
-        const [eh, em] = w.end.split(':').map(Number);
-        let h = sh, m = sm;
-        while (h < eh || (h === eh && m <= em)) {
-          validSlots.add(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
-          m += 30;
-          if (m >= 60) { m = 0; h++; }
-        }
-      }
-      currentBookingAvailSlots = validSlots;
-
-      // Highlight time options that are outside availability
-      const startSel = document.getElementById('booking-start');
-      const endSel = document.getElementById('booking-end');
-      for (const sel of [startSel, endSel]) {
-        for (const opt of sel.options) {
-          if (!validSlots.has(opt.value)) {
-            opt.style.color = 'var(--gray-600)';
-          } else {
-            opt.style.color = '';
-          }
-        }
-      }
-
-      // Show blocked ranges if any
+      // Do not restrict time pickers — last-minute and 24/7 rentals allowed
       if (data.blocked && data.blocked.length > 0) {
         const blockedLabels = data.blocked.map(b => {
           const [sh, sm] = b.start.split(':').map(Number);
@@ -8137,17 +8167,38 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
   }
 
   const start_time = new Date(`${date}T${startTime}:00`).toISOString();
-  // Handle cross-midnight end times — flights that end the next day (e.g., 23:30 → 01:00)
-  // "24:00" means exactly midnight next day; times less than start time also cross midnight
+  const multiday = document.getElementById('booking-multiday')?.checked;
+  const endDate = multiday ? (document.getElementById('booking-end-date')?.value || date) : date;
+  if (multiday && endDate < date) {
+    errEl.textContent = 'End date cannot be before start date';
+    errEl.classList.remove('hidden');
+    return;
+  }
   let end_time;
-  const endIsBeforeStart = endTime !== '24:00' && endTime < startTime;
-  if (endTime === '24:00' || endIsBeforeStart) {
-    const nextDay = new Date(`${date}T00:00:00`);
-    nextDay.setDate(nextDay.getDate() + 1);
-    end_time = nextDay.toISOString().slice(0, 10) + `T${endTime}:00`;
-    end_time = new Date(end_time).toISOString();
+  if (multiday && endDate > date) {
+    if (endTime === '24:00') {
+      const d = new Date(`${endDate}T00:00:00`);
+      d.setDate(d.getDate() + 1);
+      end_time = d.toISOString();
+    } else {
+      end_time = new Date(`${endDate}T${endTime}:00`).toISOString();
+    }
   } else {
-    end_time = new Date(`${date}T${endTime}:00`).toISOString();
+    const endIsBeforeStart = endTime !== '24:00' && endTime < startTime;
+    if (endTime === '24:00' || endIsBeforeStart) {
+      const nextDay = new Date(`${date}T00:00:00`);
+      nextDay.setDate(nextDay.getDate() + 1);
+      end_time = nextDay.toISOString().slice(0, 10) + `T${endTime === '24:00' ? '00:00' : endTime}:00`;
+      end_time = new Date(end_time).toISOString();
+    } else {
+      end_time = new Date(`${date}T${endTime}:00`).toISOString();
+    }
+  }
+  if (new Date(end_time) <= new Date(start_time)) {
+    errEl.textContent = 'End must be after start';
+    errEl.classList.remove('hidden');
+    showToast('End must be after start', 'error');
+    return;
   }
 
   const payload = {
@@ -11418,6 +11469,16 @@ function openMgmtBilling() {
   navigate('billing');
 }
 
+function openOpsHistory() {
+  historyNavSource = 'ops';
+  navigate('history');
+}
+
+function openMgmtHistory() {
+  historyNavSource = 'mgmt';
+  navigate('history');
+}
+
 function switchBillingView(mode) {
   billingViewMode = mode;
   document.querySelectorAll('.billing-view-tab').forEach(function(btn) {
@@ -11438,8 +11499,8 @@ async function loadBillingMyActivity() {
   emptyEl.classList.add('hidden');
   detailEl.classList.remove('hidden');
   document.getElementById('billing-back-btn').classList.add('hidden');
-  document.getElementById('billing-title').textContent = 'My Billing Activity';
-  document.getElementById('billing-student-name').textContent = currentUser.name + ' — flights as instructor or student';
+  document.getElementById('billing-title').textContent = 'My Billing — Solo / Personal Flights';
+  document.getElementById('billing-student-name').textContent = currentUser.name + ' — instructor solo rentals only (dual student flights billed to the student)';
   try {
     var flights = await api('/api/billing/my-activity');
     currentBillingFlights = flights;
@@ -12151,11 +12212,16 @@ async function loadHistoryLegacyPage() {
   }
   // Hide student/instructor filters for students and renters (API scopes to self)
   const isSelfService = currentUser && ['student', 'renter'].includes(currentUser.role);
+  const isMgmtAll = historyNavSource === 'mgmt' && currentUser && ['owner', 'admin'].includes(currentUser.role);
+  const historyTitle = document.querySelector('#page-history h1');
+  if (historyTitle) {
+    historyTitle.textContent = isMgmtAll ? 'Booking History — All Flights' : 'My Booking History';
+  }
   const stuWrap = document.getElementById('history-student-filter-wrap');
   const instWrap = document.getElementById('history-instructor-filter-wrap');
-  if (stuWrap) stuWrap.classList.toggle('hidden', isSelfService);
+  if (stuWrap) stuWrap.classList.toggle('hidden', isSelfService || (!isMgmtAll && currentUser?.role === 'instructor'));
   const isInstructor = currentUser && currentUser.role === 'instructor';
-  if (instWrap) instWrap.classList.toggle('hidden', isInstructor || isSelfService);
+  if (instWrap) instWrap.classList.toggle('hidden', isInstructor || isSelfService || (!isMgmtAll && ['owner','admin','instructor'].includes(currentUser?.role)));
   if (!isInstructor && instSel.options.length <= 1 && allUsers && allUsers.length > 0) {
     const instructors = allUsers.filter(u => u.role === 'instructor' || u.role === 'admin' || u.role === 'owner');
     instSel.innerHTML = '<option value="">All Instructors</option>' +
@@ -12169,6 +12235,8 @@ async function loadHistoryLegacyPage() {
   // Build query
   const params = new URLSearchParams();
   params.set('period', _historyPeriod);
+  if (isMgmtAll) params.set('scope', 'all');
+  else params.set('scope', 'mine');
   if (_historyPeriod === 'day') {
     const specificDate = document.getElementById('history-date-picker').value;
     if (specificDate) params.set('specific_date', specificDate);

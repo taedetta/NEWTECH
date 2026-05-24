@@ -18,10 +18,10 @@ const { PassThrough } = require('stream');
 const nodeFetch = require('node-fetch');
 const FormData = require('form-data');
 const { startExportScheduler } = require('./export-service');
+const { sendEmail } = require('./email-templates');
 
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-const EMAIL_ENDPOINT = 'https://polsia.com/api/proxy/email/send';
 const R2_UPLOAD_ENDPOINT = 'https://polsia.com/api/proxy/r2/upload';
 
 const RECIPIENTS = ['operations@3vaflight.com', 'blankthe97@gmail.com'];
@@ -991,11 +991,6 @@ async function uploadPdfToR2(pdfBuffer, filename) {
 // ── Email ─────────────────────────────────────────────────────────────────────
 
 async function sendBackupEmail(frequency, label, downloadLinks, recordCounts) {
-  if (!POLSIA_API_KEY) {
-    console.error('[backup] POLSIA_API_KEY not set — cannot send backup email');
-    return;
-  }
-
   const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
   const subject = `New Tech Aviation — ${freqLabel} Data Backup — ${label}`;
   const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
@@ -1006,21 +1001,7 @@ async function sendBackupEmail(frequency, label, downloadLinks, recordCounts) {
   const errors = [];
   for (const recipient of RECIPIENTS) {
     try {
-      const resp = await fetch(EMAIL_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${POLSIA_API_KEY}`,
-        },
-        body: JSON.stringify({ to: recipient, subject, body: bodyText, html: bodyHtml }),
-      });
-      if (!resp.ok) {
-        const err = await resp.text();
-        console.error(`[backup] Failed to send to ${recipient}: ${resp.status} ${err}`);
-        errors.push({ recipient, error: err });
-      } else {
-        console.log(`[backup] Backup email sent to ${recipient}`);
-      }
+      await sendEmail(recipient, subject, bodyHtml, bodyText);
     } catch (err) {
       console.error(`[backup] Error sending to ${recipient}:`, err.message);
       errors.push({ recipient, error: err.message });

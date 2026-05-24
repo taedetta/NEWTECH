@@ -4,6 +4,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const { sendEmail } = require('../email-templates');
 
 const router = express.Router();
 
@@ -547,9 +548,6 @@ router.get('/:id/pdf', authenticateToken, async (req, res) => {
 
 async function sendEndorsementExpiryAlerts() {
   try {
-    const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-    if (!POLSIA_API_KEY) return;
-
     const thresholds = [14, 7, 1];
     for (const days of thresholds) {
       const targetDate = new Date();
@@ -580,25 +578,13 @@ This endorsement expires in ${days} day${days > 1 ? 's' : ''}.
 Log in to New Tech Aviation to renew or view the endorsement details.
         `.trim();
 
-        try {
-          await fetch('https://polsia.com/api/proxy/email/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${POLSIA_API_KEY}` },
-            body: JSON.stringify({ to: e.student_email, subject, body }),
-          });
-        } catch { /* silent */ }
-
-        try {
-          await fetch('https://polsia.com/api/proxy/email/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${POLSIA_API_KEY}` },
-            body: JSON.stringify({
-              to: e.instructor_email,
-              subject: `[Instructor Alert] ${subject}`,
-              body: `Instructor alert — your student's endorsement is expiring.\n\n${body}`,
-            }),
-          });
-        } catch { /* silent */ }
+        sendEmail(e.student_email, subject, null, body).catch(() => {});
+        sendEmail(
+          e.instructor_email,
+          `[Instructor Alert] ${subject}`,
+          null,
+          `Instructor alert — your student's endorsement is expiring.\n\n${body}`
+        ).catch(() => {});
       }
     }
   } catch (err) {

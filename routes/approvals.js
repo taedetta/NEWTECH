@@ -62,7 +62,11 @@ router.post('/:id/approve', ...canApprove, async (req, res) => {
     console.log(`[approvals] Approved user ${id} by ${req.user.email}`);
 
     // Send approval confirmation email to the user
-    const { subject, html, text } = approvalConfirmationEmail({ name: approvedUser.name, role: approvedUser.role });
+    const { subject, html, text } = approvalConfirmationEmail({
+      name: approvedUser.name,
+      role: approvedUser.role,
+      approvedBy: req.user.name,
+    });
     sendEmail(approvedUser.email, subject, html, text).catch(err => console.error('[approval-email] send error:', err.message));
 
     res.json({ ok: true, user: approvedUser });

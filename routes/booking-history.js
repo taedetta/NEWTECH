@@ -11,8 +11,9 @@ const router = express.Router();
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { period, specific_date, sort, aircraft_id, student_id, instructor_id, status } = req.query;
+    const { period, specific_date, sort, aircraft_id, student_id, instructor_id, status, scope } = req.query;
     const { role, id: userId } = req.user;
+    const historyScope = scope || 'mine';
 
     // Date range from period preset
     let startDate = null, endDate = null;
@@ -84,7 +85,11 @@ router.get('/', authenticateToken, async (req, res) => {
     if (student_id) { fq += ` AND b.student_id = $${fi++}`; fp.push(parseInt(student_id)); }
     if (instructor_id) { fq += ` AND b.instructor_id = $${fi++}`; fp.push(parseInt(instructor_id)); }
     if (['student', 'renter'].includes(role)) { fq += ` AND b.student_id = $${fi++}`; fp.push(userId); }
-    if (role === 'instructor') { fq += ` AND b.instructor_id = $${fi++}`; fp.push(userId); }
+    else if (role === 'instructor') { fq += ` AND b.instructor_id = $${fi++}`; fp.push(userId); }
+    else if (['owner', 'admin'].includes(role) && historyScope === 'mine') {
+      fq += ` AND (b.instructor_id = $${fi++} OR b.student_id = $${fi++})`;
+      fp.push(userId, userId);
+    }
 
     // --- Ground sessions ---
     let gq = `
@@ -113,7 +118,11 @@ router.get('/', authenticateToken, async (req, res) => {
     if (student_id) { gq += ` AND gs.student_id = $${gi++}`; gp.push(parseInt(student_id)); }
     if (instructor_id) { gq += ` AND gs.instructor_id = $${gi++}`; gp.push(parseInt(instructor_id)); }
     if (['student', 'renter'].includes(role)) { gq += ` AND gs.student_id = $${gi++}`; gp.push(userId); }
-    if (role === 'instructor') { gq += ` AND gs.instructor_id = $${gi++}`; gp.push(userId); }
+    else if (role === 'instructor') { gq += ` AND gs.instructor_id = $${gi++}`; gp.push(userId); }
+    else if (['owner', 'admin'].includes(role) && historyScope === 'mine') {
+      gq += ` AND (gs.instructor_id = $${gi++} OR gs.student_id = $${gi++})`;
+      gp.push(userId, userId);
+    }
 
     const [flightRes, groundRes] = await Promise.all([
       pool.query(fq, fp),

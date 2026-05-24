@@ -82,10 +82,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS medical_certificate_class VARCHAR(10)
 -- ── Default booking policy settings ──
 INSERT INTO school_settings (key, value, updated_at) VALUES
   ('booking_min_booking_duration_minutes', '30', NOW()),
-  ('booking_min_lead_time_hours', '2', NOW()),
-  ('booking_min_cancel_notice_hours', '2', NOW()),
-  ('booking_business_hours_start', '6', NOW()),
-  ('booking_business_hours_end', '21', NOW()),
+  ('booking_min_lead_time_hours', '0', NOW()),
+  ('booking_min_cancel_notice_hours', '0', NOW()),
+  ('booking_business_hours_start', '0', NOW()),
+  ('booking_business_hours_end', '24', NOW()),
   ('booking_max_advance_booking_days', '90', NOW())
 ON CONFLICT (key) DO NOTHING;
 
@@ -151,3 +151,13 @@ ALTER TABLE ground_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFA
 UPDATE flight_hobbs_readings
 SET hobbs_delta = hobbs_end - hobbs_start
 WHERE hobbs_delta IS NULL AND hobbs_start IS NOT NULL AND hobbs_end IS NOT NULL;
+
+-- ── No advance booking or cancellation notice (last-minute OK) ──
+INSERT INTO school_settings (key, value, updated_at) VALUES
+  ('booking_min_lead_time_hours', '0', NOW()),
+  ('booking_min_cancel_notice_hours', '0', NOW()),
+  ('booking_business_hours_start', '0', NOW()),
+  ('booking_business_hours_end', '24', NOW()),
+  ('min_lead_time_hours', '0', NOW()),
+  ('min_cancel_notice_hours', '0', NOW())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
