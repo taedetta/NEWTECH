@@ -6,6 +6,11 @@
 
 const LOGO_URL = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
+const ADMIN_NOTIFICATION_EMAILS = [
+  'blankthe97@gmail.com',
+  'art@3vaflight.com',
+  'evaughntaemw@gmail.com',
+];
 const { sendMail } = require('./lib/mailer');
 
 /**
@@ -13,9 +18,10 @@ const { sendMail } = require('./lib/mailer');
  */
 async function sendEmail(to, subject, html, text) {
   try {
-    await sendMail({ to, subject, html, text });
+    return await sendMail({ to, subject, html, text });
   } catch (err) {
     console.error('[email] sendEmail error:', err.message);
+    return false;
   }
 }
 
@@ -68,6 +74,32 @@ function wrapEmailHtml(bodyContent) {
   </table>
 </body>
 </html>`;
+}
+
+/**
+ * Pending approval — sent to the new user immediately after signup.
+ */
+function pendingApprovalEmail({ name, role }) {
+  const roleLabel = roleDisplayLabel(role);
+  const html = wrapEmailHtml(`
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#080E1A;">Account Created — Pending Approval ✈️</h2>
+    <p style="margin:0 0 16px;">Hi ${escEmailHtml(name)},</p>
+    <p style="margin:0 0 20px;">Thank you for signing up with New Tech Aviation! Your <strong>${roleLabel}</strong> account has been created and is now <strong>pending approval</strong> by our team.</p>
+    <p style="margin:0 0 20px;">You'll receive another email once your account is reviewed and approved. After that, you can sign in and start scheduling flights.</p>
+    <table cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:0 0 24px;">
+      <tr>
+        <td style="padding:6px 0;font-size:14px;color:#64748b;width:120px;">Status</td>
+        <td style="padding:6px 0;font-size:14px;font-weight:600;color:#d97706;">Pending Approval</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;font-size:14px;color:#64748b;">Role</td>
+        <td style="padding:6px 0;font-size:14px;font-weight:600;color:#1a202c;">${escEmailHtml(roleLabel)}</td>
+      </tr>
+    </table>
+    <p style="margin:0;font-size:13px;color:#94a3b8;">Questions? Reply to this email and we'll get back to you.</p>
+  `);
+  const text = `Hi ${name},\n\nThank you for signing up with New Tech Aviation! Your ${roleLabel} account is pending approval.\n\nYou'll receive another email once your account is approved and you can sign in at ${APP_URL}/app\n\nQuestions? Reply to this email.`;
+  return { subject: 'Account Pending Approval — New Tech Aviation', html, text };
 }
 
 /**
@@ -629,12 +661,14 @@ function escEmailHtml(str) {
 
 module.exports = {
   sendEmail,
+  ADMIN_NOTIFICATION_EMAILS,
   welcomeEmail,
   passwordResetEmail,
   inviteEmail,
   bookingConfirmationEmail,
   groundingSquawkEmail,
   adminApprovalNotificationEmail,
+  pendingApprovalEmail,
   approvalConfirmationEmail,
   rejectionEmail,
   preflightReminderEmailStudent,

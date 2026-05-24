@@ -7,11 +7,25 @@ const crypto = require('crypto');
 const pool = require('../db/index');
 const { authenticateToken, getUserPermissions } = require('../middleware/auth');
 const { checkPasswordResetRateLimit } = require('../middleware/rate-limiter');
-const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail } = require('../email-templates');
+const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingApprovalEmail, ADMIN_NOTIFICATION_EMAILS } = require('../email-templates');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
 const router = express.Router();
+
+/** Fire-and-forget signup emails: pending notice to user + admin alert */
+function notifySignupPending({ name, email, role }) {
+  const signupDate = new Date().toISOString();
+  const pending = pendingApprovalEmail({ name, role });
+  sendEmail(email, pending.subject, pending.html, pending.text)
+    .catch(err => console.error('[signup-pending-email] error:', err.message));
+
+  const admin = adminApprovalNotificationEmail({ userName: name, userEmail: email, userRole: role, signupDate });
+  ADMIN_NOTIFICATION_EMAILS.forEach(addr => {
+    sendEmail(addr, admin.subject, admin.html, admin.text)
+      .catch(err => console.error('[admin-approval-notify] error:', err.message));
+  });
+}
 
 // Prevent CDN/proxy caching of all auth responses
 router.use((req, res, next) => {
@@ -65,17 +79,8 @@ router.post('/register', async (req, res) => {
         pending: true,
         reactivated: true
       });
-      // Reactivate as pending — notify admins, no email to user yet
-      const adminEmails = ['blankthe97@gmail.com', 'art@3vaflight.com', 'evaughntaemw@gmail.com'];
-      const { subject, html, text } = adminApprovalNotificationEmail({
-        userName: name,
-        userEmail: email,
-        userRole,
-        signupDate: new Date().toISOString(),
-      });
-      adminEmails.forEach(addr => {
-        sendEmail(addr, subject, html, text).catch(err => console.error('[admin-approval-notify] error:', err.message));
-      });
+      // Reactivate as pending — notify user + admins
+      notifySignupPending({ name, email, role: userRole });
       return;
     }
     const passwordHash = await bcrypt.hash(password, 12);
@@ -89,17 +94,8 @@ router.post('/register', async (req, res) => {
     // New users land on pending-approval screen — no token issued, no app access
     res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, approval_status: 'pending' }, pending: true });
 
-    // Notify admins of new pending user — no email sent to user yet
-    const adminEmails = ['blankthe97@gmail.com', 'art@3vaflight.com', 'evaughntaemw@gmail.com'];
-    const { subject, html, text } = adminApprovalNotificationEmail({
-      userName: user.name,
-      userEmail: user.email,
-      userRole: user.role,
-      signupDate: new Date().toISOString(),
-    });
-    adminEmails.forEach(addr => {
-      sendEmail(addr, subject, html, text).catch(err => console.error('[admin-approval-notify] error:', err.message));
-    });
+    // Notify user (pending) and admins of new signup
+    notifySignupPending({ name: user.name, email: user.email, role: user.role });
   } catch (err) {
     console.error('Register error:', err);
     res.status(500).json({ error: 'Registration failed' });

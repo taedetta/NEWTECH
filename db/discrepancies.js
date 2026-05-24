@@ -98,6 +98,12 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
           // Fire-and-forget email after commit
           discrepancy._sendEmail = true;
         }
+      } else {
+        // Readings now agree — clear any stale pending discrepancy for this booking
+        await client.query(
+          `DELETE FROM flight_discrepancies WHERE booking_id = $1 AND status = 'pending'`,
+          [bookingId]
+        );
       }
     }
 
@@ -127,9 +133,30 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
 }
 
 /**
+ * Remove pending discrepancies where student and instructor Hobbs readings now agree.
+ */
+async function purgeStaleDiscrepancies() {
+  await pool.query(`
+    DELETE FROM flight_discrepancies d
+    WHERE d.status = 'pending'
+      AND EXISTS (
+        SELECT 1
+        FROM flight_hobbs_readings s
+        JOIN flight_hobbs_readings i ON i.booking_id = s.booking_id
+        WHERE s.booking_id = d.booking_id
+          AND s.role = 'student'
+          AND i.role = 'instructor'
+          AND ABS(COALESCE(s.hobbs_delta, s.hobbs_end - s.hobbs_start)
+                - COALESCE(i.hobbs_delta, i.hobbs_end - i.hobbs_start)) <= $1
+      )
+  `, [DISCREPANCY_THRESHOLD]);
+}
+
+/**
  * List all discrepancies with booking + user details. Supports filter by status.
  */
 async function listDiscrepancies({ status } = {}) {
+  await purgeStaleDiscrepancies();
   const conditions = [];
   const params = [];
   if (status && status !== 'all') {
@@ -165,10 +192,7 @@ async function listDiscrepancies({ status } = {}) {
  */
 async function countPendingDiscrepancies() {
   const result = await pool.query(`SELECT COUNT(*) AS count FROM flight_discrepancies WHERE status = 'pending'`);
-  const hoursAudit = await pool.query(
-    `SELECT COUNT(*) AS count FROM instructor_hours WHERE audit_status IN ('flagged', 'unmatched')`
-  );
-  return parseInt(result.rows[0].count, 10) + parseInt(hoursAudit.rows[0].count, 10);
+  return parseInt(result.rows[0].count, 10);
 }
 
 /** Instructor hours audit flags formatted for the discrepancies UI */

@@ -192,13 +192,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     const hobbsFlown = hEnd - hStart;
 
-    // Validate dual instruction hours if provided — cannot exceed hobbs flown
+    // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
       const dualErr = validateHobbsValue(dual_instruction_hours, 'dual_instruction_hours');
       if (dualErr) return res.status(400).json({ error: dualErr });
-      if (parseFloat(dual_instruction_hours) > hobbsFlown + 0.01) {
-        return res.status(400).json({ error: 'dual_instruction_hours cannot exceed Hobbs time flown' });
-      }
     }
     const tStart = tach_start != null ? parseFloat(tach_start) : null;
     const tEnd = tach_end != null ? parseFloat(tach_end) : null;
@@ -301,7 +298,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     );
 
     // Auto-sync instructor hours log from completed flight
-    if (b.instructor_id && hobbsFlown > 0) {
+    if (b.instructor_id && (hobbsFlown > 0 || dualHrs > 0)) {
       let studentName = null;
       if (b.student_id) {
         const sn = await client.query('SELECT name FROM users WHERE id = $1', [b.student_id]);
@@ -320,8 +317,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     // Record Hobbs reading for discrepancy tracking (fire-and-forget — does not affect booking completion)
     const submitterRole = ['owner', 'admin'].includes(req.user.role) ? 'admin' : req.user.role;
-    // Determine which "side" this completion represents
-    const hobbsRole = (req.user.id === b.student_id) ? 'student' : submitterRole;
+    // Map completion to student/instructor side for Hobbs comparison
+    let hobbsRole;
+    if (req.user.id === b.student_id) hobbsRole = 'student';
+    else if (req.user.id === b.instructor_id) hobbsRole = 'instructor';
+    else if (b.instructor_id && ['owner', 'admin'].includes(req.user.role)) hobbsRole = 'instructor';
+    else hobbsRole = submitterRole;
     recordHobbsReading(parseInt(req.params.id), req.user.id, hobbsRole, hStart, hEnd)
       .catch(e => console.error('[bookings-completion] hobbs reading error:', e.message));
 

@@ -2321,8 +2321,8 @@
                   <th id="ih-col-aircraft" style="cursor:pointer;" onclick="sortIH('aircraft_name')">Aircraft <span id="ih-sort-aircraft_name"></span></th>
                   <th style="cursor:pointer;" onclick="sortIH('hobbs_hrs')">Hobbs Hrs <span id="ih-sort-hobbs_hrs"></span></th>
                   <th style="cursor:pointer;" onclick="sortIH('hobbs_charge')">Hobbs Charge <span id="ih-sort-hobbs_charge"></span></th>
-                  <th style="cursor:pointer;" onclick="sortIH('instruction_hours')">Instr Hrs <span id="ih-sort-instruction_hours"></span></th>
-                  <th style="cursor:pointer;" onclick="sortIH('instr_charge')">Instr Charge <span id="ih-sort-instr_charge"></span></th>
+                  <th style="cursor:pointer;" onclick="sortIH('instruction_hours')">Dual Hrs <span id="ih-sort-instruction_hours"></span></th>
+                  <th style="cursor:pointer;" onclick="sortIH('instr_charge')">Dual Charge <span id="ih-sort-instr_charge"></span></th>
                   <th style="cursor:pointer;" onclick="sortIH('total_billed')">Total Billed <span id="ih-sort-total_billed"></span></th>
                   <th></th>
                 </tr>
@@ -3469,8 +3469,8 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             <span style="font-size:0.87rem;font-weight:600;color:var(--gray-200);">Dual / Instruction Hours</span>
           </div>
-          <input type="number" id="pfw-dual-hours" step="0.1" min="0" placeholder="e.g. 3.0" style="width:100%;margin-bottom:0.4rem;">
-          <p style="margin:0;font-size:0.77rem;color:var(--gray-500);">Total instruction time including preflight, ground, and debrief. Used to calculate the instruction charge.</p>
+          <input type="number" id="pfw-dual-hours" step="0.1" min="0" placeholder="e.g. 2.0" oninput="this.dataset.userEdited='1'" style="width:100%;margin-bottom:0.4rem;">
+          <p style="margin:0;font-size:0.77rem;color:var(--gray-500);">Total billable instruction time (preflight, flight, ground, debrief). Can exceed Hobbs time — e.g. 1.0 Hobbs with 2.0 dual for ground briefing.</p>
         </div>
 
         <div class="modal-actions">
@@ -8405,6 +8405,7 @@ function openPostFlightWizard(bookingId, bookingDataOverride) {
   document.getElementById('pfw-is-instrument').checked = false;
   document.getElementById('pfw-is-solo').checked = false;
   document.getElementById('pfw-dual-hours').value = '';
+  document.getElementById('pfw-dual-hours').dataset.userEdited = '';
   document.getElementById('pfw-dual-hours-section').classList.add('hidden');
 
   // Reset step 2
@@ -8564,6 +8565,14 @@ function pfwUpdateDelta() {
   if (!isNaN(hs) && !isNaN(he) && he < hs) errors.push('Hobbs End must be ≥ Hobbs Start');
   if (!isNaN(ts) && !isNaN(te) && te < ts) errors.push('Tach End must be ≥ Tach Start');
   if (errors.length) { valErr.textContent = errors.join('. '); valErr.classList.remove('hidden'); }
+
+  // Default dual hours from Hobbs delta when empty (user can increase for ground time)
+  if (pfwIsDualFlight && !isNaN(hs) && !isNaN(he) && he > hs) {
+    const dualEl = document.getElementById('pfw-dual-hours');
+    if (dualEl && dualEl.dataset.userEdited !== '1' && dualEl.value === '') {
+      dualEl.value = (he - hs).toFixed(1);
+    }
+  }
 }
 
 async function pfwSubmitStep1() {
@@ -15318,8 +15327,8 @@ function renderIHStats(entries) {
     '<div class="stat-card"><div class="stat-label">Entries</div><div class="stat-value">' + entries.length + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Hobbs Hrs</div><div class="stat-value" style="color:var(--sky)">' + totalAcHrs.toFixed(1) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Hobbs Charge</div><div class="stat-value" style="color:var(--sky)">$' + totalHobbsCharge.toFixed(2) + '</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Instr Hrs</div><div class="stat-value" style="color:var(--amber)">' + totalInHrs.toFixed(1) + '</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Instr Charge</div><div class="stat-value" style="color:var(--amber)">$' + totalInstrCharge.toFixed(2) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Dual Hrs</div><div class="stat-value" style="color:var(--amber)">' + totalInHrs.toFixed(1) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Dual Charge</div><div class="stat-value" style="color:var(--amber)">$' + totalInstrCharge.toFixed(2) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Total Billed</div><div class="stat-value" style="color:var(--green)">$' + totalBilled.toFixed(2) + '</div></div>';
 }
 
