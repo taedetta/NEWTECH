@@ -91,7 +91,7 @@
       overflow: hidden;
     }
     .auth-modal-header {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; justify-content: center;
       padding: 1.5rem 1.75rem 0;
     }
     .auth-modal-logo { height: 44px; width: auto; max-width: 200px; object-fit: contain; }
@@ -1311,7 +1311,6 @@
     <div class="auth-modal" role="dialog" aria-modal="true" aria-label="Authentication">
       <div class="auth-modal-header">
         <img src="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png" alt="New Tech Aviation" class="auth-modal-logo">
-        <button class="auth-modal-close" onclick="closeAuthModal()" aria-label="Close">&times;</button>
       </div>
       <div class="auth-tabs">
         <button class="auth-tab active" data-tab="signin" onclick="switchAuthTab('signin')">Sign In</button>
@@ -4322,6 +4321,9 @@ function openAuthModal(tab) {
 }
 
 function closeAuthModal() {
+  // Only allow closing when the app is visible (logged in). On the login screen the modal must stay open.
+  const appEl = document.getElementById('app-screen');
+  if (!appEl || appEl.classList.contains('hidden')) return;
   document.getElementById('auth-modal').style.display = 'none';
 }
 
@@ -4352,16 +4354,7 @@ function syncSidebarAuth(loggedIn) {
   if (authInfo) authInfo.classList.toggle('hidden', !loggedIn);
 }
 
-// Close modal on backdrop click
-document.addEventListener('click', (e) => {
-  const modal = document.getElementById('auth-modal');
-  if (e.target === modal) closeAuthModal();
-});
-
-// Close modal on Escape key
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeAuthModal();
-});
+// Auth modal is not dismissible on the login screen (no backdrop click, no Escape).
 
 // ─── SCREENS ───
 function showScreen(name) {
