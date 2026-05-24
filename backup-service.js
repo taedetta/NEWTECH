@@ -24,7 +24,7 @@ const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
 const R2_UPLOAD_ENDPOINT = 'https://polsia.com/api/proxy/r2/upload';
 
-const RECIPIENTS = ['operations@3vaflight.com', 'blankthe97@gmail.com'];
+const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
 // ── Timezone helpers (Central Time) ────────────────────────────────────────
 

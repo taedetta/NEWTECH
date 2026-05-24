@@ -3108,6 +3108,17 @@
           <h1 style="font-size: 1.8rem; margin-bottom: 1rem; color: #F1F5F9;">&#9881;&#65039; Admin Settings</h1>
           <p style="margin-bottom: 2rem; color: #aaa;">Manage platform-wide settings and data.</p>
 
+          <div style="background: #1a2a3a; border: 1px solid rgba(56,189,248,0.25); border-radius: 12px; padding: 1.5rem; max-width: 600px; margin-bottom: 1.5rem;">
+            <h2 style="color: #38BDF8; font-size: 1.1rem; margin-bottom: 0.5rem;">&#128230; Data Backup</h2>
+            <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 1rem; line-height: 1.5;">
+              Email a complete ZIP backup of all operational data (9 organized CSV files) to <strong style="color:#e0e0e0">aviationnewtech@gmail.com</strong>. Runs automatically before any reset.
+            </p>
+            <button id="email-backup-btn" onclick="emailDataBackup()" style="background: linear-gradient(135deg, #38BDF8, #0EA5E9); color: #080E1A; border: none; padding: 10px 22px; border-radius: 8px; font-size: 0.88rem; font-weight: 700; cursor: pointer;">
+              &#9993; Email Full Data Backup
+            </button>
+            <span id="email-backup-status" style="display:none;margin-left:1rem;font-size:0.82rem;color:#94A3B8;"></span>
+          </div>
+
           <div style="background: #2a1a1a; border: 2px solid #ff4444; border-radius: 12px; padding: 1.5rem; max-width: 600px;">
             <h2 style="color: #ff4444; font-size: 1.3rem; margin-bottom: 0.5rem;">&#9888;&#65039; Danger Zone</h2>
             <p style="color: #ccc; margin-bottom: 1rem;">This will permanently delete ALL flight data, hours, billing, and training history. User accounts and aircraft definitions will be preserved.</p>
@@ -17060,21 +17071,37 @@ function closeResetModal() {
   document.getElementById('reset-modal').classList.add('hidden');
 }
 
+async function emailDataBackup() {
+  const btn = document.getElementById('email-backup-btn');
+  const status = document.getElementById('email-backup-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  if (status) { status.style.display = 'inline'; status.textContent = 'Generating backup ZIP and emailing…'; status.style.color = '#94A3B8'; }
+  try {
+    const result = await api('/api/admin/email-data-backup', { method: 'POST' });
+    if (status) { status.textContent = result.message || 'Backup emailed!'; status.style.color = '#10B981'; }
+    showToast('Full data backup emailed to aviationnewtech@gmail.com', 'success');
+  } catch (err) {
+    if (status) { status.textContent = err.error || 'Failed'; status.style.color = '#EF4444'; }
+    showToast(err.error || 'Backup email failed', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#9993; Email Full Data Backup'; }
+  }
+}
+
 async function confirmResetAllData() {
   const input = document.getElementById('reset-confirm-input');
   const btn = document.getElementById('reset-confirm-btn');
   const errEl = document.getElementById('reset-modal-error');
-  if (input.value !== 'RESET') return;
+  if (input.value.trim().toUpperCase() !== 'RESET') return;
 
   btn.disabled = true;
-  btn.textContent = 'Resetting…';
+  btn.textContent = 'Backing up & resetting…';
   if (errEl) errEl.classList.add('hidden');
 
   try {
     await api('/api/admin/reset-all-data', { method: 'POST' });
     closeResetModal();
-    showToast('All flight data, hours, billing, and training history have been reset', 'success');
-    // Reload dashboard to reflect clean slate
+    showToast('Data reset complete — backup was emailed before deletion', 'success');
     navigate('dashboard');
   } catch (err) {
     if (errEl) {
@@ -17432,7 +17459,7 @@ init();
   <div class="modal" style="max-width:540px">
     <h3 style="color:var(--red)">&#9888;&#65039; Reset All Data</h3>
     <p style="color:var(--gray-300);font-size:0.88rem;margin-bottom:1.25rem">
-      This will <strong style="color:var(--white)">permanently delete</strong> all operational data from the platform. This cannot be undone.
+      This will <strong style="color:var(--white)">permanently delete</strong> all operational data from the platform. A full data backup ZIP is emailed to <strong style="color:var(--sky)">aviationnewtech@gmail.com</strong> before deletion.
     </p>
 
     <div style="background:var(--navy);border:1px solid rgba(239,68,68,0.2);border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;font-size:0.82rem;color:var(--gray-300);line-height:1.65;">
@@ -17462,7 +17489,7 @@ init();
       <label style="font-size:0.85rem;color:var(--gray-300)">Type <strong style="color:var(--white)">RESET</strong> to confirm:</label>
       <input type="text" id="reset-confirm-input" placeholder="RESET" autocomplete="off"
         style="width:100%;padding:0.65rem 0.9rem;background:var(--slate);border:2px solid rgba(239,68,68,0.3);border-radius:8px;color:var(--white);font-size:1rem;font-family:inherit;outline:none;letter-spacing:0.08em;font-weight:600;"
-        oninput="document.getElementById('reset-confirm-btn').disabled = this.value !== 'RESET'">
+        oninput="document.getElementById('reset-confirm-btn').disabled = this.value.trim().toUpperCase() !== 'RESET'">
     </div>
 
     <div id="reset-modal-error" class="error-msg hidden"></div>

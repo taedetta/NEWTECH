@@ -7,30 +7,58 @@ const fs = require('fs');
 const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getAllOverrides } = require('../db/file-overrides');
+const { emailFullDataBackup } = require('../lib/full-data-backup');
+const { execSync } = require('child_process');
 
 const router = express.Router();
+
+/** Tables cleared by reset-all-data — order respects foreign keys */
+const RESET_DELETE_TABLES = [
+  'debrief_grades',
+  'student_maneuver_progress',
+  'flight_debriefs',
+  'milestone_completions',
+  'student_interventions',
+  'at_risk_assessments',
+  'flight_discrepancies',
+  'flight_hobbs_readings',
+  'flight_logs',
+  'hour_edit_logs',
+  'aircraft_hours_history',
+  'billing_entries',
+  'instructor_hours',
+  'ground_sessions',
+  'squawks',
+  'training_progress',
+  'student_training',
+  'bookings',
+];
 
 // ─── ADMIN: RESET ALL DATA ───────────────────────────────
 
 router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
+    // Safety backup before any deletion — abort if email fails
+    await emailFullDataBackup(pool, {
+      reason: 'pre-reset',
+      triggeredBy: req.user.name || req.user.email,
+    });
+
     await client.query('BEGIN');
 
-    await client.query('DELETE FROM student_maneuver_progress');
-    await client.query('DELETE FROM debrief_grades');
-    await client.query('DELETE FROM milestone_completions');
-    await client.query('DELETE FROM flight_debriefs');
-    await client.query('DELETE FROM flight_logs');
-    await client.query('DELETE FROM hour_edit_logs');
-    await client.query('DELETE FROM aircraft_hours_history');
-    await client.query('DELETE FROM at_risk_assessments');
-    await client.query('DELETE FROM student_interventions');
-    await client.query('DELETE FROM ground_sessions');
-    await client.query('DELETE FROM instructor_hours');
-    await client.query('DELETE FROM student_training');
-    await client.query('DELETE FROM squawks');
-    await client.query('DELETE FROM bookings');
+    for (const table of RESET_DELETE_TABLES) {
+      try {
+        await client.query(`DELETE FROM ${table}`);
+      } catch (err) {
+        // Skip tables that don't exist in this schema version
+        if (err.code === '42P01') {
+          console.warn(`[reset-all-data] Skipping missing table: ${table}`);
+          continue;
+        }
+        throw err;
+      }
+    }
 
     await client.query('UPDATE users SET total_hobbs_hours = 0, total_tach_hours = 0');
     await client.query('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0');
@@ -41,13 +69,38 @@ router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'),
     );
 
     await client.query('COMMIT');
-    res.json({ ok: true, message: 'All flight data, hours, billing, and training history have been reset.' });
+    res.json({
+      ok: true,
+      message: 'All flight data, hours, billing, and training history have been reset. A full backup was emailed before deletion.',
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[reset-all-data] Error:', err);
-    res.status(500).json({ error: 'Failed to reset data. Please try again.' });
+    const msg = err.message?.includes('backup email')
+      ? err.message
+      : 'Failed to reset data. Please try again.';
+    res.status(500).json({ error: msg });
   } finally {
     client.release();
+  }
+});
+
+// ─── ADMIN: EMAIL FULL DATA BACKUP ───────────────────────
+
+router.post('/email-data-backup', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const result = await emailFullDataBackup(pool, {
+      reason: 'manual',
+      triggeredBy: req.user.name || req.user.email,
+    });
+    res.json({
+      ok: true,
+      message: `Backup emailed to ${result.recipients.join(', ')}`,
+      ...result,
+    });
+  } catch (err) {
+    console.error('[email-data-backup] Error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to send data backup email' });
   }
 });
 
@@ -97,7 +150,7 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     });
     archive.pipe(res);
 
-    const excludeDirs = new Set(['node_modules', '.git', '.claude', '.tmp', 'debug', 'shell-snapshots', 'session-env', 'todos', 'projects', 'scripts']);
+    const excludeDirs = new Set(['node_modules', '.git', '.claude', '.tmp', 'debug', 'shell-snapshots', 'session-env', 'todos', 'projects']);
     const excludeFiles = new Set(['.env', '.claude.json', '.npmrc']);
     const excludePatterns = ['.claude.json.backup', '.env.backup', 'availability-check2.png', 'availability-debug.png', 'availability-final.png', 'availability-screenshot.png', 'dashboard-check.png'];
     const addedPaths = new Set();
@@ -237,6 +290,25 @@ BACKUP_EMAIL=owner@yourdomain.com
     archive.append(schemaSQL, { name: 'docs/database-schema.sql' });
     archive.append(structureMd, { name: 'docs/database-structure.md' });
     archive.append(`# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, { name: 'docs/README.md' });
+
+    let gitCommit = 'unknown';
+    let gitBranch = 'unknown';
+    try {
+      gitCommit = execSync('git rev-parse HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch (_) { /* not a git repo on deploy */ }
+    archive.append(
+      [
+        'FlightSlate Source Archive',
+        `Generated: ${new Date().toISOString()}`,
+        `Git commit: ${gitCommit}`,
+        `Git branch: ${gitBranch}`,
+        'Repository: https://github.com/taedetta/NEWTECH',
+        '',
+        'This ZIP reflects the deployed codebase plus any editor file overrides.',
+      ].join('\n'),
+      { name: 'BUILD_INFO.txt' }
+    );
 
     archive.finalize();
   } catch (err) {

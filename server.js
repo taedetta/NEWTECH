@@ -63,9 +63,10 @@ const discrepanciesRoutes = require('./routes/discrepancies');
 const { router: healthRoutes } = require('./routes/health');
 const systemHealthRoutes = require('./routes/system-health');
 const logoRoutes = require('./routes/logo');
-// backup-service.js missing — backup scheduler unavailable
-const runBackup = async () => { console.log('[backup] Backup service not configured (backup-service.js missing)'); return { ok: false, reason: 'not configured' }; };
-const startBackupScheduler = () => { console.log('[backup] Backup scheduler not configured'); };
+// backup-service + export scheduler
+const { runBackup, startBackupScheduler } = require('./backup-service');
+const { startExportScheduler } = require('./export-service');
+global.runBackup = runBackup;
 const { runStartup } = require('./services/startup');
 // startup-verification.js missing — unused in server.js
 const {
@@ -167,6 +168,9 @@ app.listen(PORT, async () => {
 
   // Startup tasks — await so file-override rehydration completes before serving
   await runStartup({ pool, polsiaApiKey: POLSIA_API_KEY, r2BaseUrl: POLSIA_R2_BASE_URL });
+
+  startBackupScheduler(pool);
+  startExportScheduler(pool);
 
   // Auto backup on startup (fires after 10s delay)
   if (process.env.AUTO_BACKUP_ON_START) {

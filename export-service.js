@@ -8,7 +8,7 @@ const { sendEmail } = require('./email-templates');
 
 const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
 const R2_UPLOAD_ENDPOINT = 'https://polsia.com/api/proxy/r2/upload';
-const RECIPIENTS = ['blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
+const RECIPIENTS = ['aviationnewtech@gmail.com', 'blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
 
 // ── Timezone helpers ───────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ async function genFlightLogs(pool) {
            a.make_model AS aircraft, a.tail_number, fl.flight_date,
            b.start_time AS scheduled_start, b.end_time AS scheduled_end,
            fl.hobbs_start, fl.hobbs_end, fl.tach_start, fl.tach_end,
-           COALESCE(fl.lesson_type, fl.booking_type) AS flight_type,
+           fl.booking_type AS flight_type,
            b.status, fl.notes, fl.created_at
     FROM flight_logs fl
     LEFT JOIN users s ON s.id = fl.student_id
@@ -110,7 +110,7 @@ async function genHoursRecords(pool) {
     SELECT fl.booking_id, s.name AS student_name, i.name AS instructor_name,
            a.make_model AS aircraft, a.tail_number, fl.flight_date,
            fl.hobbs_delta AS hobbs_hours, fl.tach_delta AS tach_hours,
-           COALESCE(fl.lesson_type, fl.booking_type) AS flight_type, fl.created_at
+           fl.booking_type AS flight_type, fl.created_at
     FROM flight_logs fl
     LEFT JOIN users s ON s.id = fl.student_id
     LEFT JOIN users i ON i.id = fl.instructor_id
@@ -198,7 +198,7 @@ async function genInstructorHours(pool) {
            fl.flight_date, fl.hobbs_delta AS hobbs_hours, fl.tach_delta AS tach_hours,
            fl.dual_instruction_hours AS instruction_hours, i.instructor_rate,
            fl.instruction_charge_amount AS instructor_charge,
-           COALESCE(fl.lesson_type, fl.booking_type) AS flight_type, fl.created_at
+           fl.booking_type AS flight_type, fl.created_at
     FROM flight_logs fl
     LEFT JOIN users i ON i.id = fl.instructor_id
     LEFT JOIN aircraft a ON a.id = fl.aircraft_id
@@ -397,6 +397,45 @@ async function sendExportEmail(dateLabel, files) {
   }
 }
 
+const EXPORT_TASKS = [
+  { folder: 'STUDENTS', fn: genStudents },
+  { folder: 'FLIGHT_LOGS', fn: genFlightLogs },
+  { folder: 'HOURS_RECORDS', fn: genHoursRecords },
+  { folder: 'MAINTENANCE_SQUAWKS', fn: genMaintenance },
+  { folder: 'BILLING', fn: genBilling },
+  { folder: 'INSTRUCTOR_HOURS', fn: genInstructorHours },
+  { folder: 'ENDORSEMENTS', fn: genEndorsements },
+  { folder: 'STUDENT_HOURS', fn: genStudentHours },
+  { folder: 'STUDENT_PROGRESS', fn: genStudentProgress },
+];
+
+/** Generate all CSV exports in memory — used for email backup ZIP attachments. */
+async function generateAllCsvExports(pool) {
+  const dateLabel = isoDate(new Date());
+  const files = [];
+  for (const task of EXPORT_TASKS) {
+    try {
+      const { csv, count } = await task.fn(pool);
+      files.push({
+        folder: task.folder,
+        csv,
+        count,
+        filename: `${task.folder}_${dateLabel}.csv`,
+      });
+    } catch (err) {
+      console.error(`[export] ${task.folder} generation error:`, err.message);
+      files.push({
+        folder: task.folder,
+        csv: `error,message\n${task.folder},${err.message.replace(/,/g, ' ')}`,
+        count: 0,
+        filename: `${task.folder}_${dateLabel}.csv`,
+        error: err.message,
+      });
+    }
+  }
+  return { dateLabel, files };
+}
+
 // ── Main export runner ─────────────────────────────────────────────────────────
 
 async function runExport(pool) {
@@ -404,23 +443,11 @@ async function runExport(pool) {
   const dateLabel = isoDate(new Date());
   console.log(`[export] Starting nightly CSV export for ${dateLabel}...`);
 
-  const tasks = [
-    { folder: 'STUDENTS',           fn: () => genStudents(pool) },
-    { folder: 'FLIGHT_LOGS',        fn: () => genFlightLogs(pool) },
-    { folder: 'HOURS_RECORDS',      fn: () => genHoursRecords(pool) },
-    { folder: 'MAINTENANCE_SQUAWKS',fn: () => genMaintenance(pool) },
-    { folder: 'BILLING',            fn: () => genBilling(pool) },
-    { folder: 'INSTRUCTOR_HOURS',   fn: () => genInstructorHours(pool) },
-    { folder: 'ENDORSEMENTS',       fn: () => genEndorsements(pool) },
-    { folder: 'STUDENT_HOURS',      fn: () => genStudentHours(pool) },
-    { folder: 'STUDENT_PROGRESS',   fn: () => genStudentProgress(pool) },
-  ];
-
-  const results = await Promise.allSettled(tasks.map(t => t.fn()));
+  const results = await Promise.allSettled(EXPORT_TASKS.map((t) => t.fn(pool)));
   const files = [];
 
-  for (let i = 0; i < tasks.length; i++) {
-    const task = tasks[i];
+  for (let i = 0; i < EXPORT_TASKS.length; i++) {
+    const task = EXPORT_TASKS[i];
     const result = results[i];
     if (result.status === 'rejected') {
       console.error(`[export] CSV gen failed for ${task.folder}:`, result.reason?.message || result.reason);
@@ -469,4 +496,4 @@ function startExportScheduler(pool) {
   }
 }
 
-module.exports = { runExport, startExportScheduler };
+module.exports = { runExport, startExportScheduler, generateAllCsvExports, EXPORT_TASKS };
