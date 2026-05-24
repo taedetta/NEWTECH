@@ -32,5 +32,8 @@
   "description": "A minimal Express.js template with PostgreSQL connection, designed for Polsia infrastructure provisioning.",
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
 }

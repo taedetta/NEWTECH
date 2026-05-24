@@ -15,6 +15,12 @@ services:
         value: production
       - key: APP_URL
         value: https://www.newtechaviation.com
+      - key: BREVO_API_KEY
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: New Tech Aviation
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
