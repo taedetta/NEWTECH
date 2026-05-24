@@ -165,7 +165,42 @@ async function listDiscrepancies({ status } = {}) {
  */
 async function countPendingDiscrepancies() {
   const result = await pool.query(`SELECT COUNT(*) AS count FROM flight_discrepancies WHERE status = 'pending'`);
-  return parseInt(result.rows[0].count, 10);
+  const hoursAudit = await pool.query(
+    `SELECT COUNT(*) AS count FROM instructor_hours WHERE audit_status IN ('flagged', 'unmatched')`
+  );
+  return parseInt(result.rows[0].count, 10) + parseInt(hoursAudit.rows[0].count, 10);
+}
+
+/** Instructor hours audit flags formatted for the discrepancies UI */
+async function listHoursAuditDiscrepancies({ status } = {}) {
+  if (status === 'resolved') return [];
+  const result = await pool.query(`
+    SELECT ih.id, ih.entry_date AS flight_date, ih.audit_status, ih.audit_message,
+           ih.aircraft_hours, ih.instruction_hours, ih.student_name,
+           u.name AS instructor_name, a.tail_number,
+           ih.created_at
+    FROM instructor_hours ih
+    JOIN users u ON u.id = ih.instructor_id
+    LEFT JOIN aircraft a ON a.id = ih.aircraft_id
+    WHERE ih.audit_status IN ('flagged', 'unmatched')
+    ORDER BY ih.entry_date DESC, ih.id DESC
+  `);
+  return result.rows.map((r) => ({
+    id: `ih-${r.id}`,
+    source: 'hours_audit',
+    hours_entry_id: r.id,
+    status: 'pending',
+    discrepancy_type: r.audit_status === 'flagged' ? 'Hours Mismatch' : 'Unverified Hours',
+    flight_date: r.flight_date,
+    student_name: r.student_name || '—',
+    instructor_name: r.instructor_name || '—',
+    tail_number: r.tail_number || '—',
+    student_hobbs_delta: r.aircraft_hours != null ? parseFloat(r.aircraft_hours) : null,
+    instructor_hobbs_delta: r.instruction_hours != null ? parseFloat(r.instruction_hours) : null,
+    delta_hours: null,
+    audit_message: r.audit_message,
+    flagged_at: r.created_at || r.flight_date,
+  }));
 }
 
 /**
@@ -247,6 +282,7 @@ async function sendDiscrepancyEmail(booking, discrepancy) {
 module.exports = {
   recordHobbsReading,
   listDiscrepancies,
+  listHoursAuditDiscrepancies,
   countPendingDiscrepancies,
   resolveDiscrepancy,
   hasUnresolvedDiscrepancy,

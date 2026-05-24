@@ -82,7 +82,13 @@ router.get('/my-activity', authenticateToken, async (req, res) => {
         ${acChargeExpr()} AS aircraft_charge_amount,
         ${instrChargeExpr()} AS instruction_charge_amount,
         CASE WHEN b.instructor_id = $1 THEN 'instructor' WHEN b.student_id = $1 THEN 'student' END AS my_role
-      ${BILLABLE_FLIGHT_SQL}
+      FROM bookings b
+      LEFT JOIN users s ON s.id = b.student_id AND s.deleted_at IS NULL
+      LEFT JOIN aircraft a ON a.id = b.aircraft_id
+      LEFT JOIN users inst ON inst.id = b.instructor_id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      WHERE b.status = 'completed'
+        AND COALESCE(b.billing_voided, FALSE) = FALSE
         AND (b.instructor_id = $1 OR b.student_id = $1)
       ORDER BY b.start_time DESC
     `;

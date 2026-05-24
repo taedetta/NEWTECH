@@ -560,7 +560,7 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
     if (studentResult.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
 
     const enrollmentsResult = await pool.query(`
-      SELECT st.id, st.program_id, st.instructor_id, st.status, st.started_at,
+      SELECT st.id, st.program_id, st.instructor_id, st.current_stage_id, st.status, st.started_at,
              tp.name AS program_name, tp.code AS program_code,
              instructor.name AS instructor_name,
              ps.name AS current_stage_name,
@@ -612,12 +612,21 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
            WHERE sm.stage_id = $2 AND smp.status IN ('proficient','completed')`,
           [studentId, stage.id]
         );
-        const isComplete = parseInt(completionResult.rows[0].cnt) >= parseInt(stage.maneuver_count);
+        const milestoneResult = await pool.query(
+          `SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 LIMIT 1`,
+          [studentId, stage.id]
+        );
+        const isCompleteByManeuvers = parseInt(stage.maneuver_count) > 0
+          && parseInt(completionResult.rows[0].cnt) >= parseInt(stage.maneuver_count);
+        const isComplete = isCompleteByManeuvers || milestoneResult.rows.length > 0;
 
         stages.push({
           ...stage,
           maneuver_count: parseInt(stage.maneuver_count),
-          completion: isComplete ? { completed_at: new Date() } : null,
+          completion: isComplete
+            ? { completed_at: milestoneResult.rows[0]?.completed_at || new Date() }
+            : null,
+          completed: isComplete,
           maneuvers: maneuversResult.rows.map(m => ({
             ...m,
             status: m.status || 'not_started',
@@ -702,6 +711,30 @@ router.post('/debriefs', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('[training] POST /debriefs error:', err.message);
     res.status(500).json({ error: 'Failed to save debrief' });
+  }
+});
+
+// POST /milestones — instructor sign-off on a training stage
+router.post('/milestones', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role === 'student') return res.status(403).json({ error: 'Only instructors can sign off stages' });
+    const { student_id, stage_id, enrollment_id, notes, debrief_id } = req.body;
+    if (!student_id || !stage_id || !enrollment_id) {
+      return res.status(400).json({ error: 'student_id, stage_id, and enrollment_id are required' });
+    }
+    const result = await trainingDb.completeStageMilestone({
+      studentId: parseInt(student_id, 10),
+      stageId: parseInt(stage_id, 10),
+      enrollmentId: parseInt(enrollment_id, 10),
+      completedBy: req.user.id,
+      notes: notes || null,
+      debriefId: debrief_id ? parseInt(debrief_id, 10) : null,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[training] POST /milestones error:', err.message);
+    res.status(500).json({ error: 'Failed to sign off stage' });
   }
 });
 

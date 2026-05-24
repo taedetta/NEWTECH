@@ -41,7 +41,10 @@ router.get('/', authenticateToken, async (req, res) => {
     if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
     if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
     if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
-    if (req.user.role === 'student') { query += ` AND b.student_id = $${paramIdx++}`; params.push(req.user.id); }
+    if (req.user.role === 'student' || req.user.role === 'renter') {
+      query += ` AND b.student_id = $${paramIdx++}`;
+      params.push(req.user.id);
+    }
     query += ' ORDER BY b.start_time';
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -83,7 +86,10 @@ router.get('/history', authenticateToken, async (req, res) => {
     if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
     if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
     if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
-    if (req.user.role === 'student') { query += ` AND b.student_id = $${paramIdx++}`; params.push(req.user.id); }
+    if (req.user.role === 'student' || req.user.role === 'renter') {
+      query += ` AND b.student_id = $${paramIdx++}`;
+      params.push(req.user.id);
+    }
     query += ' ORDER BY b.start_time DESC';
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -760,8 +766,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isInstructor = req.user.id === b.instructor_id;
     const isStudent = req.user.id === b.student_id;
     if (!isAdmin && !isInstructor && !isStudent) return res.status(403).json({ error: 'Access denied' });
-    if (!isAdmin && (student_id !== undefined || instructor_id !== undefined || start_time !== undefined || end_time !== undefined)) {
-      return res.status(403).json({ error: 'Only admins can reschedule' });
+    const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
+    if (!isAdmin && (student_id !== undefined || instructor_id !== undefined)) {
+      return res.status(403).json({ error: 'Cannot change student or instructor on an existing booking' });
+    }
+    if (!isAdmin && rescheduleRequested) {
+      if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
     const sid = student_id !== undefined ? (student_id ? parseInt(student_id) : null) : b.student_id;

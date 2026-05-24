@@ -1424,7 +1424,7 @@
           <a onclick="navigate('fleet')" data-page="fleet"><span class="nav-icon">&#9992;</span> Fleet</a>
           <a onclick="navigate('tracking')" data-page="tracking" id="nav-tracking"><span class="nav-icon">&#127979;</span> Track Flights</a>
           <a onclick="navigate('maintenance')" data-page="maintenance"><span class="nav-icon">&#128295;</span> Maintenance</a>
-          <a onclick="navigate('billing')" data-page="billing" id="nav-billing"><span class="nav-icon">&#128176;</span> Billing</a>
+          <a onclick="openOpsBilling()" data-page="billing" id="nav-billing"><span class="nav-icon">&#128176;</span> Billing</a>
           <a onclick="navigate('flight-log')" data-page="flight-log" id="nav-flight-log"><span class="nav-icon">&#128203;</span> Flight Log</a>
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <div class="nav-divider"></div>
@@ -1432,6 +1432,7 @@
           <a onclick="navigate('approvals')" data-page="approvals" id="nav-approvals" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128100;</span> Pending Approvals <span id="approvals-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('discrepancies')" data-page="discrepancies" id="nav-discrepancies" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#9888;&#65039;</span> Discrepancies <span id="discrepancies-badge" class="hidden" style="display:inline-block;background:#F59E0B;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('people')" data-page="people" id="nav-people"><span class="nav-icon">&#128100;</span> People</a>
+          <a onclick="openMgmtBilling()" data-page="billing-mgmt" id="nav-billing-mgmt" class="hidden"><span class="nav-icon">&#128176;</span> Billing</a>
           <a onclick="navigate('progress')" data-page="progress" id="nav-progress"><span class="nav-icon">&#128200;</span> Progress</a>
           <a onclick="navigate('at-risk')" data-page="at-risk" id="nav-at-risk" class="hidden"><span class="nav-icon">&#9888;</span> At-Risk</a>
           <a onclick="navigate('leads')" data-page="leads" id="nav-leads" class="hidden"><span class="nav-icon">&#128231;</span> Leads</a>
@@ -4229,7 +4230,8 @@ let availabilityBlocks = {}; // { dow: [{start, end}, ...] }
 let currentBookingAvailSlots = null; // null = no restriction, Set = restricted to these slots
 let pendingPermChanges = {}; // { [userId]: { can_manage_aircraft: bool, ... } }
 let completableBookings = []; // bookings awaiting hour entry
-let selectedHoursLogAircraftId = null;
+let bookingEditId = null;
+let billingNavSource = 'ops';
 
 // ─── API HELPER ───
 async function api(path, opts = {}) {
@@ -4238,7 +4240,11 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(url, { ...opts, headers });
-  const data = await res.json();
+  const text = await res.text();
+  let data = {};
+  if (text) {
+    try { data = JSON.parse(text); } catch { data = { error: text.slice(0, 200) || res.statusText }; }
+  }
   if (!res.ok) throw { status: res.status, ...data };
   return data;
 }
@@ -4737,6 +4743,10 @@ async function enterApp() {
   // Billing: students/renters see own billing; staff see overview (+ my activity tab)
   const navBilling = document.getElementById('nav-billing');
   if (navBilling) navBilling.classList.toggle('hidden', ['maintenance'].includes(currentUser.role));
+  const navBillingMgmt = document.getElementById('nav-billing-mgmt');
+  if (navBillingMgmt) {
+    navBillingMgmt.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
+  }
 
   // Daily roster: staff only (not students/renters)
   const rosterBtn = document.getElementById('schedule-roster-btn');
@@ -6540,29 +6550,35 @@ async function loadDiscrepancies() {
     if (!rows || rows.length === 0) { if (emptyEl) emptyEl.classList.remove('hidden'); return; }
     if (listEl) listEl.classList.remove('hidden');
     if (tbody) tbody.innerHTML = rows.map(d => {
+      const isHoursAudit = d.source === 'hours_audit';
       const isPending = d.status === 'pending';
       const flightDate = d.flight_date ? new Date(d.flight_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
       const flagged = d.flagged_at ? new Date(d.flagged_at).toLocaleDateString() : '—';
       const statusBadge = isPending
-        ? `<span style="background:rgba(245,158,11,0.12);color:#F59E0B;border:1px solid rgba(245,158,11,0.2);padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;">⚠️ Pending</span>`
+        ? `<span style="background:rgba(245,158,11,0.12);color:#F59E0B;border:1px solid rgba(245,158,11,0.2);padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;">⚠️ ${isHoursAudit ? escHtml(d.discrepancy_type || 'Hours') : 'Pending'}</span>`
         : `<span style="background:rgba(34,197,94,0.1);color:#22C55E;border:1px solid rgba(34,197,94,0.2);padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;">✅ Resolved</span>`;
-      const deltaColor = parseFloat(d.delta_hours) > 0.5 ? 'color:#EF4444;font-weight:700' : 'color:#F59E0B;font-weight:600';
-      const resolveBtn = '<button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick=\'openDiscrepancyResolve(' + d.id + ', ' + JSON.stringify(d) + ')\'>Resolve</button>';
+      const deltaColor = d.delta_hours != null && parseFloat(d.delta_hours) > 0.5 ? 'color:#EF4444;font-weight:700' : 'color:#F59E0B;font-weight:600';
+      const resolveBtn = isHoursAudit
+        ? '<button class="btn btn-sm btn-secondary" onclick="navigate(\'instructor-hours\')">Review Hours</button>'
+        : '<button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick=\'openDiscrepancyResolve(' + d.id + ', ' + JSON.stringify(d) + ')\'>Resolve</button>';
       const canDeleteDisc = currentUser && ['owner','admin'].includes(currentUser.role);
       const resolvedCell = isPending ? resolveBtn : (
         '<span style="color:var(--gray-500);font-size:0.8rem">' + (d.resolved_by_name || '—') + '</span>' +
-        (canDeleteDisc
+        (canDeleteDisc && !isHoursAudit
           ? '<button class="btn btn-sm" style="margin-left:0.25rem;padding:2px 7px;font-size:0.72rem;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2);" onclick="deleteDiscrepancyEntry(' + d.id + ')">&#128465;</button>'
           : '')
       );
+      const deltaCell = isHoursAudit
+        ? '<span style="font-size:0.82rem;color:var(--gray-400)">' + escHtml(d.audit_message || 'Review instructor hours entry') + '</span>'
+        : `<span style="${deltaColor}">${parseFloat(d.delta_hours).toFixed(2)} hrs</span>`;
       return `<tr style="${isPending ? '' : 'opacity:0.7'}">
         <td style="white-space:nowrap">${flightDate}</td>
         <td>${d.student_name || '—'}</td>
         <td>${d.instructor_name || '—'}</td>
         <td><span style="font-family:monospace">${d.tail_number || '—'}</span></td>
-        <td style="white-space:nowrap">${d.student_hobbs_delta != null ? parseFloat(d.student_hobbs_delta).toFixed(1) + ' hrs' : '—'}<br><span style="font-size:0.75rem;color:var(--gray-500)">${d.student_hobbs_start}→${d.student_hobbs_end}</span></td>
-        <td style="white-space:nowrap">${d.instructor_hobbs_delta != null ? parseFloat(d.instructor_hobbs_delta).toFixed(1) + ' hrs' : '—'}<br><span style="font-size:0.75rem;color:var(--gray-500)">${d.instructor_hobbs_start}→${d.instructor_hobbs_end}</span></td>
-        <td style="${deltaColor}">${parseFloat(d.delta_hours).toFixed(2)} hrs</td>
+        <td style="white-space:nowrap">${d.student_hobbs_delta != null ? parseFloat(d.student_hobbs_delta).toFixed(1) + ' hrs' + (isHoursAudit ? ' (aircraft)' : '') : '—'}${!isHoursAudit && d.student_hobbs_start ? '<br><span style="font-size:0.75rem;color:var(--gray-500)">' + d.student_hobbs_start + '→' + d.student_hobbs_end + '</span>' : ''}</td>
+        <td style="white-space:nowrap">${d.instructor_hobbs_delta != null ? parseFloat(d.instructor_hobbs_delta).toFixed(1) + ' hrs' + (isHoursAudit ? ' (instruction)' : '') : '—'}${!isHoursAudit && d.instructor_hobbs_start ? '<br><span style="font-size:0.75rem;color:var(--gray-500)">' + d.instructor_hobbs_start + '→' + d.instructor_hobbs_end + '</span>' : ''}</td>
+        <td>${deltaCell}</td>
         <td>${statusBadge}${!isPending && d.resolution_reading ? `<br><span style="font-size:0.75rem;color:var(--gray-500)">Used: ${d.resolution_reading}</span>` : ''}</td>
         <td style="color:var(--gray-500);font-size:0.82rem;white-space:nowrap">${flagged}</td>
         <td style="white-space:nowrap">${resolvedCell}</td>
@@ -7386,7 +7402,9 @@ function openDayDetail(year, month, day) {
       const typeClass = getTypeClass(b.lesson_type);
       const isPast = end < now;
       // canAct: student can cancel their own bookings, anyone else can cancel any booking
-      const canAct = currentUser.role !== 'student' || b.student_id === currentUser.id;
+      const canAct = ['student', 'renter'].includes(currentUser.role)
+        ? b.student_id === currentUser.id
+        : currentUser.role !== 'student' || b.student_id === currentUser.id;
       // Complete Flight button is now shown unconditionally on confirmed bookings
       // Server-side /api/bookings/:id/complete validates permissions
 
@@ -7423,6 +7441,7 @@ function openDayDetail(year, month, day) {
         // Always show Complete Flight button on confirmed bookings (server validates permissions)
         actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;margin-right:0.4rem;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600;" onclick="closeDayModal();openCompleteModal(${b.id})">✓ Complete Flight</button>`;
         if (canAct) {
+          actionBtns += `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem;margin-right:0.4rem" onclick="openEditBookingModal(${b.id})">Edit</button>`;
           actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();openCancelModal(${b.id})">✗ Cancel Flight</button>`;
         }
         if (['owner','admin','instructor'].includes(currentUser.role)) {
@@ -7472,8 +7491,10 @@ function closeDayModal() {
 }
 
 // ─── BOOKING MODAL ───
-async function openBookingModal() {
-  document.getElementById('booking-modal-title').textContent = 'New Booking';
+async function openBookingModal(editBookingId) {
+  if (!allUsers || allUsers.length === 0) await loadUsers();
+  bookingEditId = editBookingId || null;
+  document.getElementById('booking-modal-title').textContent = bookingEditId ? 'Edit Booking' : 'New Booking';
   document.getElementById('booking-error').classList.add('hidden');
   document.getElementById('booking-conflicts').classList.add('hidden');
   document.getElementById('booking-conflicts-bottom').classList.add('hidden');
@@ -7481,7 +7502,7 @@ async function openBookingModal() {
   // Preserve the date pre-filled by clicking a calendar day, so reset() doesn't wipe it
   const savedDate = document.getElementById('booking-date').value;
   document.getElementById('booking-form').reset();
-  document.getElementById('booking-submit-btn').textContent = 'Book Flight';
+  document.getElementById('booking-submit-btn').textContent = bookingEditId ? 'Save Changes' : 'Book Flight';
   currentBookingAvailSlots = null;
 
   const students = allUsers.filter(u => u.role === 'student' || u.role === 'renter');
@@ -7563,6 +7584,41 @@ async function openBookingModal() {
 
   // Async: apply availability filtering if instructor + date are already set
   refreshBookingAvailability();
+
+  if (bookingEditId) {
+    try {
+      const b = await api('/api/bookings/' + bookingEditId);
+      if (b.student_id && currentUser.role !== 'student' && currentUser.role !== 'renter') {
+        document.getElementById('booking-student').value = b.student_id;
+      }
+      if (b.instructor_id) document.getElementById('booking-instructor').value = b.instructor_id;
+      if (b.aircraft_id) document.getElementById('booking-aircraft').value = b.aircraft_id;
+      const bd = new Date(b.start_time);
+      const localDate = bd.toLocaleDateString('en-CA');
+      document.getElementById('booking-date').value = localDate;
+      selectedBookingDate = localDate;
+      rebuildBookingTimePickers();
+      const startHM = `${String(bd.getHours()).padStart(2,'0')}:${String(bd.getMinutes()).padStart(2,'0')}`;
+      const endD = new Date(b.end_time);
+      const endHM = `${String(endD.getHours()).padStart(2,'0')}:${String(endD.getMinutes()).padStart(2,'0')}`;
+      if (document.getElementById('booking-start').querySelector(`option[value="${startHM}"]`)) {
+        document.getElementById('booking-start').value = startHM;
+      }
+      rebuildBookingTimePickers();
+      if (document.getElementById('booking-end').querySelector(`option[value="${endHM}"]`)) {
+        document.getElementById('booking-end').value = endHM;
+      }
+      if (b.lesson_type) document.getElementById('booking-lesson-type').value = b.lesson_type;
+      if (b.notes) document.getElementById('booking-notes').value = b.notes;
+    } catch (e) {
+      showToast(e.error || 'Could not load booking details', 'error');
+    }
+  }
+}
+
+async function openEditBookingModal(bookingId) {
+  closeDayModal();
+  await openBookingModal(bookingId);
 }
 
 // Build time <option> HTML for start or end pickers.
@@ -7774,6 +7830,7 @@ function updateBookingEndTimes() {
 }
 
 function closeBookingModal() {
+  bookingEditId = null;
   document.getElementById('booking-modal').classList.add('hidden');
   currentBookingAvailSlots = null;
 }
@@ -8107,14 +8164,16 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
 
   try {
     const isRecurring = document.getElementById('booking-recurring')?.checked;
-    if (isRecurring && ['owner','admin','instructor'].includes(currentUser.role)) {
+    if (bookingEditId) {
+      await api('/api/bookings/' + bookingEditId, { method: 'PUT', body: JSON.stringify(payload) });
+    } else if (isRecurring && ['owner','admin','instructor'].includes(currentUser.role)) {
       payload.weeks = parseInt(document.getElementById('booking-recurring-weeks')?.value || '4', 10);
       const result = await api('/api/bookings/recurring', { method: 'POST', body: JSON.stringify(payload) });
       showToast(`Created ${result.created} recurring booking(s)` + (result.skipped?.length ? ` (${result.skipped.length} skipped)` : ''), 'success');
     } else {
       await api('/api/bookings', { method: 'POST', body: JSON.stringify(payload) });
     }
-    showToast('Booking confirmed', 'success');
+    showToast(bookingEditId ? 'Booking updated' : 'Booking confirmed', 'success');
     closeBookingModal();
     if (currentPage === 'schedule') loadCalendar();
     else if (currentPage === 'dashboard') loadDashboard();
@@ -10444,7 +10503,7 @@ function renderEnrollmentCard(e, debriefs, isOwnView, maneuverProgress) {
 
   // Build stages with expandable maneuver checklists
   const stagesHtml = e.stages ? e.stages.map(s => {
-    const done = s.completed;
+    const done = !!(s.completion && s.completion.completed_at) || !!s.completed;
     const isCurrent = e.current_stage_id === s.id;
     const maneuvers = (s.maneuvers || []);
     const hasManeuvers = maneuvers.length > 0;
@@ -11101,10 +11160,12 @@ document.addEventListener('DOMContentLoaded', () => {
           })
         });
         closeSignOffModal();
+        showToast('Stage signed off', 'success');
         await openProgressDetail(currentProgressStudentId);
       } catch (err) {
         errEl.textContent = err.error || 'Failed to sign off stage';
         errEl.classList.remove('hidden');
+        showToast(err.error || 'Failed to sign off stage', 'error');
       }
     });
   }
@@ -11346,6 +11407,17 @@ async function loadBillingAuditBanner() {
 
 let billingViewMode = 'students';
 
+function openOpsBilling() {
+  billingNavSource = 'ops';
+  navigate('billing');
+}
+
+function openMgmtBilling() {
+  billingNavSource = 'mgmt';
+  billingViewMode = 'students';
+  navigate('billing');
+}
+
 function switchBillingView(mode) {
   billingViewMode = mode;
   document.querySelectorAll('.billing-view-tab').forEach(function(btn) {
@@ -11409,7 +11481,6 @@ async function loadBilling() {
 
   if (role === 'student' || role === 'renter') {
     if (tabsEl) tabsEl.classList.add('hidden');
-    // Students/renters see their own billing directly
     selectorEl.classList.add('hidden');
     backBtn.classList.add('hidden');
     emptyEl.classList.add('hidden');
@@ -11419,15 +11490,17 @@ async function loadBilling() {
     return;
   }
 
-  // Owner/admin/instructor: show student overview or my activity
-  if (tabsEl) tabsEl.classList.toggle('hidden', !isStaff);
-  if (isStaff && billingViewMode === 'my') {
+  // Operations → Billing: staff see their own flight activity
+  if (billingNavSource === 'ops' && isStaff) {
+    if (tabsEl) tabsEl.classList.add('hidden');
     await loadBillingMyActivity();
     return;
   }
-  document.getElementById('billing-title').textContent = 'Billing';
+
+  // Management → Billing: owner/admin see all students
+  if (tabsEl) tabsEl.classList.add('hidden');
+  document.getElementById('billing-title').textContent = 'Billing — All Students';
   try {
-    await loadBillingAuditBanner();
     billingStudentSummaries = await api('/api/billing/summary');
     if (billingStudentSummaries.length === 0) {
       selectorEl.classList.add('hidden');
@@ -15160,22 +15233,7 @@ async function loadInstructorHours() {
 
 function renderIHAuditBanner(ihOnlyEntries) {
   var banner = document.getElementById('ih-audit-banner');
-  if (!banner) return;
-  var flagged = (ihOnlyEntries || []).filter(function(e) { return e.audit_status === 'flagged'; });
-  var unmatched = (ihOnlyEntries || []).filter(function(e) { return e.audit_status === 'unmatched'; });
-  if (!flagged.length && !unmatched.length) { banner.classList.add('hidden'); return; }
-  var parts = [];
-  if (flagged.length) {
-    parts.push('<strong style="color:var(--red)">' + flagged.length + ' mismatch' + (flagged.length > 1 ? 'es' : '') + '</strong>: ' +
-      flagged.slice(0, 2).map(function(f) {
-        return escHtml(String(f.entry_date || '').slice(0, 10) + ' — ' + (f.audit_message || 'Hours do not match flight log'));
-      }).join('; '));
-  }
-  if (unmatched.length) {
-    parts.push('<span style="color:var(--amber)">' + unmatched.length + ' unverified</span> (no matching flight log found)');
-  }
-  banner.innerHTML = parts.join(' · ') + '. Correct the entry or update the flight log Hobbs readings.';
-  banner.classList.remove('hidden');
+  if (banner) banner.classList.add('hidden');
 }
 
 function renderIHStats(entries) {
@@ -15270,12 +15328,9 @@ function renderIHTable(entries) {
     var instrNameTd = isAdminOrOwnerView ? '<td style="font-size:0.85rem">' + escHtml(e.instructor_name || '') + '</td>' : '';
     var studentStr = e.student_name ? escHtml(e.student_name) : '<span style="color:var(--gray-500)">—</span>';
     var canDelete = currentUser.role === 'owner' || currentUser.role === 'admin' || (currentUser.role === 'instructor' && e.instructor_id === currentUser.id);
-    var canEdit = currentUser.role === 'owner' || currentUser.role === 'admin';
-    var auditBadge = (!isGround && e.audit_status === 'flagged')
-      ? ' <span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3);font-size:0.68rem;vertical-align:middle" title="' + escHtml(e.audit_message || '') + '">Mismatch</span>'
-      : (!isGround && e.audit_status === 'unmatched'
-        ? ' <span class="tag" style="background:rgba(245,158,11,0.15);color:var(--amber);border:1px solid rgba(245,158,11,0.3);font-size:0.68rem;vertical-align:middle">Unverified</span>'
-        : '');
+    var canEdit = currentUser.role === 'owner' || currentUser.role === 'admin'
+      || (currentUser.role === 'instructor' && e.instructor_id === currentUser.id);
+    var auditBadge = '';
     var editBtn = canEdit
       ? (isGround
         ? '<button class="btn btn-sm btn-secondary" onclick="openEditGSModal(' + e.id + ')" title="Edit ground session" style="padding:0.25rem 0.5rem;font-size:0.75rem;">✏</button>'
@@ -15297,7 +15352,7 @@ function renderIHTable(entries) {
     footTotalInHrs += parseFloat(e.instruction_hours || 0);
     footTotalInstrCharge += instrCharge;
     footTotalBilled += totalBilled;
-    return '<tr' + (e.audit_status === 'flagged' ? ' style="background:rgba(239,68,68,0.04)"' : '') + '>' +
+    return '<tr>' +
       '<td style="white-space:nowrap;color:var(--gray-300)">' + escHtml(dateStr) + auditBadge + '</td>' +
       instrNameTd +
       '<td style="font-size:0.85rem">' + studentStr + '</td>' +
@@ -15375,7 +15430,7 @@ async function submitIHEntry() {
   try {
     var saved = await api('/api/instructor-hours', { method: 'POST', body: JSON.stringify(body) });
     if (saved && saved.audit_status === 'flagged') {
-      showToast('Hours saved but flagged: ' + (saved.audit_message || 'Does not match flight log'), 'error');
+      showToast('Hours saved — any mismatch appears under Discrepancies', 'success');
     } else if (saved && saved.audit_status === 'unmatched') {
       showToast('Hours saved — no matching flight log found for verification', 'error');
     } else {

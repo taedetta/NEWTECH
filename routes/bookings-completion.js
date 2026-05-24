@@ -10,6 +10,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { checkConflicts, isInstructorAvailable, findNextAvailableSlots } = require('./bookings-routes');
 const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail, sendEmail } = require('../email-templates');
+const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 
 const router = express.Router();
 
@@ -298,6 +299,23 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
        tach_start = $3, tach_end = $4, updated_at = NOW() WHERE id = $5`,
       [hStart, hEnd, tStart, tEnd, req.params.id]
     );
+
+    // Auto-sync instructor hours log from completed flight
+    if (b.instructor_id && hobbsFlown > 0) {
+      let studentName = null;
+      if (b.student_id) {
+        const sn = await client.query('SELECT name FROM users WHERE id = $1', [b.student_id]);
+        studentName = sn.rows[0]?.name || null;
+      }
+      await syncInstructorHoursFromFlight(client, {
+        booking: b,
+        hobbsFlown,
+        dualHrs,
+        flightDate: flight_date,
+        studentName,
+      });
+    }
+
     await client.query('COMMIT');
 
     // Record Hobbs reading for discrepancy tracking (fire-and-forget — does not affect booking completion)

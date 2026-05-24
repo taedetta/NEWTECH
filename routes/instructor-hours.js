@@ -182,11 +182,17 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
-    const { role } = req.user;
-    if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can edit instructor hours entries' });
+    const { role, id: userId } = req.user;
     const entryId = parseInt(req.params.id);
     const existing = await pool.query('SELECT * FROM instructor_hours WHERE id = $1', [entryId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
+    if (role === 'student') return res.status(403).json({ error: 'Access denied' });
+    if (role === 'instructor' && existing.rows[0].instructor_id !== userId) {
+      return res.status(403).json({ error: "Cannot edit another instructor's entry" });
+    }
+    if (!['owner', 'admin', 'instructor'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
     if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
     const row = existing.rows[0];

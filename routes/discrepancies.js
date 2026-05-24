@@ -8,6 +8,7 @@ const express = require('express');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const {
   listDiscrepancies,
+  listHoursAuditDiscrepancies,
   countPendingDiscrepancies,
   resolveDiscrepancy,
   hasUnresolvedDiscrepancy,
@@ -20,8 +21,14 @@ const router = express.Router();
 router.get('/', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { status } = req.query; // 'pending' | 'resolved' | 'all' (default all)
-    const rows = await listDiscrepancies({ status: status || 'all' });
-    res.json(rows);
+    const hobbsRows = await listDiscrepancies({ status: status || 'all' });
+    const hoursRows = await listHoursAuditDiscrepancies({ status: status || 'all' });
+    const merged = [...hobbsRows, ...hoursRows].sort((a, b) => {
+      const da = new Date(a.flagged_at || a.flight_date || 0).getTime();
+      const db = new Date(b.flagged_at || b.flight_date || 0).getTime();
+      return db - da;
+    });
+    res.json(merged);
   } catch (err) {
     console.error('[discrepancies] list error:', err.message);
     res.status(500).json({ error: 'Failed to load discrepancies' });

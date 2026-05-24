@@ -12,7 +12,7 @@ const pool = require('./index');
  */
 async function getStudentProgress(studentId) {
   const enrollmentsResult = await pool.query(`
-    SELECT st.id, st.program_id, st.instructor_id, st.status, st.started_at,
+    SELECT st.id, st.program_id, st.instructor_id, st.current_stage_id, st.status, st.started_at,
            tp.name AS program_name, tp.code AS program_code,
            instructor.name AS instructor_name,
            ps.name AS current_stage_name,
@@ -50,14 +50,22 @@ async function getStudentProgress(studentId) {
          WHERE sm.stage_id = $2 AND smp.status IN ('proficient','completed')`,
         [studentId, stage.id]
       );
+      const milestoneResult = await pool.query(
+        `SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 LIMIT 1`,
+        [studentId, stage.id]
+      );
       const mCount = parseInt(stage.maneuver_count);
-      const isComplete = mCount > 0 && parseInt(completionResult.rows[0].cnt) >= mCount;
+      const isCompleteByManeuvers = mCount > 0 && parseInt(completionResult.rows[0].cnt) >= mCount;
+      const isComplete = isCompleteByManeuvers || milestoneResult.rows.length > 0;
       if (isComplete) completedStages++;
 
       stages.push({
         ...stage,
         maneuver_count: mCount,
-        completion: isComplete ? { completed_at: new Date() } : null,
+        completion: isComplete
+          ? { completed_at: milestoneResult.rows[0]?.completed_at || new Date() }
+          : null,
+        completed: isComplete,
         maneuvers: maneuversResult.rows.map(m => ({
           ...m,
           status: m.status || 'not_started',
@@ -334,6 +342,62 @@ async function getProgramEnrollments(programId) {
   return result.rows;
 }
 
+/**
+ * Instructor sign-off: record stage milestone and advance enrollment to next stage.
+ */
+async function completeStageMilestone({ studentId, stageId, enrollmentId, completedBy, notes, debriefId }) {
+  const enrollResult = await pool.query(
+    'SELECT * FROM student_training WHERE id = $1 AND student_id = $2',
+    [enrollmentId, studentId]
+  );
+  if (enrollResult.rows.length === 0) {
+    const err = new Error('Enrollment not found');
+    err.status = 404;
+    throw err;
+  }
+  const enroll = enrollResult.rows[0];
+
+  const stageResult = await pool.query(
+    'SELECT id, program_id, order_index FROM program_stages WHERE id = $1',
+    [stageId]
+  );
+  if (stageResult.rows.length === 0 || stageResult.rows[0].program_id !== enroll.program_id) {
+    const err = new Error('Stage not found in this program');
+    err.status = 400;
+    throw err;
+  }
+  const stage = stageResult.rows[0];
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [studentId, stageId, completedBy, debriefId || null, notes || null]
+    );
+
+    const nextStage = await client.query(
+      `SELECT id FROM program_stages
+       WHERE program_id = $1 AND order_index > $2
+       ORDER BY order_index ASC LIMIT 1`,
+      [enroll.program_id, stage.order_index]
+    );
+    const nextStageId = nextStage.rows.length > 0 ? nextStage.rows[0].id : stageId;
+    await client.query(
+      `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2`,
+      [nextStageId, enrollmentId]
+    );
+    await client.query('COMMIT');
+    return { ok: true, next_stage_id: nextStageId };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getStudentProgress,
   getManeuverProgress,
@@ -343,4 +407,5 @@ module.exports = {
   enrollStudent,
   reassignInstructor,
   getProgramEnrollments,
+  completeStageMilestone,
 };
