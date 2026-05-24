@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
   instructor_rate DECIMAL(8,2),
   cfi_cert_number VARCHAR(50),
   cfi_expiry DATE,
+  medical_certificate_expiry DATE,
+  medical_certificate_class VARCHAR(10),
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -121,8 +123,17 @@ CREATE TABLE IF NOT EXISTS flight_logs (
   tach_end DECIMAL(8,1),
   tach_delta DECIMAL(8,2),
   dual_instruction_hours DECIMAL(8,2),
+  booking_type VARCHAR(20),
+  submitted_by INTEGER REFERENCES users(id),
+  is_night BOOLEAN DEFAULT false,
+  is_xc BOOLEAN DEFAULT false,
+  is_instrument BOOLEAN DEFAULT false,
+  is_solo BOOLEAN DEFAULT false,
+  aircraft_charge_amount DECIMAL(10,2),
+  instruction_charge_amount DECIMAL(10,2),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
 
@@ -158,6 +169,7 @@ CREATE TABLE IF NOT EXISTS ground_sessions (
   instruction_charge_amount DECIMAL(10,2),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
 
@@ -201,6 +213,18 @@ CREATE TABLE IF NOT EXISTS endorsements (
   aircraft_id INTEGER REFERENCES aircraft(id),
   endorsement_type VARCHAR(100),
   endorsement_text TEXT,
+  template_key VARCHAR(80),
+  endorsement_date DATE,
+  expiration_date DATE,
+  student_name VARCHAR(255),
+  instructor_name VARCHAR(255),
+  instructor_cert_number VARCHAR(50),
+  aircraft_make_model VARCHAR(100),
+  instructor_signature TEXT,
+  signed_at TIMESTAMPTZ,
+  ip_address VARCHAR(45),
+  user_agent TEXT,
+  metadata JSONB,
   student_signature TEXT,
   student_signed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -249,8 +273,11 @@ CREATE TABLE IF NOT EXISTS stage_maneuvers (
   id SERIAL PRIMARY KEY,
   stage_id INTEGER REFERENCES program_stages(id) ON DELETE CASCADE,
   name VARCHAR(100) NOT NULL,
+  description TEXT,
+  proficiency_standard TEXT,
   order_index INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS student_training (
@@ -266,15 +293,18 @@ CREATE TABLE IF NOT EXISTS student_training (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
+CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);
 
 CREATE TABLE IF NOT EXISTS student_maneuver_progress (
   id SERIAL PRIMARY KEY,
   student_id INTEGER REFERENCES users(id),
   maneuver_id INTEGER REFERENCES stage_maneuvers(id),
   status VARCHAR(20),
+  notes TEXT,
   proficient_date DATE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
 
 CREATE TABLE IF NOT EXISTS flight_debriefs (
   id SERIAL PRIMARY KEY,
@@ -355,9 +385,13 @@ CREATE TABLE IF NOT EXISTS student_interventions (
   id SERIAL PRIMARY KEY,
   student_id INTEGER REFERENCES users(id),
   logged_by INTEGER REFERENCES users(id),
+  instructor_id INTEGER REFERENCES users(id),
   intervention_type VARCHAR(50),
   outcome VARCHAR(50),
+  action_taken TEXT,
+  action_date DATE,
   notes TEXT,
+  occurred_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -427,6 +461,19 @@ CREATE TABLE IF NOT EXISTS file_overrides (
   synced_to_github BOOLEAN DEFAULT FALSE,
   synced_at TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS airworthiness_directives (
+  id SERIAL PRIMARY KEY,
+  aircraft_id INTEGER REFERENCES aircraft(id) ON DELETE CASCADE,
+  ad_number VARCHAR(50),
+  description TEXT NOT NULL,
+  due_date DATE,
+  due_hobbs DECIMAL(8,1),
+  status VARCHAR(20) DEFAULT 'open',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS airworthiness_directives_aircraft_id_idx ON airworthiness_directives(aircraft_id);
 
 CREATE TABLE IF NOT EXISTS feedback (
   id SERIAL PRIMARY KEY,

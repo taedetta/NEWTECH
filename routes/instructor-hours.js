@@ -60,11 +60,20 @@ router.post('/', authenticateToken, async (req, res) => {
     const instructorCheck = await pool.query(`SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL`, [instructorId]);
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
+    const entryDate = entry_date || new Date().toISOString().slice(0, 10);
+    const dup = await pool.query(
+      `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
+       AND aircraft_id IS NOT DISTINCT FROM $3 AND ABS(instruction_hours - $4) < 0.01 LIMIT 1`,
+      [instructorId, entryDate, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null, parseFloat(instruction_hours) || 0]
+    );
+    if (dup.rows.length > 0) {
+      return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
+    }
     const result = await pool.query(`
       INSERT INTO instructor_hours (instructor_id, aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
-       entry_date || new Date().toISOString().slice(0, 10),
+       entryDate,
        parseFloat(aircraft_hours) || 0, parseFloat(instruction_hours) || 0,
        aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
        instructor_rate !== undefined ? parseFloat(instructor_rate) : null,

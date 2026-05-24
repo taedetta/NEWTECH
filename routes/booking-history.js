@@ -45,16 +45,28 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // --- Flights ---
     let fq = `
-      SELECT b.id,
+      SELECT b.id, 'flight'::text AS session_type,
         COALESCE(fl.flight_date, b.start_time::date) as flight_date,
         s.name as student_name, i.name as instructor_name,
         a.tail_number, a.make_model,
-        b.status, b.cancellation_reason,
-        fl.hobbs_delta, fl.tach_delta, fl.dual_instruction_hours,
-        COALESCE(fl.aircraft_charge_amount, fl.hobbs_delta * a.hourly_rate) as aircraft_charge_amount,
-        COALESCE(fl.instruction_charge_amount, fl.dual_instruction_hours * COALESCE(i.instructor_rate, 0)) as instruction_charge_amount,
-        COALESCE(fl.aircraft_charge_amount, fl.hobbs_delta * a.hourly_rate, 0)
-          + COALESCE(fl.instruction_charge_amount, fl.dual_instruction_hours * COALESCE(i.instructor_rate, 0), 0) as total_charge
+        b.status, b.cancellation_reason, b.booking_type,
+        COALESCE(fl.hobbs_delta, CASE WHEN b.hobbs_end IS NOT NULL AND b.hobbs_start IS NOT NULL THEN b.hobbs_end - b.hobbs_start END) as hobbs_delta,
+        fl.tach_delta,
+        COALESCE(fl.dual_instruction_hours,
+          CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END) as dual_instruction_hours,
+        COALESCE(fl.aircraft_charge_amount,
+          COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate) as aircraft_charge_amount,
+        COALESCE(fl.instruction_charge_amount,
+          COALESCE(fl.dual_instruction_hours,
+            CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
+          ) * COALESCE(i.instructor_rate, 0)) as instruction_charge_amount,
+        COALESCE(fl.aircraft_charge_amount,
+          COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate, 0)
+          + COALESCE(fl.instruction_charge_amount,
+            COALESCE(fl.dual_instruction_hours,
+              CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
+            ) * COALESCE(i.instructor_rate, 0), 0) as total_charge,
+        fl.hobbs_start, fl.hobbs_end, fl.tach_start, fl.tach_end
       FROM bookings b
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
@@ -76,16 +88,20 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // --- Ground sessions ---
     let gq = `
-      SELECT gs.id,
+      SELECT gs.id, 'ground'::text AS session_type,
         gs.session_date as flight_date,
         s.name as student_name, i.name as instructor_name,
         NULL::text as tail_number, NULL::text as make_model,
         'completed'::text as status,
+        NULL::text as cancellation_reason,
+        NULL::text as booking_type,
         NULL::decimal as hobbs_delta, NULL::decimal as tach_delta,
         gs.ground_hours as dual_instruction_hours,
         NULL::decimal as aircraft_charge_amount,
         gs.instruction_charge_amount,
-        COALESCE(gs.instruction_charge_amount, 0) as total_charge
+        COALESCE(gs.instruction_charge_amount, 0) as total_charge,
+        NULL::decimal as hobbs_start, NULL::decimal as hobbs_end,
+        NULL::decimal as tach_start, NULL::decimal as tach_end
       FROM ground_sessions gs
       LEFT JOIN users s ON gs.student_id = s.id
       LEFT JOIN users i ON gs.instructor_id = i.id

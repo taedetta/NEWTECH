@@ -8,6 +8,14 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { bookingConfirmationEmail, flightCancelledEmail, sendEmail } = require('../email-templates');
+const {
+  getPolicySettings,
+  validateBookingTimes,
+  validateCancellation,
+  checkGroundingSquawk,
+  checkStudentSoloEligible,
+  runPreflightChecks,
+} = require('../lib/booking-rules');
 
 const router = express.Router();
 
@@ -305,6 +313,309 @@ router.get('/check-availability', authenticateToken, async (req, res) => {
   }
 });
 
+// ─── Booking policy (public to authenticated users) ───
+router.get('/policy', authenticateToken, async (req, res) => {
+  try {
+    const policy = await getPolicySettings();
+    res.json(policy);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load booking policy' });
+  }
+});
+
+// ─── Preflight validation preview (before submit) ───
+router.get('/preflight-check', authenticateToken, async (req, res) => {
+  try {
+    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_start, local_end } = req.query;
+    if (!aircraft_id || !start_time || !end_time) {
+      return res.status(400).json({ error: 'aircraft_id, start_time, end_time required' });
+    }
+    const sid = student_id ? parseInt(student_id, 10) : null;
+    const iid = instructor_id ? parseInt(instructor_id, 10) : null;
+    let booking_type = 'dual';
+    if (sid && !iid) booking_type = 'student_solo';
+    else if (!sid && iid) booking_type = 'instructor_solo';
+    const result = await runPreflightChecks(null, {
+      aircraft_id: parseInt(aircraft_id, 10),
+      student_id: sid,
+      instructor_id: iid,
+      start_time,
+      end_time,
+      booking_type,
+      local_start,
+      local_end,
+    }, req.user.role);
+    res.json(result);
+  } catch (err) {
+    console.error('[bookings] preflight-check error:', err.message);
+    res.status(500).json({ error: 'Preflight check failed' });
+  }
+});
+
+// ─── Daily roster (dispatch board) ───
+router.get('/roster', authenticateToken, async (req, res) => {
+  try {
+    if (!['owner', 'admin', 'instructor', 'maintenance'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    const dayStart = `${date}T00:00:00.000Z`;
+    const dayEnd = `${date}T23:59:59.999Z`;
+    let query = `
+      SELECT b.id, b.start_time, b.end_time, b.status, b.booking_type, b.lesson_type,
+             s.name AS student_name, i.name AS instructor_name,
+             a.tail_number, a.make_model, a.status AS aircraft_status
+      FROM bookings b
+      LEFT JOIN users s ON b.student_id = s.id
+      LEFT JOIN users i ON b.instructor_id = i.id
+      JOIN aircraft a ON b.aircraft_id = a.id
+      WHERE b.status NOT IN ('cancelled')
+        AND b.start_time <= $2 AND b.end_time >= $1
+    `;
+    const params = [dayStart, dayEnd];
+    if (req.user.role === 'instructor') {
+      query += ' AND b.instructor_id = $3';
+      params.push(req.user.id);
+    }
+    query += ' ORDER BY b.start_time';
+    const result = await pool.query(query, params);
+    res.json({ date, bookings: result.rows });
+  } catch (err) {
+    console.error('[bookings] roster error:', err.message);
+    res.status(500).json({ error: 'Failed to load roster' });
+  }
+});
+
+// ─── Past flights awaiting Hobbs / completion ───
+router.get('/completable', authenticateToken, async (req, res) => {
+  try {
+    let query = `
+      SELECT b.*,
+        s.name AS student_name, i.name AS instructor_name,
+        a.tail_number, a.make_model, a.current_hobbs
+      FROM bookings b
+      LEFT JOIN users s ON b.student_id = s.id
+      LEFT JOIN users i ON b.instructor_id = i.id
+      JOIN aircraft a ON b.aircraft_id = a.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      WHERE b.status = 'confirmed'
+        AND b.end_time < NOW()
+        AND fl.id IS NULL
+    `;
+    const params = [];
+    let idx = 1;
+    const role = req.user.role;
+    if (role === 'student') {
+      query += ` AND b.student_id = $${idx++}`;
+      params.push(req.user.id);
+    } else if (role === 'renter') {
+      query += ` AND b.student_id = $${idx++}`;
+      params.push(req.user.id);
+    } else if (role === 'instructor') {
+      query += ` AND b.instructor_id = $${idx++}`;
+      params.push(req.user.id);
+    } else if (role === 'maintenance') {
+      return res.json([]);
+    }
+    query += ' ORDER BY b.end_time DESC LIMIT 50';
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[bookings] completable error:', err.message);
+    res.status(500).json({ error: 'Failed to load pending flights' });
+  }
+});
+
+// ─── iCal export for current user's upcoming bookings ───
+router.get('/ical/me', authenticateToken, async (req, res) => {
+  try {
+    let query = `
+      SELECT b.*, a.tail_number, s.name AS student_name, i.name AS instructor_name
+      FROM bookings b
+      JOIN aircraft a ON a.id = b.aircraft_id
+      LEFT JOIN users s ON b.student_id = s.id
+      LEFT JOIN users i ON b.instructor_id = i.id
+      WHERE b.status = 'confirmed' AND b.end_time >= NOW()
+    `;
+    const params = [];
+    if (req.user.role === 'student' || req.user.role === 'renter') {
+      query += ' AND b.student_id = $1';
+      params.push(req.user.id);
+    } else if (req.user.role === 'instructor') {
+      query += ' AND b.instructor_id = $1';
+      params.push(req.user.id);
+    }
+    query += ' ORDER BY b.start_time LIMIT 200';
+    const result = await pool.query(query, params);
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//FlightSlate//EN',
+      'CALSCALE:GREGORIAN',
+    ];
+    for (const b of result.rows) {
+      const uid = `booking-${b.id}@flightslate`;
+      const dtStart = new Date(b.start_time).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+      const dtEnd = new Date(b.end_time).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+      const summary = `${b.tail_number} — ${b.lesson_type || b.booking_type || 'Flight'}`;
+      const desc = [b.student_name && `Student: ${b.student_name}`, b.instructor_name && `CFI: ${b.instructor_name}`].filter(Boolean).join('\\n');
+      lines.push('BEGIN:VEVENT', `UID:${uid}`, `DTSTART:${dtStart}`, `DTEND:${dtEnd}`, `SUMMARY:${summary}`, `DESCRIPTION:${desc}`, 'END:VEVENT');
+    }
+    lines.push('END:VCALENDAR');
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="flightslate-schedule.ics"');
+    res.send(lines.join('\r\n'));
+  } catch (err) {
+    console.error('[bookings] ical error:', err.message);
+    res.status(500).json({ error: 'Failed to export calendar' });
+  }
+});
+
+// ─── Duplicate booking (+7 days default) ───
+router.post('/duplicate/:id', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only staff can duplicate bookings' });
+    }
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    const b = existing.rows[0];
+    if (b.status === 'cancelled') return res.status(400).json({ error: 'Cannot duplicate cancelled booking' });
+    const offsetDays = parseInt(req.body.offset_days, 10) || 7;
+    const start = new Date(b.start_time);
+    const end = new Date(b.end_time);
+    start.setDate(start.getDate() + offsetDays);
+    end.setDate(end.getDate() + offsetDays);
+    const start_time = start.toISOString();
+    const end_time = end.toISOString();
+    const policy = await getPolicySettings();
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const timeCheck = validateBookingTimes({
+      start, end, policy, userRole: req.user.role, isAdmin,
+    });
+    if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
+
+    const grounding = await checkGroundingSquawk(client, b.aircraft_id);
+    if (grounding.blocked) return res.status(409).json({ error: 'Aircraft grounded', reason: grounding.reason });
+
+    await client.query('BEGIN');
+    const conflicts = await checkConflicts(client, {
+      aircraft_id: b.aircraft_id,
+      instructor_id: b.instructor_id,
+      student_id: b.student_id,
+      start_time,
+      end_time,
+    });
+    if (conflicts.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Scheduling conflict', conflicts });
+    }
+    const ins = await client.query(
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [b.student_id, b.instructor_id, b.aircraft_id, start_time, end_time, b.lesson_type,
+        b.notes ? `(Copy) ${b.notes}` : 'Duplicated booking', req.user.id, b.booking_type]
+    );
+    await client.query('COMMIT');
+    res.status(201).json(ins.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Failed to duplicate booking' });
+  } finally {
+    client.release();
+  }
+});
+
+// ─── Recurring weekly bookings ───
+router.post('/recurring', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const {
+      student_id, instructor_id, aircraft_id, start_time, end_time,
+      lesson_type, notes, local_date, local_start, local_end, weeks = 4,
+    } = req.body;
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only staff can create recurring bookings' });
+    }
+    const weekCount = Math.min(Math.max(parseInt(weeks, 10) || 4, 1), 12);
+    const created = [];
+    const skipped = [];
+    const baseStart = new Date(start_time);
+    const baseEnd = new Date(end_time);
+    const durationMs = baseEnd - baseStart;
+
+    for (let w = 0; w < weekCount; w++) {
+      const st = new Date(baseStart.getTime() + w * 7 * 86400000);
+      const et = new Date(st.getTime() + durationMs);
+      const body = {
+        student_id, instructor_id, aircraft_id,
+        start_time: st.toISOString(),
+        end_time: et.toISOString(),
+        lesson_type, notes,
+        local_date: local_date || st.toISOString().slice(0, 10),
+        local_start, local_end,
+        force_booking: req.body.force_booking,
+      };
+      try {
+        // Inline create logic — reuse validation via internal helper
+        const fakeReq = { body, user: req.user };
+        const result = await createBookingInternal(client, fakeReq);
+        if (result.error) skipped.push({ week: w + 1, reason: result.error });
+        else created.push(result.booking);
+      } catch (e) {
+        skipped.push({ week: w + 1, reason: e.message });
+      }
+    }
+    res.status(201).json({ created: created.length, skipped, bookings: created });
+  } catch (err) {
+    console.error('[bookings] recurring error:', err.message);
+    res.status(500).json({ error: 'Failed to create recurring bookings' });
+  } finally {
+    client.release();
+  }
+});
+
+async function createBookingInternal(client, req) {
+  const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
+  const sid = student_id ? parseInt(student_id, 10) : null;
+  const iid = instructor_id ? parseInt(instructor_id, 10) : null;
+  if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
+  const start = new Date(start_time);
+  const end = new Date(end_time);
+  if (end <= start) return { error: 'End time must be after start time' };
+  const policy = await getPolicySettings();
+  const isAdmin = ['owner', 'admin'].includes(req.user.role);
+  const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin });
+  if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
+
+  const grounding = await checkGroundingSquawk(client, aircraft_id);
+  if (grounding.blocked) return { error: `Aircraft grounded: ${grounding.reason}` };
+
+  let booking_type = 'dual';
+  if (sid && !iid) booking_type = 'student_solo';
+  else if (!sid && iid) booking_type = 'instructor_solo';
+
+  if (booking_type === 'student_solo') {
+    const solo = await checkStudentSoloEligible(client, sid);
+    if (!solo.allowed) return { error: solo.error };
+  }
+
+  const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
+  if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
+  if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
+
+  const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
+  if (conflicts.length) return { error: 'Scheduling conflict', conflicts };
+
+  const result = await client.query(
+    `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+  );
+  return { booking: result.rows[0] };
+}
+
 router.post('/', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -323,8 +634,23 @@ router.post('/', authenticateToken, async (req, res) => {
     // Duration cap — reject bookings longer than 12 hours
     const durationHrs = (end - start) / (1000 * 60 * 60);
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
-    const now = new Date();
-    if (start < now) return res.status(400).json({ error: 'Start time must be in the future' });
+    const policy = await getPolicySettings();
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin });
+    if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
+
+    let booking_type = 'dual';
+    if (sid && !iid) booking_type = 'student_solo';
+    else if (!sid && iid) booking_type = 'instructor_solo';
+
+    const grounding = await checkGroundingSquawk(client, aircraft_id);
+    if (grounding.blocked) return res.status(409).json({ error: 'Aircraft is grounded due to open squawk', reason: grounding.reason });
+
+    if (booking_type === 'student_solo') {
+      const solo = await checkStudentSoloEligible(client, sid);
+      if (!solo.allowed) return res.status(403).json({ error: solo.error });
+    }
+
     // Check aircraft downtime window — reject if aircraft is scheduled for maintenance
     if (aircraft_id) {
       const bookingDate = start.toISOString().slice(0, 10);
@@ -336,9 +662,6 @@ router.post('/', authenticateToken, async (req, res) => {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance on this date', reason: downtimeCheck.rows[0].reason });
       }
     }
-    let booking_type = 'dual';
-    if (sid && !iid) booking_type = 'student_solo';
-    else if (!sid && iid) booking_type = 'instructor_solo';
     const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
     if (aircraft.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     if (aircraft.rows[0].status !== 'available') {
@@ -465,7 +788,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
       const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: st, end_time: et, excludeBookingId: bookingId });
       if (conflicts.length > 0) {
-        await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Scheduling conflict', conflicts });
       }
     }
@@ -504,6 +826,9 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const isStudent = req.user.id === b.student_id;
     if (!isAdmin && !isInstructor && !isStudent) return res.status(403).json({ error: 'Access denied' });
     if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    const policy = await getPolicySettings();
+    const cancelCheck = validateCancellation({ bookingStart: b.start_time, userRole: req.user.role, isAdmin, policy });
+    if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
     const reason = req.body?.reason || null;
     await client.query('BEGIN');
     await client.query(

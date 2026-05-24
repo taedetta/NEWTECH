@@ -54,9 +54,11 @@ async function main() {
   const instructor = users.data.find((u) => u.is_instructor || u.role === 'instructor');
 
   if (acId && student && instructor) {
-    const start = new Date(Date.now() + 86400000);
-    start.setHours(10, 0, 0, 0);
+    const start = new Date(Date.now() + 86400000 + Math.floor(Math.random() * 86400000));
+    start.setMinutes(0, 0, 0);
     const end = new Date(start.getTime() + 2 * 3600000);
+    const localStart = `${String(start.getHours()).padStart(2, '0')}:00`;
+    const localEnd = `${String(end.getHours()).padStart(2, '0')}:00`;
     const booking = await api(admin.token, '/api/bookings', {
       method: 'POST',
       body: JSON.stringify({
@@ -66,10 +68,11 @@ async function main() {
         start_time: start.toISOString(),
         end_time: end.toISOString(),
         local_date: start.toISOString().slice(0, 10),
-        local_start: '10:00',
-        local_end: '12:00',
+        local_start: localStart,
+        local_end: localEnd,
         booking_type: 'dual',
         lesson_type: 'Dual Instruction',
+        force_booking: true,
       }),
     });
     ok('create booking', booking.status === 201 || booking.status === 200, JSON.stringify(booking.data).slice(0, 100));

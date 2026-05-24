@@ -10,7 +10,10 @@
     "setup": "node scripts/fetch-live-cms.js && node scripts/setup-local.js",
     "sync-cms": "node scripts/fetch-live-cms.js",
     "test:qa": "node scripts/seed-test-users.js && node scripts/comprehensive-qa.js",
-    "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js"
+    "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
+    "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
+    "test:schema": "node scripts/verify-schema.js --fix",
+    "test:pipeline": "node scripts/test-complete-pipeline.js"
   },
   "dependencies": {
     "archiver": "^7.0.1",

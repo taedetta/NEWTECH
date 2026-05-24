@@ -1510,7 +1510,18 @@
         <div id="page-schedule" class="page hidden">
           <div class="page-header">
             <h1>Schedule</h1>
-            <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Booking</button>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm" id="schedule-roster-btn" onclick="toggleDailyRoster()">Daily Roster</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportMyCalendar()">Export iCal</button>
+              <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Booking</button>
+            </div>
+          </div>
+          <div id="daily-roster-panel" class="hidden" style="margin-bottom:1rem;background:var(--navy);border:1px solid var(--border-light);border-radius:12px;padding:1rem;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem;">
+              <strong style="color:var(--sky)">Daily Roster</strong>
+              <input type="date" id="roster-date" onchange="loadDailyRoster()" style="padding:0.35rem 0.6rem;border-radius:6px;background:var(--slate);border:1px solid var(--border-light);color:var(--white);">
+            </div>
+            <div id="daily-roster-content" style="font-size:0.88rem;color:var(--gray-300);">Select a date to view flights.</div>
           </div>
           <div class="calendar-header">
             <div class="calendar-nav">
@@ -3284,6 +3295,7 @@
       <h3 id="booking-modal-title">New Booking</h3>
       <div id="booking-error" class="error-msg hidden"></div>
       <div id="booking-conflicts" class="error-msg hidden"></div>
+      <div id="booking-preflight" class="hidden" style="margin-bottom:0.75rem;padding:0.65rem 0.85rem;border-radius:8px;font-size:0.82rem;line-height:1.45;"></div>
       <form id="booking-form">
         <div class="form-group" id="booking-student-group">
           <label>Student <span style="color:var(--gray-500);font-size:0.8rem">(optional for solo instructor)</span></label>
@@ -3300,7 +3312,7 @@
         </div>
         <div class="form-group">
           <label>Aircraft</label>
-          <select id="booking-aircraft" required></select>
+          <select id="booking-aircraft" required onchange="refreshBookingPreflight()"></select>
         </div>
         <div class="form-group">
           <label>Date</label>
@@ -3310,11 +3322,11 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
           <div class="form-group">
             <label>Start Time</label>
-            <select id="booking-start" required onchange="updateBookingEndTimes(); if(document.getElementById('booking-instructor').value) refreshBookingAvailability();"></select>
+            <select id="booking-start" required onchange="updateBookingEndTimes(); if(document.getElementById('booking-instructor').value) refreshBookingAvailability(); refreshBookingPreflight();"></select>
           </div>
           <div class="form-group">
             <label>End Time</label>
-            <select id="booking-end" required></select>
+            <select id="booking-end" required onchange="refreshBookingPreflight()"></select>
           </div>
         </div>
         <div class="form-group">
@@ -3335,6 +3347,18 @@
         <div class="form-group">
           <label>Notes</label>
           <input type="text" id="booking-notes" placeholder="Optional notes...">
+        </div>
+        <div class="form-group hidden" id="booking-recurring-group">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+            <input type="checkbox" id="booking-recurring" style="width:auto;" onchange="document.getElementById('booking-recurring-weeks').style.display=this.checked?'':'none'">
+            Repeat weekly
+          </label>
+          <select id="booking-recurring-weeks" style="margin-top:0.4rem;display:none;">
+            <option value="2">2 weeks</option>
+            <option value="4" selected>4 weeks</option>
+            <option value="8">8 weeks</option>
+            <option value="12">12 weeks</option>
+          </select>
         </div>
         <!-- Conflict errors shown near the submit button so they're always visible -->
         <div id="booking-conflicts-bottom" class="error-msg hidden" style="margin-bottom:0.75rem;"></div>
@@ -7366,6 +7390,9 @@ function openDayDetail(year, month, day) {
         if (canAct) {
           actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();openCancelModal(${b.id})">✗ Cancel Flight</button>`;
         }
+        if (['owner','admin','instructor'].includes(currentUser.role)) {
+          actionBtns += `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem;margin-left:0.4rem" onclick="duplicateBooking(${b.id})">Duplicate +1wk</button>`;
+        }
       } else if (b.status === 'completed' && ['owner','admin'].includes(currentUser.role)) {
         actionBtns = `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem" onclick="closeDayModal();openEditHoursModal(${b.id})">Edit Hours</button>`;
         actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
@@ -7492,6 +7519,9 @@ async function openBookingModal() {
   rebuildBookingTimePickers();
 
   document.getElementById('booking-modal').classList.remove('hidden');
+  const recGroup = document.getElementById('booking-recurring-group');
+  if (recGroup) recGroup.classList.toggle('hidden', !['owner','admin','instructor'].includes(currentUser?.role));
+  document.getElementById('booking-preflight')?.classList.add('hidden');
 
   // Async: apply availability filtering if instructor + date are already set
   refreshBookingAvailability();
@@ -7788,6 +7818,96 @@ async function refreshBookingAvailability() {
   } catch (e) {
     // Fail silently — availability preview is non-blocking
   }
+  refreshBookingPreflight();
+}
+
+async function refreshBookingPreflight() {
+  const el = document.getElementById('booking-preflight');
+  if (!el) return;
+  const date = document.getElementById('booking-date')?.value;
+  const startTime = document.getElementById('booking-start')?.value;
+  const endTime = document.getElementById('booking-end')?.value;
+  const aircraftId = document.getElementById('booking-aircraft')?.value;
+  const studentVal = (currentUser?.role === 'student' || currentUser?.role === 'renter')
+    ? document.getElementById('booking-student-locked-id')?.value
+    : document.getElementById('booking-student')?.value;
+  const instructorVal = document.getElementById('booking-instructor')?.value;
+  if (!date || !startTime || !endTime || !aircraftId) { el.classList.add('hidden'); return; }
+  const start_time = new Date(`${date}T${startTime}:00`).toISOString();
+  let end_time;
+  if (endTime === '24:00' || (endTime < startTime)) {
+    const nd = new Date(`${date}T00:00:00`); nd.setDate(nd.getDate() + 1);
+    end_time = new Date(nd.toISOString().slice(0, 10) + `T${endTime}:00`).toISOString();
+  } else {
+    end_time = new Date(`${date}T${endTime}:00`).toISOString();
+  }
+  try {
+    const q = new URLSearchParams({
+      aircraft_id: aircraftId, start_time, end_time,
+      local_start: startTime, local_end: endTime,
+    });
+    if (studentVal) q.set('student_id', studentVal);
+    if (instructorVal) q.set('instructor_id', instructorVal);
+    const data = await api('/api/bookings/preflight-check?' + q.toString());
+    if (!data.errors?.length && !data.warnings?.length) { el.classList.add('hidden'); return; }
+    let html = '';
+    if (data.errors?.length) html += `<div style="color:#f87171;margin-bottom:0.35rem;"><strong>Cannot book:</strong> ${data.errors.map(e => escHtml(e)).join('; ')}</div>`;
+    if (data.warnings?.length) html += `<div style="color:#fbbf24;"><strong>Notice:</strong> ${data.warnings.map(w => escHtml(w)).join('; ')}</div>`;
+    el.innerHTML = html;
+    el.classList.remove('hidden');
+    el.style.background = data.errors?.length ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)';
+    el.style.border = data.errors?.length ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)';
+  } catch { el.classList.add('hidden'); }
+}
+
+function toggleDailyRoster() {
+  const panel = document.getElementById('daily-roster-panel');
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+  if (!panel.classList.contains('hidden')) {
+    const d = document.getElementById('roster-date');
+    if (d && !d.value) d.value = new Date().toLocaleDateString('en-CA');
+    loadDailyRoster();
+  }
+}
+
+async function loadDailyRoster() {
+  const el = document.getElementById('daily-roster-content');
+  const date = document.getElementById('roster-date')?.value;
+  if (!el || !date) return;
+  el.textContent = 'Loading...';
+  try {
+    const data = await api('/api/bookings/roster?date=' + date);
+    if (!data.bookings?.length) { el.innerHTML = '<span style="color:var(--gray-500)">No flights scheduled.</span>'; return; }
+    el.innerHTML = data.bookings.map(b => {
+      const st = new Date(b.start_time); const en = new Date(b.end_time);
+      const t = `${formatTime(st)}–${formatTime(en)}`;
+      const people = [b.student_name, b.instructor_name].filter(Boolean).join(' / ') || '—';
+      return `<div style="padding:0.45rem 0;border-bottom:1px solid rgba(148,163,184,0.1);display:flex;gap:1rem;flex-wrap:wrap;"><span style="min-width:110px;color:var(--sky)">${t}</span><span style="min-width:70px;font-family:monospace">${escHtml(b.tail_number)}</span><span style="flex:1">${escHtml(people)}</span><span style="color:var(--gray-500)">${escHtml(b.lesson_type || b.booking_type || '')}</span></div>`;
+    }).join('');
+  } catch (e) { el.textContent = e.error || 'Failed to load roster'; }
+}
+
+function exportMyCalendar() {
+  fetch('/api/bookings/ical/me', { headers: { Authorization: 'Bearer ' + token } })
+    .then(r => r.blob())
+    .then(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'flightslate-schedule.ics';
+      a.click();
+    })
+    .catch(() => alert('Failed to export calendar'));
+}
+
+async function duplicateBooking(id) {
+  if (!confirm('Duplicate this booking for next week?')) return;
+  try {
+    await api('/api/bookings/duplicate/' + id, { method: 'POST', body: JSON.stringify({ offset_days: 7 }) });
+    showToast('Booking duplicated (+7 days)', 'success');
+    closeDayModal();
+    if (currentPage === 'schedule') loadCalendar();
+  } catch (e) { alert(e.error || 'Could not duplicate booking'); }
 }
 
 // Re-filter aircraft dropdown when date changes — maintains downtime window filtering
@@ -7892,23 +8012,27 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     end_time = new Date(`${date}T${endTime}:00`).toISOString();
   }
 
+  const payload = {
+    student_id,
+    instructor_id,
+    aircraft_id: parseInt(document.getElementById('booking-aircraft').value),
+    start_time, end_time,
+    local_date: date,
+    local_start: startTime,
+    local_end: endTime,
+    lesson_type: document.getElementById('booking-lesson-type').value || null,
+    notes: document.getElementById('booking-notes').value || null,
+  };
+
   try {
-    await api('/api/bookings', {
-      method: 'POST',
-      body: JSON.stringify({
-        student_id,
-        instructor_id,
-        aircraft_id: parseInt(document.getElementById('booking-aircraft').value),
-        start_time, end_time,
-        // Send raw wall-clock values so server can compare against availability
-        // windows without timezone conversion artifacts (POL-booking-tz-bug)
-        local_date: date,
-        local_start: startTime,
-        local_end: endTime,
-        lesson_type: document.getElementById('booking-lesson-type').value || null,
-        notes: document.getElementById('booking-notes').value || null,
-      })
-    });
+    const isRecurring = document.getElementById('booking-recurring')?.checked;
+    if (isRecurring && ['owner','admin','instructor'].includes(currentUser.role)) {
+      payload.weeks = parseInt(document.getElementById('booking-recurring-weeks')?.value || '4', 10);
+      const result = await api('/api/bookings/recurring', { method: 'POST', body: JSON.stringify(payload) });
+      showToast(`Created ${result.created} recurring booking(s)` + (result.skipped?.length ? ` (${result.skipped.length} skipped)` : ''), 'success');
+    } else {
+      await api('/api/bookings', { method: 'POST', body: JSON.stringify(payload) });
+    }
     closeBookingModal();
     if (currentPage === 'schedule') loadCalendar();
     else if (currentPage === 'dashboard') loadDashboard();
@@ -8136,8 +8260,8 @@ function openPostFlightWizard(bookingId, bookingDataOverride) {
     // Auto-fill Hobbs/Tach start from aircraft's last known reading
     const aircraft = allAircraft.find(a => a.id === b.aircraft_id);
     if (aircraft) {
-      const curHobbs = parseFloat(aircraft.current_hobbs || aircraft.total_hobbs_hours || 0);
-      const curTach  = parseFloat(aircraft.current_tach  || aircraft.total_tach_hours  || 0);
+      const curHobbs = parseFloat(aircraft.current_hobbs ?? aircraft.total_hobbs_hours ?? 0);
+      const curTach  = parseFloat(aircraft.current_tach ?? aircraft.total_tach_hours ?? curHobbs);
       if (curHobbs > 0) document.getElementById('pfw-hobbs-start').value = curHobbs.toFixed(1);
       if (curTach  > 0) document.getElementById('pfw-tach-start').value  = curTach.toFixed(1);
     }
@@ -8263,8 +8387,10 @@ async function pfwSubmitStep1() {
     const valErr = document.getElementById('pfw-val-error');
     valErr.classList.add('hidden');
     const errs = [];
-    if (hs !== '' && he !== '' && parseFloat(he) < parseFloat(hs)) errs.push('Hobbs End must be ≥ Hobbs Start');
-    if (ts !== '' && te !== '' && parseFloat(te) < parseFloat(ts)) errs.push('Tach End must be ≥ Tach Start');
+    if (hs === '' || he === '') errs.push('Hobbs Start and Hobbs End are required');
+    if ((ts !== '' && te === '') || (ts === '' && te !== '')) errs.push('Enter both Tach Start and Tach End, or leave both blank');
+    if (hs !== '' && he !== '' && parseFloat(he) <= parseFloat(hs)) errs.push('Hobbs End must be greater than Hobbs Start');
+    if (ts !== '' && te !== '' && parseFloat(te) <= parseFloat(ts)) errs.push('Tach End must be greater than Tach Start');
     if (errs.length) { valErr.textContent = errs.join('. '); valErr.classList.remove('hidden'); return; }
   }
 
@@ -8300,7 +8426,7 @@ async function pfwSubmitStep1() {
     await loadAircraft(); // refresh so next completion gets updated current_hobbs/current_tach
     pfwShowStep(2);
   } catch (err) {
-    errEl.textContent = err.error || 'Failed to record hours';
+    errEl.textContent = err.error || err.message || 'Failed to record hours';
     errEl.classList.remove('hidden');
   } finally {
     btn.disabled = false; btn.textContent = 'Next — Squawks →';
@@ -8335,6 +8461,14 @@ function pfwAddSquawk() {
 function pfwRemoveSquawk(n) {
   const el = document.getElementById(`pfw-squawk-entry-${n}`);
   if (el) el.remove();
+}
+
+function refreshAfterFlightComplete() {
+  if (currentPage === 'schedule') loadCalendar();
+  else if (currentPage === 'flight-log') loadFlightLog();
+  else if (currentPage === 'history') loadHistoryLegacyPage();
+  else if (currentPage === 'billing') loadBilling();
+  else loadDashboard();
 }
 
 async function pfwSubmitStep2() {
@@ -8381,10 +8515,7 @@ async function pfwSubmitStep2() {
       pfwShowStep(3);
     } else {
       closePostFlightWizard();
-      if (currentPage === 'schedule') loadCalendar();
-      else if (currentPage === 'flight-log') loadFlightLog();
-      else if (currentPage === 'history') loadHistoryLegacyPage();
-      else loadDashboard();
+      refreshAfterFlightComplete();
       showToast(noSquawks ? 'Flight complete. No squawks.' : 'Flight complete. Squawk(s) reported.');
     }
   } catch (err) {
@@ -8415,10 +8546,7 @@ async function pfwSubmitStep3() {
       body: JSON.stringify({ student_id: studentId, booking_id: bookingId, flight_date: flightDate, notes, recommendations, overall_performance: overall, grades })
     });
     closePostFlightWizard();
-    if (currentPage === 'schedule') loadCalendar();
-    else if (currentPage === 'flight-log') loadFlightLog();
-    else if (currentPage === 'history') loadHistoryLegacyPage();
-    else loadDashboard();
+    refreshAfterFlightComplete();
     showToast('Flight complete. Debrief saved.');
   } catch (err) {
     errEl.textContent = err.error || 'Failed to save debrief';
@@ -8430,10 +8558,7 @@ async function pfwSubmitStep3() {
 
 function pfwSkipStep3() {
   closePostFlightWizard();
-  if (currentPage === 'schedule') loadCalendar();
-  else if (currentPage === 'flight-log') loadFlightLog();
-  else if (currentPage === 'history') loadHistoryLegacyPage();
-  else loadDashboard();
+  refreshAfterFlightComplete();
   showToast('Flight complete. Debrief skipped.');
 }
 
@@ -11857,7 +11982,8 @@ async function loadHistoryLegacyPage() {
 
     tbody.innerHTML = rows.map(r => {
       const dateStr = String(r.flight_date).slice(0, 10);
-      const isGround = !r.aircraft_charge_amount && !r.hobbs_delta;
+      const isGround = r.session_type === 'ground';
+      const needsHours = r.session_type === 'flight' && r.status === 'completed' && (r.hobbs_delta == null || parseFloat(r.hobbs_delta) <= 0);
       const actionTd = canEditHistory
         ? `<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})">✏</button><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button></td>`
         : '';
@@ -11866,9 +11992,9 @@ async function loadHistoryLegacyPage() {
         <td>${r.student_name ? escHtml(r.student_name) : '<span style="color:var(--gray-500)">—</span>'}</td>
         <td>${r.instructor_name ? escHtml(r.instructor_name) : '<span style="color:var(--gray-500)">—</span>'}</td>
         <td><strong>${escHtml(r.tail_number || '—')}</strong> <span style="font-size:0.78rem;color:var(--gray-500)">${escHtml(r.make_model || '')}</span></td>
-        <td>${r.status === 'cancelled' ? '<span class="tag" style="background:rgba(239,68,68,0.15);color:#F87171">Cancelled</span>' + (r.cancellation_reason ? `<div style="font-size:0.75rem;color:#F87171;margin-top:0.2rem">${escHtml(r.cancellation_reason)}</div>` : '<div style="font-size:0.75rem;color:#F87171;margin-top:0.2rem">—</div>') : isGround ? '<span class="tag" style="background:rgba(59,130,246,0.15);color:var(--sky)">Ground</span>' : '<span class="tag tag-completed">Completed</span>'}</td>
-        <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${isGround ? '<span style="color:var(--gray-500)">—</span>' : fmtVal(r.hobbs_delta)}</td>
-        <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${isGround ? '<span style="color:var(--gray-500)">—</span>' : fmtVal(r.tach_delta)}</td>
+        <td>${r.status === 'cancelled' ? '<span class="tag" style="background:rgba(239,68,68,0.15);color:#F87171">Cancelled</span>' + (r.cancellation_reason ? `<div style="font-size:0.75rem;color:#F87171;margin-top:0.2rem">${escHtml(r.cancellation_reason)}</div>` : '<div style="font-size:0.75rem;color:#F87171;margin-top:0.2rem">—</div>') : isGround ? '<span class="tag" style="background:rgba(59,130,246,0.15);color:var(--sky)">Ground</span>' : needsHours ? '<span class="tag tag-amber">Needs Hours</span>' : '<span class="tag tag-completed">Completed</span>'}</td>
+        <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${isGround || needsHours ? '<span style="color:var(--gray-500)">—</span>' : fmtVal(r.hobbs_delta)}</td>
+        <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${isGround || needsHours ? '<span style="color:var(--gray-500)">—</span>' : fmtVal(r.tach_delta)}</td>
         <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${fmtVal(r.dual_instruction_hours)}</td>
         <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${fmtDollar(r.aircraft_charge_amount)}</td>
         <td style="text-align:right;font-family:'Space Grotesk',sans-serif">${fmtDollar(r.instruction_charge_amount)}</td>

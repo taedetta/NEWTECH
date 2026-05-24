@@ -15,17 +15,16 @@ router.get('/summary', authenticateToken, async (req, res) => {
     const result = await pool.query(`
       SELECT u.id, u.name,
         COUNT(b.id) as flight_count,
-        COALESCE(SUM(b.hobbs_end - b.hobbs_start), 0) as total_hours,
+        COALESCE(SUM(COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start)), 0) as total_hours,
         COALESCE(SUM(
-          COALESCE(fl.aircraft_charge_amount, (b.hobbs_end - b.hobbs_start) * COALESCE(a.hourly_rate, 0))
+          COALESCE(fl.aircraft_charge_amount,
+            COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * COALESCE(a.hourly_rate, 0))
         ), 0) as total_rental,
         COALESCE(SUM(
           COALESCE(fl.instruction_charge_amount,
-            CASE WHEN b.booking_type = 'dual'
-              THEN (b.hobbs_end - b.hobbs_start) * COALESCE(inst.instructor_rate, 0)
-              ELSE 0
-            END
-          )
+            COALESCE(fl.dual_instruction_hours,
+              COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start)
+            ) * COALESCE(inst.instructor_rate, 0))
         ), 0) as total_instruction
       FROM users u
       JOIN bookings b ON b.student_id = u.id AND b.status = 'completed' AND COALESCE(b.billing_voided, FALSE) = FALSE
@@ -33,7 +32,7 @@ router.get('/summary', authenticateToken, async (req, res) => {
       LEFT JOIN users inst ON inst.id = b.instructor_id
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
       WHERE u.role = 'student' AND u.deleted_at IS NULL
-        AND b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL
+        AND (fl.id IS NOT NULL OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL))
         ${whereExtra}
       GROUP BY u.id, u.name
       ORDER BY u.name
@@ -56,27 +55,29 @@ router.get('/:studentId', authenticateToken, async (req, res) => {
     if (req.user.role === 'instructor') { extraWhere = ' AND b.instructor_id = $2'; params.push(req.user.id); }
     const result = await pool.query(`
       SELECT b.id, b.start_time, b.end_time, b.booking_type,
-        b.hobbs_start, b.hobbs_end, b.tach_start, b.tach_end,
+        COALESCE(fl.hobbs_start, b.hobbs_start) as hobbs_start,
+        COALESCE(fl.hobbs_end, b.hobbs_end) as hobbs_end,
+        COALESCE(fl.tach_start, b.tach_start) as tach_start,
+        COALESCE(fl.tach_end, b.tach_end) as tach_end,
         b.aircraft_id, a.tail_number, a.make_model,
         a.hourly_rate as aircraft_rate,
         COALESCE(inst.instructor_rate, 0) as instructor_rate,
         inst.name as instructor_name,
-        fl.dual_instruction_hours,
-        COALESCE(fl.aircraft_charge_amount, (b.hobbs_end - b.hobbs_start) * COALESCE(a.hourly_rate, 0)) as aircraft_charge_amount,
+        COALESCE(fl.dual_instruction_hours,
+          CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END) as dual_instruction_hours,
+        COALESCE(fl.aircraft_charge_amount,
+          COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * COALESCE(a.hourly_rate, 0)) as aircraft_charge_amount,
         COALESCE(fl.instruction_charge_amount,
-          CASE WHEN b.booking_type = 'dual'
-            THEN (b.hobbs_end - b.hobbs_start) * COALESCE(inst.instructor_rate, 0)
-            ELSE 0
-          END
-        ) as instruction_charge_amount
+          COALESCE(fl.dual_instruction_hours,
+            CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
+          ) * COALESCE(inst.instructor_rate, 0)) as instruction_charge_amount
       FROM bookings b
       LEFT JOIN aircraft a ON a.id = b.aircraft_id
       LEFT JOIN users inst ON inst.id = b.instructor_id
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
       WHERE b.student_id = $1 AND b.status = 'completed'
         AND COALESCE(b.billing_voided, FALSE) = FALSE
-        AND (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL
-          OR (b.booking_type IN ('dual', 'ground') AND b.instructor_id IS NOT NULL))
+        AND (fl.id IS NOT NULL OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL))
         ${extraWhere}
       ORDER BY b.start_time DESC
     `, params);

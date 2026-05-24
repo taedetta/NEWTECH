@@ -10,6 +10,14 @@ const { sendEmail } = require('../email-templates');
 const DISCREPANCY_THRESHOLD = 0.1; // hours — flag if delta exceeds this
 const OWNER_EMAIL = 'blankthe97@gmail.com';
 
+function readingDelta(row) {
+  if (row.hobbs_delta != null && row.hobbs_delta !== '') return parseFloat(row.hobbs_delta);
+  const start = parseFloat(row.hobbs_start);
+  const end = parseFloat(row.hobbs_end);
+  if (!isNaN(start) && !isNaN(end)) return end - start;
+  return NaN;
+}
+
 /**
  * Upsert a Hobbs reading for a booking from a given role.
  * After insert, check if both student + instructor have submitted — if so, run comparison.
@@ -20,15 +28,18 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
   try {
     await client.query('BEGIN');
 
+    const hobbsDelta = hobbsEnd - hobbsStart;
+
     // Upsert the reading
     await client.query(`
-      INSERT INTO flight_hobbs_readings (booking_id, submitted_by, role, hobbs_start, hobbs_end)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO flight_hobbs_readings (booking_id, submitted_by, role, hobbs_start, hobbs_end, hobbs_delta)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (booking_id, role) DO UPDATE
         SET hobbs_start = EXCLUDED.hobbs_start,
             hobbs_end   = EXCLUDED.hobbs_end,
+            hobbs_delta = EXCLUDED.hobbs_delta,
             entered_at  = NOW()
-    `, [bookingId, submittedBy, role, hobbsStart, hobbsEnd]);
+    `, [bookingId, submittedBy, role, hobbsStart, hobbsEnd, hobbsDelta]);
 
     // Fetch both student and instructor readings for this booking
     const readingsResult = await client.query(`
@@ -44,8 +55,12 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
 
     // Both readings present — compare
     if (byRole.student && byRole.instructor) {
-      const sDelta = parseFloat(byRole.student.hobbs_delta);
-      const iDelta = parseFloat(byRole.instructor.hobbs_delta);
+      const sDelta = readingDelta(byRole.student);
+      const iDelta = readingDelta(byRole.instructor);
+      if (isNaN(sDelta) || isNaN(iDelta)) {
+        await client.query('COMMIT');
+        return { discrepancy: null };
+      }
       const diff = Math.abs(sDelta - iDelta);
 
       if (diff > DISCREPANCY_THRESHOLD) {

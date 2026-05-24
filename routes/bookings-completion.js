@@ -151,36 +151,54 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const hEnd = parseFloat(hobbs_end);
     if (hEnd <= hStart) { recordHobbsFail(req.user.id); return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' }); }
 
-    // ── Server-side Hobbs validation: compare against aircraft's current reading ──
+    // ── Server-side Hobbs validation: prevent backdating, allow normal meter variance ──
     if (b.aircraft_id) {
-      const acResult = await client.query('SELECT current_hobbs FROM aircraft WHERE id = $1', [b.aircraft_id]);
-      if (acResult.rows.length > 0 && acResult.rows[0].current_hobbs != null) {
-        const currentHobbs = parseFloat(acResult.rows[0].current_hobbs);
-        // hobbs_start must be within 0.5 of the aircraft's current Hobbs reading
-        if (Math.abs(hStart - currentHobbs) > 0.5) {
-          recordHobbsFail(req.user.id);
-          console.warn(`[security] Hobbs mismatch: user=${req.user.id} submitted=${hStart} aircraft_current=${currentHobbs} booking=${req.params.id}`);
-          return res.status(400).json({ error: 'Hobbs reading does not match aircraft current hours. Expected start near ' + currentHobbs.toFixed(1) });
+      const acResult = await client.query('SELECT current_hobbs, total_hobbs_hours FROM aircraft WHERE id = $1', [b.aircraft_id]);
+      if (acResult.rows.length > 0) {
+        const currentHobbs = acResult.rows[0].current_hobbs != null
+          ? parseFloat(acResult.rows[0].current_hobbs)
+          : parseFloat(acResult.rows[0].total_hobbs_hours || 0);
+        if (currentHobbs > 0) {
+          if (hStart < currentHobbs - 0.1) {
+            recordHobbsFail(req.user.id);
+            return res.status(400).json({
+              error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
+            });
+          }
+          if (hStart > currentHobbs + 5) {
+            recordHobbsFail(req.user.id);
+            return res.status(400).json({
+              error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
+            });
+          }
         }
       }
     }
 
-    // Validate tach values if provided
+    // Validate tach values if provided — both or neither
+    if ((tach_start != null) !== (tach_end != null)) {
+      return res.status(400).json({ error: 'Both tach_start and tach_end are required when logging tach time' });
+    }
     if (tach_start != null) {
       const tStartErr = validateHobbsValue(tach_start, 'tach_start');
       if (tStartErr) return res.status(400).json({ error: tStartErr });
-    }
-    if (tach_end != null) {
       const tEndErr = validateHobbsValue(tach_end, 'tach_end');
       if (tEndErr) return res.status(400).json({ error: tEndErr });
     }
+    if (tach_start != null && tach_end != null && parseFloat(tach_end) <= parseFloat(tach_start)) {
+      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
+    }
 
-    // Validate dual instruction hours if provided
+    const hobbsFlown = hEnd - hStart;
+
+    // Validate dual instruction hours if provided — cannot exceed hobbs flown
     if (dual_instruction_hours != null) {
       const dualErr = validateHobbsValue(dual_instruction_hours, 'dual_instruction_hours');
       if (dualErr) return res.status(400).json({ error: dualErr });
+      if (parseFloat(dual_instruction_hours) > hobbsFlown + 0.01) {
+        return res.status(400).json({ error: 'dual_instruction_hours cannot exceed Hobbs time flown' });
+      }
     }
-    const hobbsFlown = hEnd - hStart;
     const tStart = tach_start != null ? parseFloat(tach_start) : null;
     const tEnd = tach_end != null ? parseFloat(tach_end) : null;
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
@@ -274,10 +292,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         );
       }
     }
-    // Update booking
+    // Update booking — persist hobbs/tach on booking row for billing queries
     await client.query(
-      `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2, updated_at = NOW() WHERE id = $3`,
-      [hStart, hEnd, req.params.id]
+      `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
+       tach_start = $3, tach_end = $4, updated_at = NOW() WHERE id = $5`,
+      [hStart, hEnd, tStart, tEnd, req.params.id]
     );
     await client.query('COMMIT');
 
