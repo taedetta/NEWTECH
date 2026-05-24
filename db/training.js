@@ -38,6 +38,7 @@ async function getStudentProgress(studentId) {
     for (const stage of stagesResult.rows) {
       const maneuversResult = await pool.query(`
         SELECT sm.id, sm.name, sm.description, sm.order_index, sm.proficiency_standard,
+               sm.lesson_type, sm.module_number, sm.reading_assignment, sm.lesson_tasks,
                smp.status, smp.notes, smp.proficient_date
         FROM stage_maneuvers sm
         LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1
@@ -71,6 +72,7 @@ async function getStudentProgress(studentId) {
           status: m.status || 'not_started',
           notes: m.notes || null,
           proficient_date: m.proficient_date || null,
+          lesson_tasks: Array.isArray(m.lesson_tasks) ? m.lesson_tasks : (m.lesson_tasks ? JSON.parse(m.lesson_tasks) : []),
         })),
       });
     }
@@ -114,6 +116,8 @@ async function getManeuverProgress(studentId, enrollmentId) {
   const programId = enrollResult.rows[0].program_id;
   const result = await pool.query(`
     SELECT sm.id AS maneuver_id, sm.name AS maneuver_name, sm.stage_id, sm.order_index,
+           sm.lesson_type, sm.module_number, sm.description, sm.proficiency_standard,
+           sm.reading_assignment, sm.lesson_tasks,
            COALESCE(smp.status, 'not_started') AS status, smp.notes, smp.proficient_date
     FROM stage_maneuvers sm
     JOIN program_stages ps ON ps.id = sm.stage_id AND ps.program_id = $1
@@ -121,7 +125,10 @@ async function getManeuverProgress(studentId, enrollmentId) {
     ORDER BY ps.order_index, sm.order_index
   `, [programId, studentId]);
 
-  return result.rows;
+  return result.rows.map(r => ({
+    ...r,
+    lesson_tasks: Array.isArray(r.lesson_tasks) ? r.lesson_tasks : (r.lesson_tasks ? r.lesson_tasks : []),
+  }));
 }
 
 /**
@@ -141,6 +148,14 @@ async function upsertManeuverProgress(studentId, maneuverId, status) {
   };
   const dbStatus = statusMap[status] || status;
   const profDate = (dbStatus === 'proficient' || dbStatus === 'completed') ? new Date() : null;
+
+  if (dbStatus === 'not_started') {
+    await pool.query(
+      'DELETE FROM student_maneuver_progress WHERE student_id = $1 AND maneuver_id = $2',
+      [studentId, maneuverId]
+    );
+    return { student_id: studentId, maneuver_id: maneuverId, status: 'not_started' };
+  }
 
   const result = await pool.query(
     `INSERT INTO student_maneuver_progress (student_id, maneuver_id, status, proficient_date)

@@ -136,6 +136,10 @@ CREATE INDEX IF NOT EXISTS airworthiness_directives_aircraft_id_idx ON airworthi
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS proficiency_standard TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS lesson_type VARCHAR(20);
+ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS module_number INTEGER;
+ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS reading_assignment TEXT;
+ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS lesson_tasks JSONB DEFAULT '[]';
 ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS notes TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
 CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);

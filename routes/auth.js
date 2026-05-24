@@ -8,6 +8,7 @@ const pool = require('../db/index');
 const { authenticateToken, getUserPermissions } = require('../middleware/auth');
 const { checkPasswordResetRateLimit } = require('../middleware/rate-limiter');
 const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingApprovalEmail, ADMIN_NOTIFICATION_EMAILS } = require('../email-templates');
+const { getAppUrl } = require('../lib/app-url');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
@@ -170,22 +171,23 @@ router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
     if (!checkPasswordResetRateLimit(email)) return res.status(429).json({ error: 'Too many requests. Please wait before trying again.' });
+
     const result = await pool.query(
-      'SELECT id, name, email, deleted_at FROM users WHERE LOWER(email) = LOWER($1)',
+      `SELECT id, name, email, deleted_at, approval_status, password_hash
+       FROM users
+       WHERE LOWER(email) = LOWER($1)
+         AND deleted_at IS NULL
+         AND password_hash IS NOT NULL
+         AND approval_status = 'approved'`,
       [email]
     );
     if (result.rows.length === 0) {
-      // Silent return — don't reveal whether email exists (security)
-      // Frontend always shows "check your inbox" anyway
+      // No active approved account — do not send email
       res.json({ ok: true });
       return;
     }
+
     const user = result.rows[0];
-    // Skip if permanently deleted (approval_status = 'rejected')
-    if (user.approval_status === 'rejected') {
-      res.json({ ok: true });
-      return;
-    }
     await pool.query(
       'UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
       [user.id]
@@ -197,8 +199,7 @@ router.post('/forgot-password', async (req, res) => {
       'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
       [user.id, tokenHash, expiresAt]
     );
-    const appUrl = process.env.APP_URL || 'https://www.newtechaviation.com';
-    const resetUrl = `${appUrl}/app?reset=${rawToken}`;
+    const resetUrl = `${getAppUrl(req)}/app?reset=${rawToken}`;
     const { subject, html, text } = passwordResetEmail({ name: user.name, resetUrl });
     sendEmail(user.email, subject, html, text).catch(err => console.error('[forgot-password] sendEmail error:', err.message));
     res.json({ ok: true });

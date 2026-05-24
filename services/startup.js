@@ -185,21 +185,25 @@ async function migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl) {
 async function ensureTrainingPrograms(pool) {
   try {
     const check = await pool.query('SELECT COUNT(*) as cnt FROM training_programs');
-    if (parseInt(check.rows[0].cnt) > 0) return;
-    console.log('Seeding training programs...');
-    const programs = [
-      { name: 'Private Pilot License', code: 'PPL', description: 'FAA Private Pilot Certificate', stages: ['Pre-Solo Dual','First Solo','Post-Solo Dual','Cross-Country Dual','Cross-Country Solo','Night Training','Instrument & Hood Work','Checkride Prep','Checkride'] },
-      { name: 'Instrument Rating', code: 'IFR', description: 'FAA Instrument Rating — fly in IMC under IFR', stages: ['Instrument Fundamentals','Navigation & Holds','Instrument Approaches','IFR Cross-Country','Unusual Attitudes & Emergencies','Checkride Prep','Checkride'] },
-      { name: 'Commercial Pilot License', code: 'CPL', description: 'FAA Commercial Pilot Certificate', stages: ['Complex Aircraft Transition','Commercial Maneuvers','Commercial Cross-Country','Night Commercial Training','High Altitude & Oxygen','Checkride Prep','Checkride'] },
-    ];
-    for (const p of programs) {
-      const r = await pool.query(`INSERT INTO training_programs (name, code, description) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING RETURNING id`, [p.name, p.code, p.description]);
-      const pid = r.rows.length > 0 ? r.rows[0].id : (await pool.query(`SELECT id FROM training_programs WHERE code = $1`, [p.code])).rows[0].id;
-      for (let i = 0; i < p.stages.length; i++) {
-        await pool.query(`INSERT INTO program_stages (program_id, name, order_index) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [pid, p.stages[i], i + 1]);
+    if (parseInt(check.rows[0].cnt) === 0) {
+      console.log('Seeding training programs...');
+      const programs = [
+        { name: 'Private Pilot License', code: 'PPL', description: 'FAA Private Pilot Certificate', stages: ['Pre-Solo Dual','First Solo','Post-Solo Dual','Cross-Country Dual','Cross-Country Solo','Night Training','Instrument & Hood Work','Checkride Prep','Checkride'] },
+        { name: 'Instrument Rating', code: 'IFR', description: 'FAA Instrument Rating — fly in IMC under IFR', stages: ['Instrument Fundamentals','Navigation & Holds','Instrument Approaches','IFR Cross-Country','Unusual Attitudes & Emergencies','Checkride Prep','Checkride'] },
+        { name: 'Commercial Pilot License', code: 'CPL', description: 'FAA Commercial Pilot Certificate', stages: ['Complex Aircraft Transition','Commercial Maneuvers','Commercial Cross-Country','Night Commercial Training','High Altitude & Oxygen','Checkride Prep','Checkride'] },
+      ];
+      for (const p of programs) {
+        const r = await pool.query(`INSERT INTO training_programs (name, code, description) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING RETURNING id`, [p.name, p.code, p.description]);
+        const pid = r.rows.length > 0 ? r.rows[0].id : (await pool.query(`SELECT id FROM training_programs WHERE code = $1`, [p.code])).rows[0].id;
+        for (let i = 0; i < p.stages.length; i++) {
+          await pool.query(`INSERT INTO program_stages (program_id, name, order_index) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [pid, p.stages[i], i + 1]);
+        }
       }
+      console.log('Training programs seeded.');
     }
-    console.log('Training programs seeded.');
+    // Replace generic PPL syllabus with ASA PM-S-P9-PD lesson structure
+    const { seedPplPmSyllabus } = require('../scripts/seed-ppl-pm-syllabus');
+    await seedPplPmSyllabus();
   } catch (err) { console.error('Training programs seed check failed:', err.message); }
 }
 

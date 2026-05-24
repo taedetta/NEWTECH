@@ -657,6 +657,36 @@
     .maneuver-notes-row { font-size: 0.72rem; color: var(--gray-500); font-style: italic; margin-left: 1.25rem; }
     .maneuver-graded-by { font-size: 0.65rem; color: var(--gray-600); }
 
+    /* ─── PPL SYLLABUS LESSON TIMELINE ─── */
+    .syllabus-header { font-size: 0.78rem; color: var(--gray-500); margin-bottom: 1rem; line-height: 1.5; }
+    .syllabus-stage-block { margin-bottom: 1.25rem; }
+    .syllabus-stage-title { font-size: 0.82rem; font-weight: 700; color: var(--sky); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.6rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+    .lesson-card { background: var(--navy); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 0.5rem; overflow: hidden; transition: border-color 0.15s; }
+    .lesson-card.lesson-done { border-color: rgba(34,197,94,0.35); }
+    .lesson-card.lesson-next { border-color: rgba(56,189,248,0.45); box-shadow: 0 0 0 1px rgba(56,189,248,0.12); }
+    .lesson-card-header { display: flex; align-items: center; gap: 0.6rem; padding: 0.65rem 0.85rem; cursor: pointer; }
+    .lesson-card-header:hover { background: rgba(148,163,184,0.04); }
+    .lesson-num { font-size: 0.7rem; font-weight: 700; color: var(--gray-500); min-width: 1.75rem; }
+    .lesson-type-badge { font-size: 0.62rem; font-weight: 700; padding: 0.12rem 0.45rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+    .ltb-ground { background: rgba(168,85,247,0.15); color: #c084fc; }
+    .ltb-flight { background: rgba(56,189,248,0.15); color: var(--sky); }
+    .ltb-stage_exam { background: rgba(245,158,11,0.15); color: var(--amber); }
+    .ltb-review { background: rgba(148,163,184,0.12); color: var(--gray-400); }
+    .ltb-solo { background: rgba(34,197,94,0.15); color: var(--green); }
+    .ltb-endorsement { background: rgba(249,115,22,0.15); color: #fb923c; }
+    .lesson-title { flex: 1; font-size: 0.84rem; color: var(--gray-200); font-weight: 600; }
+    .lesson-check-btn { font-size: 0.72rem; font-weight: 600; padding: 0.2rem 0.65rem; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--gray-400); cursor: pointer; font-family: inherit; white-space: nowrap; transition: all 0.15s; }
+    .lesson-check-btn:hover { border-color: var(--green); color: var(--green); }
+    .lesson-check-btn.done { background: rgba(34,197,94,0.15); color: var(--green); border-color: rgba(34,197,94,0.35); }
+    .lesson-detail { display: none; padding: 0 0.85rem 0.85rem; border-top: 1px solid var(--border); }
+    .lesson-detail.open { display: block; }
+    .lesson-objective { font-size: 0.78rem; color: var(--gray-400); line-height: 1.5; margin: 0.65rem 0 0.5rem; }
+    .lesson-meta-row { font-size: 0.74rem; color: var(--gray-500); margin-bottom: 0.35rem; }
+    .lesson-meta-row strong { color: var(--gray-400); }
+    .lesson-tasks { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: 0.76rem; color: var(--gray-400); line-height: 1.55; }
+    .lesson-tasks li { margin-bottom: 0.15rem; }
+    .lesson-complete-date { font-size: 0.68rem; color: var(--green); margin-left: 0.35rem; }
+
     /* ─── PROGRAMS ADMIN PAGE ─── */
     .program-admin-card { background: var(--dark-blue); border-radius: var(--radius-lg); padding: 1.25rem; margin-bottom: 1.5rem; border: 1px solid var(--border); }
     .program-admin-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
@@ -10568,7 +10598,193 @@ function renderStudentCard(s) {
   </div>`;
 }
 
+function isPplSyllabusEnrollment(e) {
+  if (e.program_code !== 'PPL') return false;
+  if (!e.stages) return false;
+  return e.stages.some(s => (s.maneuvers || []).some(m => m.lesson_type));
+}
+
+function countPplLessons(e, maneuverProgress) {
+  let total = 0, done = 0;
+  (e.stages || []).forEach(s => {
+    (s.maneuvers || []).forEach(m => {
+      total++;
+      const p = maneuverProgress ? maneuverProgress.find(mp => mp.maneuver_id === m.id) : null;
+      const st = p ? (p.status === 'completed' || p.status === 'proficient' ? 'completed' : p.status) : (m.status || 'not_started');
+      if (st === 'completed' || st === 'proficient') done++;
+    });
+  });
+  return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+}
+
+function lessonTypeBadge(type) {
+  const labels = { ground: 'Ground', flight: 'Flight', stage_exam: 'Stage Check', review: 'Review', solo: 'Solo', endorsement: 'Endorsement' };
+  const cls = 'ltb-' + (type || 'flight');
+  return `<span class="lesson-type-badge ${cls}">${labels[type] || type || 'Lesson'}</span>`;
+}
+
+function renderPplLessonCard(m, lessonNum, e, isOwnView, maneuverProgress, isNext) {
+  const prog = maneuverProgress ? maneuverProgress.find(mp => mp.maneuver_id === m.id) : null;
+  const st = prog ? prog.status : (m.status || 'not_started');
+  const isDone = st === 'completed' || st === 'proficient';
+  const doneDate = prog && prog.proficient_date
+    ? new Date(String(prog.proficient_date).slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '';
+  const tasks = Array.isArray(m.lesson_tasks) ? m.lesson_tasks : [];
+  const detailId = `ld-${e.id}-${m.id}`;
+  const stuId = isOwnView ? currentUser.id : currentProgressStudentId;
+
+  const checkBtn = !isOwnView
+    ? `<button class="lesson-check-btn ${isDone ? 'done' : ''}" onclick="event.stopPropagation();setLessonComplete(${stuId},${e.id},${m.id},${!isDone},this)">${isDone ? '&#10003; Complete' : 'Mark Complete'}</button>`
+    : (isDone
+      ? `<span class="lesson-check-btn done" style="cursor:default">&#10003; Complete${doneDate ? `<span class="lesson-complete-date">${doneDate}</span>` : ''}</span>`
+      : `<span style="font-size:0.72rem;color:var(--gray-600)">Pending</span>`);
+
+  return `<div class="lesson-card ${isDone ? 'lesson-done' : ''} ${isNext && !isDone ? 'lesson-next' : ''}" id="lc-${e.id}-${m.id}">
+    <div class="lesson-card-header" onclick="toggleLessonDetail('${detailId}')">
+      <span class="lesson-num">${lessonNum}</span>
+      ${lessonTypeBadge(m.lesson_type)}
+      <span class="lesson-title">${escHtml(m.name)}</span>
+      ${checkBtn}
+    </div>
+    <div class="lesson-detail" id="${detailId}">
+      ${m.description ? `<div class="lesson-objective"><strong>Objective:</strong> ${escHtml(m.description)}</div>` : ''}
+      ${m.reading_assignment ? `<div class="lesson-meta-row"><strong>Reading:</strong> ${escHtml(m.reading_assignment)}</div>` : ''}
+      ${m.proficiency_standard ? `<div class="lesson-meta-row"><strong>Completion standard:</strong> ${escHtml(m.proficiency_standard)}</div>` : ''}
+      ${tasks.length ? `<ul class="lesson-tasks">${tasks.map(t => `<li>${escHtml(t)}</li>`).join('')}</ul>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderPplEnrollmentCard(e, debriefs, isOwnView, maneuverProgress) {
+  const { total, done, pct } = countPplLessons(e, maneuverProgress);
+  const tagClass = 'tag-sky';
+
+  // Flatten lessons in syllabus order
+  const allLessons = [];
+  (e.stages || []).sort((a, b) => a.order_index - b.order_index).forEach(s => {
+    (s.maneuvers || []).sort((a, b) => a.order_index - b.order_index).forEach(m => {
+      allLessons.push({ ...m, stage_name: s.name });
+    });
+  });
+
+  let nextLessonId = null;
+  for (const m of allLessons) {
+    const p = maneuverProgress ? maneuverProgress.find(mp => mp.maneuver_id === m.id) : null;
+    const st = p ? p.status : 'not_started';
+    if (st !== 'completed' && st !== 'proficient') { nextLessonId = m.id; break; }
+  }
+
+  // Group by stage for display
+  const stageGroups = [];
+  let currentStage = null;
+  allLessons.forEach(m => {
+    if (!currentStage || currentStage.name !== m.stage_name) {
+      currentStage = { name: m.stage_name, lessons: [] };
+      stageGroups.push(currentStage);
+    }
+    currentStage.lessons.push(m);
+  });
+
+  let lessonNum = 0;
+  const timelineHtml = stageGroups.map(sg => {
+    const cards = sg.lessons.map(m => {
+      lessonNum++;
+      return renderPplLessonCard(m, lessonNum, e, isOwnView, maneuverProgress, m.id === nextLessonId);
+    }).join('');
+    return `<div class="syllabus-stage-block">
+      <div class="syllabus-stage-title">${escHtml(sg.name)}</div>
+      ${cards}
+    </div>`;
+  }).join('');
+
+  const recentDebriefs = debriefs ? debriefs.filter(d => !d.program_code || d.program_code === e.program_code).slice(0, 3) : [];
+  const _rc = (v) => v<=1?'#ef4444':v===2?'#f97316':v===3?'#eab308':v===4?'#84cc16':'#22c55e';
+  const debriefsHtml = recentDebriefs.length > 0
+    ? recentDebriefs.map(d => `<div style="background:var(--navy);border-radius:8px;padding:0.6rem 0.8rem;margin-bottom:0.4rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.25rem;flex-wrap:wrap;gap:0.3rem">
+          <span style="font-size:0.78rem;color:var(--gray-500)">${d.flight_date ? new Date(String(d.flight_date).slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : ''}</span>
+          <div style="display:flex;align-items:center;gap:0.35rem">
+            ${d.overall_performance ? `<span style="font-size:0.85rem;color:${_rc(d.overall_performance)}">${'★'.repeat(d.overall_performance)}${'☆'.repeat(5-d.overall_performance)}</span>` : ''}
+            ${d.instructor_name ? `<span style="font-size:0.72rem;color:var(--gray-600)">${escHtml(d.instructor_name)}</span>` : ''}
+          </div>
+        </div>
+        ${d.notes ? `<div style="font-size:0.8rem;color:var(--gray-400);line-height:1.4">${escHtml(d.notes)}</div>` : ''}
+      </div>`).join('')
+    : '<div style="font-size:0.82rem;color:var(--gray-500);padding:0.25rem 0">No debriefs logged yet.</div>';
+
+  return `<div class="enrollment-card">
+    <div class="enroll-header">
+      <span class="tag ${tagClass}">${escHtml(e.program_code)}</span>
+      <span style="font-size:1rem;font-weight:700;color:var(--white)">${escHtml(e.program_name)}</span>
+      <div class="prog-progress-wrap">
+        <div class="prog-progress-bar"><div style="width:${pct}%"></div></div>
+        <span style="font-size:0.8rem;color:var(--gray-400)">${done}/${total} lessons (${pct}%)</span>
+      </div>
+    </div>
+    <div class="syllabus-header">ASA The Pilot's Manual — Private Pilot Syllabus, 9th Edition (PM-S-P9-PD). Work through ground and flight lessons in order; complete ground reading before each flight.</div>
+    ${e.instructor_name ? `<div style="font-size:0.82rem;color:var(--gray-400);margin-bottom:0.75rem">CFI: ${escHtml(e.instructor_name)}</div>` : ''}
+    <div class="syllabus-timeline">${timelineHtml}</div>
+    ${isOwnView ? `<div style="margin-top:1.25rem"><h4 style="font-size:0.85rem;color:var(--gray-400);margin-bottom:0.5rem">Recent Debriefs</h4>${debriefsHtml}</div>` : ''}
+  </div>`;
+}
+
+function toggleLessonDetail(detailId) {
+  const el = document.getElementById(detailId);
+  if (el) el.classList.toggle('open');
+}
+
+async function setLessonComplete(studentId, enrollmentId, maneuverId, markComplete, btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    await api('/api/training/maneuver-progress', {
+      method: 'PUT',
+      body: JSON.stringify({
+        student_id: studentId,
+        enrollment_id: enrollmentId,
+        maneuver_id: maneuverId,
+        status: markComplete ? 'completed' : 'not_started'
+      })
+    });
+    if (markComplete) {
+      btn.classList.add('done');
+      btn.innerHTML = '&#10003; Complete';
+      const card = btn.closest('.lesson-card');
+      if (card) {
+        card.classList.add('lesson-done');
+        card.classList.remove('lesson-next');
+      }
+    } else {
+      btn.classList.remove('done');
+      btn.textContent = 'Mark Complete';
+      const card = btn.closest('.lesson-card');
+      if (card) card.classList.remove('lesson-done');
+    }
+    // Update header progress counts
+    const enrollCard = btn.closest('.enrollment-card');
+    if (enrollCard) {
+      const allCards = enrollCard.querySelectorAll('.lesson-card');
+      const doneCount = enrollCard.querySelectorAll('.lesson-check-btn.done').length;
+      const progText = enrollCard.querySelector('.prog-progress-wrap span');
+      if (progText && allCards.length) {
+        const pct = Math.round((doneCount / allCards.length) * 100);
+        progText.textContent = `${doneCount}/${allCards.length} lessons (${pct}%)`;
+        const bar = enrollCard.querySelector('.prog-progress-bar div');
+        if (bar) bar.style.width = pct + '%';
+      }
+    }
+  } catch (err) {
+    alert('Failed to save: ' + (err.error || 'Unknown error'));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderEnrollmentCard(e, debriefs, isOwnView, maneuverProgress) {
+  if (isPplSyllabusEnrollment(e)) {
+    return renderPplEnrollmentCard(e, debriefs, isOwnView, maneuverProgress);
+  }
   const pct = e.stages_total > 0 ? Math.round((e.stages_completed / e.stages_total) * 100) : 0;
   const tagClass = e.program_code === 'PPL' ? 'tag-sky' : e.program_code === 'IFR' ? 'tag-purple' : 'tag-amber';
 

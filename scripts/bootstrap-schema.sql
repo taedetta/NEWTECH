@@ -276,6 +276,10 @@ CREATE TABLE IF NOT EXISTS stage_maneuvers (
   description TEXT,
   proficiency_standard TEXT,
   order_index INTEGER DEFAULT 0,
+  lesson_type VARCHAR(20),
+  module_number INTEGER,
+  reading_assignment TEXT,
+  lesson_tasks JSONB DEFAULT '[]',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

@@ -5,7 +5,7 @@
  */
 
 const LOGO_URL = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
-const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
+const { getAppUrl } = require('./lib/app-url');
 const ADMIN_NOTIFICATION_EMAILS = [
   'blankthe97@gmail.com',
   'art@3vaflight.com',
@@ -30,6 +30,7 @@ async function sendEmail(to, subject, html, text, attachments) {
  * No Polsia branding anywhere.
  */
 function wrapEmailHtml(bodyContent) {
+  const appUrl = getAppUrl();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -63,7 +64,7 @@ function wrapEmailHtml(bodyContent) {
               <p style="margin:0 0 6px;font-size:13px;color:#64748b;font-weight:600;">New Tech Aviation</p>
               <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;">New Dublin Airport (KPSK) · Dublin, Virginia</p>
               <p style="margin:0;font-size:12px;color:#94a3b8;">
-                <a href="${APP_URL}" style="color:#0EA5E9;text-decoration:none;">${APP_URL.replace('https://', '')}</a>
+                <a href="${appUrl}" style="color:#0EA5E9;text-decoration:none;">${appUrl.replace(/^https?:\/\//, '')}</a>
               </p>
             </td>
           </tr>
@@ -98,7 +99,7 @@ function pendingApprovalEmail({ name, role }) {
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Questions? Reply to this email and we'll get back to you.</p>
   `);
-  const text = `Hi ${name},\n\nThank you for signing up with New Tech Aviation! Your ${roleLabel} account is pending approval.\n\nYou'll receive another email once your account is approved and you can sign in at ${APP_URL}/app\n\nQuestions? Reply to this email.`;
+  const text = `Hi ${name},\n\nThank you for signing up with New Tech Aviation! Your ${roleLabel} account is pending approval.\n\nYou'll receive another email once your account is approved and you can sign in at ${getAppUrl()}/app\n\nQuestions? Reply to this email.`;
   return { subject: 'Account Pending Approval — New Tech Aviation', html, text };
 }
 
@@ -135,13 +136,13 @@ function adminApprovalNotificationEmail({ userName, userEmail, userRole, signupD
     <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Review Pending Approvals →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Review Pending Approvals →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to approve or reject this account from the Approvals section.</p>
   `);
-  const text = `New User Pending Approval\n\nName: ${userName}\nEmail: ${userEmail}\nRole: ${roleDisplay}\nSigned Up: ${dateStr}\n\nLog in to approve or reject: ${APP_URL}/app`;
+  const text = `New User Pending Approval\n\nName: ${userName}\nEmail: ${userEmail}\nRole: ${roleDisplay}\nSigned Up: ${dateStr}\n\nLog in to approve or reject: ${getAppUrl()}/app`;
   return { subject: `New Account Pending Approval — ${userName}`, html, text };
 }
 
@@ -157,13 +158,13 @@ function welcomeEmail({ name, email, role }) {
     <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Sign In to Your Account →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Sign In to Your Account →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">If you have any questions, reply to this email and we'll get right back to you.</p>
   `);
-  const text = `Welcome to New Tech Aviation, ${name}!\n\nYour account has been approved as a ${roleLabel}.\nLogin at: ${APP_URL}/app\nEmail: ${email}\n\nQuestions? Just reply to this email.`;
+  const text = `Welcome to New Tech Aviation, ${name}!\n\nYour account has been approved as a ${roleLabel}.\nLogin at: ${getAppUrl()}/app\nEmail: ${email}\n\nQuestions? Just reply to this email.`;
   return { subject: `Welcome to New Tech Aviation, ${name}!`, html, text };
 }
 
@@ -183,13 +184,13 @@ function approvalConfirmationEmail({ name, role, approvedBy }) {
     <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Sign In to Your Account →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Sign In to Your Account →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">If you have any questions, reply to this email and we'll get right back to you.</p>
   `);
-  const text = `Hi ${name},\n\nYour New Tech Aviation account has been approved${approvedBy ? ` by ${approvedBy}` : ''}! Your ${roleLabel} account is now active.\n\nLogin at: ${APP_URL}/app\n\nQuestions? Just reply to this email.`;
+  const text = `Hi ${name},\n\nYour New Tech Aviation account has been approved${approvedBy ? ` by ${approvedBy}` : ''}! Your ${roleLabel} account is now active.\n\nLogin at: ${getAppUrl()}/app\n\nQuestions? Just reply to this email.`;
   return { subject: `Account Approved — New Tech Aviation`, html, text };
 }
 
@@ -268,13 +269,13 @@ function inviteEmail({ name, email, password, role, invitedByName }) {
     <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Sign In Now →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">Sign In Now →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">You can change your password after logging in. If you have any questions, reply to this email.</p>
   `);
-  const text = `Hi ${name},\n\nYou've been added to New Tech Aviation as ${roleLabel}.\n\nLogin at: ${APP_URL}/app\nEmail: ${email}\nPassword: ${password}\n\nYou can change your password after logging in.`;
+  const text = `Hi ${name},\n\nYou've been added to New Tech Aviation as ${roleLabel}.\n\nLogin at: ${getAppUrl()}/app\nEmail: ${email}\nPassword: ${password}\n\nYou can change your password after logging in.`;
   return { subject: `You've been added to New Tech Aviation`, html, text };
 }
 
@@ -316,13 +317,13 @@ function bookingConfirmationEmail({ recipientName, studentName, instructorName, 
     <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Schedule →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Schedule →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Need to cancel or reschedule? Log in to manage your bookings.</p>
   `);
-  const text = `Flight Booking Confirmed — New Tech Aviation\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${aircraftTailNumber ? `Aircraft: ${aircraftTailNumber}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}\nView schedule: ${APP_URL}/app`;
+  const text = `Flight Booking Confirmed — New Tech Aviation\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${aircraftTailNumber ? `Aircraft: ${aircraftTailNumber}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}\nView schedule: ${getAppUrl()}/app`;
   return { subject: `Flight Confirmed — ${dateStr} | New Tech Aviation`, html, text };
 }
 
@@ -375,7 +376,7 @@ function preflightReminderEmailStudent({ recipientName, flightDate, flightTime, 
         <strong>Need to cancel or reschedule?</strong> Log in anytime to manage your bookings.
       </p>
     </div>
-    <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to view your schedule: ${APP_URL}/app</p>
+    <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to view your schedule: ${getAppUrl()}/app</p>
   `);
   const text = `Hi ${recipientName},
 
@@ -438,7 +439,7 @@ function preflightReminderEmailInstructor({ recipientName, flightDate, flightTim
         </td>
       </tr>
     </table>
-    <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to view your schedule: ${APP_URL}/app</p>
+    <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to view your schedule: ${getAppUrl()}/app</p>
   `);
   const text = `Hi ${recipientName},
 
@@ -519,14 +520,14 @@ function flightCompletedEmail({ recipientName, studentName, instructorName, tail
     <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Schedule →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Schedule →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Questions about your flight? Reply to this email and your instructor will get back to you.</p>
   `);
 
-  const text = `Flight Completed\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${tailNumber ? `Aircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}${hobbsStr ? `Hobbs Hours: ${hobbsStr}\n` : ''}${tachStr ? `Tach Hours: ${tachStr}\n` : ''}${dualInstructionHours && parseFloat(dualInstructionHours) > 0 ? `Dual Instruction: ${parseFloat(dualInstructionHours).toFixed(1)} hrs\n` : ''}Recorded By: ${completedBy} (${completedByLabel})\n\nView schedule: ${APP_URL}/app`;
+  const text = `Flight Completed\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${tailNumber ? `Aircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}${hobbsStr ? `Hobbs Hours: ${hobbsStr}\n` : ''}${tachStr ? `Tach Hours: ${tachStr}\n` : ''}${dualInstructionHours && parseFloat(dualInstructionHours) > 0 ? `Dual Instruction: ${parseFloat(dualInstructionHours).toFixed(1)} hrs\n` : ''}Recorded By: ${completedBy} (${completedByLabel})\n\nView schedule: ${getAppUrl()}/app`;
 
   return { subject: `Flight Completed — ${dateStr}`, html, text };
 }
@@ -583,14 +584,14 @@ function flightCancelledEmail({ recipientName, studentName, instructorName, tail
     <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Schedule →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Schedule →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Need to reschedule? Log in to book a new time.</p>
   `);
 
-  const text = `Flight Cancelled\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${tailNumber ? `Aircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}Cancelled By: ${cancelledBy} (${cancelledByLabel})${cancellationReason ? `\nReason: ${cancellationReason}` : ''}\n\nView schedule: ${APP_URL}/app`;
+  const text = `Flight Cancelled\n\nDate: ${dateStr}\nTime: ${startStr} – ${endStr}\n${tailNumber ? `Aircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\n` : ''}${studentName ? `Student: ${studentName}\n` : ''}${instructorName ? `Instructor: ${instructorName}\n` : ''}Cancelled By: ${cancelledBy} (${cancelledByLabel})${cancellationReason ? `\nReason: ${cancellationReason}` : ''}\n\nView schedule: ${getAppUrl()}/app`;
 
   return { subject: `Flight Cancelled — ${dateStr} | New Tech Aviation`, html, text };
 }
@@ -633,14 +634,14 @@ function groundingSquawkEmail({ recipientName, tailNumber, makeModel, descriptio
     <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
       <tr>
         <td style="background:#0EA5E9;border-radius:7px;padding:13px 28px;">
-          <a href="${APP_URL}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Maintenance Log →</a>
+          <a href="${getAppUrl()}/app" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View Maintenance Log →</a>
         </td>
       </tr>
     </table>
     <p style="margin:0;font-size:13px;color:#94a3b8;">Log in to review and update the squawk status once the issue has been resolved.</p>
   `);
 
-  const text = `AIRCRAFT GROUNDED: ${tailNumber}\n\nA grounding squawk has been submitted. This aircraft must not fly.\n\nAircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\nIssue: ${description}\nReported By: ${reporterName}\nDate: ${dateStr}\nEst. Downtime: ${downtimeStr}\n\nLog in to review: ${APP_URL}/app`;
+  const text = `AIRCRAFT GROUNDED: ${tailNumber}\n\nA grounding squawk has been submitted. This aircraft must not fly.\n\nAircraft: ${tailNumber}${makeModel ? ` — ${makeModel}` : ''}\nIssue: ${description}\nReported By: ${reporterName}\nDate: ${dateStr}\nEst. Downtime: ${downtimeStr}\n\nLog in to review: ${getAppUrl()}/app`;
 
   return {
     subject: `[GROUNDED] ${tailNumber} — Grounding Squawk Reported`,
