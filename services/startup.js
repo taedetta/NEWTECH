@@ -7,6 +7,8 @@
 
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcryptjs');
+const fetch = require('node-fetch');
 
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
@@ -21,6 +23,63 @@ function isoDate(date) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+async function ensureDatabaseSchema(pool) {
+  try {
+    const check = await pool.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'site_content'
+    `);
+    if (check.rows.length > 0) return;
+
+    console.log('[bootstrap] Fresh database detected — applying schema...');
+    const schemaPath = path.join(__dirname, '..', 'scripts', 'bootstrap-schema.sql');
+    if (!fs.existsSync(schemaPath)) {
+      console.error('[bootstrap] bootstrap-schema.sql not found — skipping');
+      return;
+    }
+    await pool.query(fs.readFileSync(schemaPath, 'utf8'));
+    console.log('[bootstrap] Schema applied');
+
+    // Seed CMS from live production site
+    try {
+      const liveUrl = process.env.CMS_SEED_URL || 'https://www.newtechaviation.com/api/site-content?full=1';
+      const res = await fetch(liveUrl);
+      if (res.ok) {
+        const cms = await res.json();
+        let count = 0;
+        for (const [key, value] of Object.entries(cms)) {
+          if (value == null) continue;
+          await pool.query(
+            `INSERT INTO site_content (key, value, updated_at) VALUES ($1, $2, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+            [key, String(value)]
+          );
+          count++;
+        }
+        console.log(`[bootstrap] Seeded ${count} CMS keys from live site`);
+      }
+    } catch (seedErr) {
+      console.error('[bootstrap] CMS seed failed:', seedErr.message);
+    }
+
+    // Create default owner if no users exist
+    const users = await pool.query('SELECT COUNT(*) AS cnt FROM users');
+    if (parseInt(users.rows[0].cnt, 10) === 0) {
+      const email = process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
+      const pass = process.env.OWNER_PASSWORD || 'NewTech2026!';
+      const hash = await bcrypt.hash(pass, 12);
+      await pool.query(
+        `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor)
+         VALUES ($1, $2, $3, 'owner', 'approved', TRUE)`,
+        [email.toLowerCase(), 'Evaughntae White', hash]
+      );
+      console.log(`[bootstrap] Created owner account: ${email}`);
+    }
+  } catch (err) {
+    console.error('[bootstrap] Schema bootstrap error:', err.message);
+  }
 }
 
 async function migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl) {
@@ -155,6 +214,13 @@ async function rehydrateFileOverrides(pool) {
  * Run all startup tasks. Call once from server.js after app.listen().
  */
 async function runStartup({ pool, polsiaApiKey, r2BaseUrl }) {
+  // Bootstrap schema on fresh databases (e.g. new Render Postgres)
+  try {
+    await ensureDatabaseSchema(pool);
+  } catch (err) {
+    console.error('[bootstrap] startup error:', err.message);
+  }
+
   // Rehydrate editor file overrides FIRST and AWAIT it — restores admin edits
   // lost on deploy. Must complete before the app serves any requests so that
   // download-source endpoints and the live filesystem reflect editor changes.
