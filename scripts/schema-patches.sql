@@ -52,6 +52,9 @@ ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS student_name VARCHAR(255);
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS booking_id INTEGER REFERENCES bookings(id);
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_status VARCHAR(20) DEFAULT 'pending';
+ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_message TEXT;
+UPDATE instructor_hours SET audit_status = 'pending' WHERE audit_status IS NULL;
 
 -- ── Instructor availability overrides ──
 ALTER TABLE instructor_availability_overrides ADD COLUMN IF NOT EXISTS start_date DATE;

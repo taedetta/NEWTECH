@@ -2043,6 +2043,7 @@
           <div class="page-header">
             <h1 id="billing-title">Billing</h1>
           </div>
+          <div id="billing-audit-banner" class="hidden" style="margin-bottom:1.25rem;padding:0.85rem 1rem;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);color:var(--gray-200);font-size:0.88rem;"></div>
 
           <!-- Owner: student selector -->
           <div id="billing-student-selector" class="hidden" style="margin-bottom:1.5rem;">
@@ -2128,6 +2129,7 @@
               <button class="btn btn-secondary btn-sm" onclick="toggleGSForm()" id="gs-toggle-btn" style="width:auto;">+ Ground Session</button>
             </div>
           </div>
+          <div id="ih-audit-banner" class="hidden" style="margin-bottom:1.25rem;padding:0.85rem 1rem;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);color:var(--gray-200);font-size:0.88rem;"></div>
 
           <!-- Ground Session Form (collapsible) -->
           <div id="gs-form-panel" class="hidden" style="margin-bottom:1.75rem;">
@@ -11230,6 +11232,39 @@ let currentBillingStudentId = null;
 let currentBillingFlights = [];
 let currentBillingGroundSessions = [];
 
+function billingHobbsHours(f) {
+  if (f.hobbs_hours != null && !isNaN(parseFloat(f.hobbs_hours))) return parseFloat(f.hobbs_hours);
+  if (f.hobbs_start != null && f.hobbs_end != null) return parseFloat(f.hobbs_end) - parseFloat(f.hobbs_start);
+  return 0;
+}
+
+function billingDualHours(f) {
+  if (f.dual_instruction_hours != null && !isNaN(parseFloat(f.dual_instruction_hours))) return parseFloat(f.dual_instruction_hours);
+  var isDual = f.booking_type === 'dual' || f.booking_type === 'ground';
+  if (!isDual) return 0;
+  var hobbs = billingHobbsHours(f);
+  if (hobbs > 0) return hobbs;
+  if (f.start_time && f.end_time) return Math.max(0, (new Date(f.end_time) - new Date(f.start_time)) / 3600000);
+  return 0;
+}
+
+async function loadBillingAuditBanner() {
+  var banner = document.getElementById('billing-audit-banner');
+  if (!banner || !currentUser || currentUser.role === 'student') return;
+  try {
+    var flags = await api('/api/billing/audit-flags');
+    if (!flags || !flags.length) { banner.classList.add('hidden'); return; }
+    banner.innerHTML = '<strong style="color:var(--red)">Hours mismatch flagged (' + flags.length + ')</strong> — ' +
+      flags.slice(0, 3).map(function(f) {
+        return escHtml((f.instructor_name || 'Instructor') + ': ' + (f.audit_message || 'Mismatch'));
+      }).join('; ') + (flags.length > 3 ? '…' : '') +
+      ' <span style="color:var(--gray-400)">Review under Instructor Hours.</span>';
+    banner.classList.remove('hidden');
+  } catch (_) {
+    banner.classList.add('hidden');
+  }
+}
+
 async function loadBilling() {
   const role = currentUser.role;
   const selectorEl = document.getElementById('billing-student-selector');
@@ -11237,8 +11272,8 @@ async function loadBilling() {
   const emptyEl = document.getElementById('billing-empty');
   const backBtn = document.getElementById('billing-back-btn');
 
-  if (role === 'student') {
-    // Students see their own billing directly
+  if (role === 'student' || role === 'renter') {
+    // Students/renters see their own billing directly
     selectorEl.classList.add('hidden');
     backBtn.classList.add('hidden');
     emptyEl.classList.add('hidden');
@@ -11248,9 +11283,10 @@ async function loadBilling() {
     return;
   }
 
-  // Owner/instructor: show student overview
+  // Owner/admin/instructor: show student overview
   document.getElementById('billing-title').textContent = 'Billing';
   try {
+    await loadBillingAuditBanner();
     billingStudentSummaries = await api('/api/billing/summary');
     if (billingStudentSummaries.length === 0) {
       selectorEl.classList.add('hidden');
@@ -11344,18 +11380,10 @@ async function loadBillingForStudent(studentId) {
     var aircraftData = {};
 
     flights.forEach(function(f) {
-      var hobbsHrs = (f.hobbs_start != null && f.hobbs_end != null) ? parseFloat(f.hobbs_end) - parseFloat(f.hobbs_start) : 0;
+      var hobbsHrs = billingHobbsHours(f);
       var isDual = f.booking_type === 'dual' || f.booking_type === 'ground';
 
-      // Instruction hours: for ground sessions use scheduled duration, else use Hobbs delta
-      var instrHrs = 0;
-      if (isDual) {
-        if (hobbsHrs > 0) {
-          instrHrs = hobbsHrs;
-        } else if (f.start_time && f.end_time) {
-          instrHrs = Math.max(0, (new Date(f.end_time) - new Date(f.start_time)) / 3600000);
-        }
-      }
+      var instrHrs = isDual ? billingDualHours(f) : 0;
 
       var aircraftCharge = f.aircraft_charge_amount != null ? parseFloat(f.aircraft_charge_amount) : hobbsHrs * parseFloat(f.aircraft_rate || 0);
       var instrCharge = isDual ? (f.instruction_charge_amount != null ? parseFloat(f.instruction_charge_amount) : instrHrs * parseFloat(f.instructor_rate || 0)) : 0;
@@ -11436,14 +11464,15 @@ async function loadBillingForStudent(studentId) {
 
     // Individual flights (now includes Instructor column)
     document.getElementById('billing-flights-table').innerHTML = flights.map(function(f) {
-      var hrs = (f.hobbs_start != null && f.hobbs_end != null) ? parseFloat(f.hobbs_end) - parseFloat(f.hobbs_start) : 0;
+      var hrs = billingHobbsHours(f);
       var rentalCost = f.aircraft_charge_amount != null ? parseFloat(f.aircraft_charge_amount) : hrs * parseFloat(f.aircraft_rate || 0);
-      var instrCost = f.booking_type === 'dual' ? (f.instruction_charge_amount != null ? parseFloat(f.instruction_charge_amount) : hrs * parseFloat(f.instructor_rate || 0)) : 0;
+      var dualHrs = billingDualHours(f);
+      var instrCost = f.booking_type === 'dual' ? (f.instruction_charge_amount != null ? parseFloat(f.instruction_charge_amount) : dualHrs * parseFloat(f.instructor_rate || 0)) : 0;
       var total = rentalCost + instrCost;
       var d = new Date(f.start_time);
       var dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       var typeTag = f.booking_type === 'dual' ? '<span class="tag tag-sky">Dual</span>' : '<span class="tag tag-green">Solo</span>';
-      var dualHrsStr = (f.booking_type === 'dual' && f.dual_instruction_hours != null) ? parseFloat(f.dual_instruction_hours).toFixed(1) + ' hrs' : (f.booking_type === 'dual' ? hrs.toFixed(1) + ' hrs' : '—');
+      var dualHrsStr = (f.booking_type === 'dual' && dualHrs > 0) ? dualHrs.toFixed(1) + ' hrs' : (f.booking_type === 'dual' ? hrs.toFixed(1) + ' hrs' : '—');
       var actionTd = canEditBilling
         ? '<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 8px;margin-right:4px" onclick=\'openEditBillingFlightModal(' + JSON.stringify(f.id) + ')\'>Edit</button>' +
           '<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick=\'confirmDeleteBillingFlight(' + JSON.stringify(f.id) + ', ' + JSON.stringify(dateStr) + ')\'>Delete</button></td>'
@@ -11500,9 +11529,10 @@ function openEditBillingFlightModal(id) {
   var dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   var infoEl = document.getElementById('edit-billing-flight-info');
   if (infoEl) infoEl.textContent = (f.tail_number || '') + '  ·  ' + dateStr + (f.instructor_name ? '  ·  Instr: ' + f.instructor_name : '');
-  var hrs = (f.hobbs_start != null && f.hobbs_end != null) ? parseFloat(f.hobbs_end) - parseFloat(f.hobbs_start) : 0;
+  var hrs = billingHobbsHours(f);
   var rentalCost = f.aircraft_charge_amount != null ? parseFloat(f.aircraft_charge_amount) : hrs * parseFloat(f.aircraft_rate || 0);
-  var instrCost = f.instruction_charge_amount != null ? parseFloat(f.instruction_charge_amount) : (f.booking_type === 'dual' ? hrs * parseFloat(f.instructor_rate || 0) : 0);
+  var dualHrs = billingDualHours(f);
+  var instrCost = f.instruction_charge_amount != null ? parseFloat(f.instruction_charge_amount) : (f.booking_type === 'dual' ? dualHrs * parseFloat(f.instructor_rate || 0) : 0);
   document.getElementById('edit-billing-flight-ac-charge').value = rentalCost.toFixed(2);
   document.getElementById('edit-billing-flight-instr-charge').value = instrCost.toFixed(2);
   document.getElementById('edit-billing-flight-dual-hrs').value = f.dual_instruction_hours != null ? parseFloat(f.dual_instruction_hours).toFixed(1) : hrs.toFixed(1);
@@ -14744,7 +14774,13 @@ async function loadInstructorHoursPage() {
   ihAnchor = new Date();
   ihUpdateNavUI();
 
-  // Load entries
+  // Load entries (re-audit existing entries against flight logs first)
+  try {
+    var reauditBody = {};
+    var instrFilterEl = document.getElementById('ih-filter-instructor');
+    if (instrFilterEl && instrFilterEl.value) reauditBody.instructor_id = parseInt(instrFilterEl.value, 10);
+    await api('/api/instructor-hours/reaudit', { method: 'POST', body: JSON.stringify(reauditBody) });
+  } catch (_) { /* non-fatal */ }
   await loadInstructorHours();
 }
 
@@ -14975,6 +15011,27 @@ async function loadInstructorHours() {
   renderIHStats(allEntries);
   renderIHTable(allEntries);
   updateIHSortIndicators();
+  renderIHAuditBanner(ihEntries);
+}
+
+function renderIHAuditBanner(ihOnlyEntries) {
+  var banner = document.getElementById('ih-audit-banner');
+  if (!banner) return;
+  var flagged = (ihOnlyEntries || []).filter(function(e) { return e.audit_status === 'flagged'; });
+  var unmatched = (ihOnlyEntries || []).filter(function(e) { return e.audit_status === 'unmatched'; });
+  if (!flagged.length && !unmatched.length) { banner.classList.add('hidden'); return; }
+  var parts = [];
+  if (flagged.length) {
+    parts.push('<strong style="color:var(--red)">' + flagged.length + ' mismatch' + (flagged.length > 1 ? 'es' : '') + '</strong>: ' +
+      flagged.slice(0, 2).map(function(f) {
+        return escHtml(String(f.entry_date || '').slice(0, 10) + ' — ' + (f.audit_message || 'Hours do not match flight log'));
+      }).join('; '));
+  }
+  if (unmatched.length) {
+    parts.push('<span style="color:var(--amber)">' + unmatched.length + ' unverified</span> (no matching flight log found)');
+  }
+  banner.innerHTML = parts.join(' · ') + '. Correct the entry or update the flight log Hobbs readings.';
+  banner.classList.remove('hidden');
 }
 
 function renderIHStats(entries) {
@@ -15070,6 +15127,11 @@ function renderIHTable(entries) {
     var studentStr = e.student_name ? escHtml(e.student_name) : '<span style="color:var(--gray-500)">—</span>';
     var canDelete = currentUser.role === 'owner' || currentUser.role === 'admin' || (currentUser.role === 'instructor' && e.instructor_id === currentUser.id);
     var canEdit = currentUser.role === 'owner' || currentUser.role === 'admin';
+    var auditBadge = (!isGround && e.audit_status === 'flagged')
+      ? ' <span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3);font-size:0.68rem;vertical-align:middle" title="' + escHtml(e.audit_message || '') + '">Mismatch</span>'
+      : (!isGround && e.audit_status === 'unmatched'
+        ? ' <span class="tag" style="background:rgba(245,158,11,0.15);color:var(--amber);border:1px solid rgba(245,158,11,0.3);font-size:0.68rem;vertical-align:middle">Unverified</span>'
+        : '');
     var editBtn = canEdit
       ? (isGround
         ? '<button class="btn btn-sm btn-secondary" onclick="openEditGSModal(' + e.id + ')" title="Edit ground session" style="padding:0.25rem 0.5rem;font-size:0.75rem;">✏</button>'
@@ -15091,8 +15153,8 @@ function renderIHTable(entries) {
     footTotalInHrs += parseFloat(e.instruction_hours || 0);
     footTotalInstrCharge += instrCharge;
     footTotalBilled += totalBilled;
-    return '<tr>' +
-      '<td style="white-space:nowrap;color:var(--gray-300)">' + escHtml(dateStr) + '</td>' +
+    return '<tr' + (e.audit_status === 'flagged' ? ' style="background:rgba(239,68,68,0.04)"' : '') + '>' +
+      '<td style="white-space:nowrap;color:var(--gray-300)">' + escHtml(dateStr) + auditBadge + '</td>' +
       instrNameTd +
       '<td style="font-size:0.85rem">' + studentStr + '</td>' +
       '<td>' + acStr + '</td>' +
@@ -15167,8 +15229,14 @@ async function submitIHEntry() {
   }
 
   try {
-    await api('/api/instructor-hours', { method: 'POST', body: JSON.stringify(body) });
-    showToast('Hours entry saved', 'success');
+    var saved = await api('/api/instructor-hours', { method: 'POST', body: JSON.stringify(body) });
+    if (saved && saved.audit_status === 'flagged') {
+      showToast('Hours saved but flagged: ' + (saved.audit_message || 'Does not match flight log'), 'error');
+    } else if (saved && saved.audit_status === 'unmatched') {
+      showToast('Hours saved — no matching flight log found for verification', 'error');
+    } else {
+      showToast('Hours entry saved', 'success');
+    }
     toggleIHForm();
     // Reset form
     document.getElementById('ih-aircraft-hours').value = '0';

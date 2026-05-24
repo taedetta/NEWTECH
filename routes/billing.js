@@ -3,40 +3,78 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
+const { getAppEnv } = require('../db/source-wrapper');
+const { listHoursAuditFlags } = require('../lib/hours-audit');
+
+function appendBookingSourceFilter(sql, params) {
+  const source = getAppEnv();
+  const newParams = [...params, source];
+  const idx = newParams.length;
+  const clause = sql.toUpperCase().includes('WHERE') ? ` AND b.source = $${idx}` : ` WHERE b.source = $${idx}`;
+  const tailMatch = sql.match(/\s(ORDER\s+BY|GROUP\s+BY|LIMIT\s|OFFSET\s|FOR\s+UPDATE)/i);
+  const newSql = tailMatch && tailMatch.index != null
+    ? sql.slice(0, tailMatch.index) + clause + sql.slice(tailMatch.index)
+    : sql + clause;
+  return { sql: newSql, params: newParams };
+}
 
 const router = express.Router();
+
+const BILLABLE_FLIGHT_SQL = `
+  FROM bookings b
+  INNER JOIN users u ON u.id = b.student_id AND u.deleted_at IS NULL
+  LEFT JOIN aircraft a ON a.id = b.aircraft_id
+  LEFT JOIN users inst ON inst.id = b.instructor_id
+  LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+  WHERE b.status = 'completed'
+    AND COALESCE(b.billing_voided, FALSE) = FALSE
+    AND b.student_id IS NOT NULL
+    AND (
+      fl.id IS NOT NULL
+      OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL)
+    )
+`;
+
+function hobbsExpr() {
+  return 'COALESCE(fl.hobbs_delta, CASE WHEN b.hobbs_end IS NOT NULL AND b.hobbs_start IS NOT NULL THEN b.hobbs_end - b.hobbs_start END)';
+}
+
+function dualHrsExpr() {
+  return `COALESCE(fl.dual_instruction_hours, CASE WHEN b.booking_type = 'dual' THEN ${hobbsExpr()} END)`;
+}
+
+function acChargeExpr() {
+  return `COALESCE(fl.aircraft_charge_amount, ${hobbsExpr()} * COALESCE(a.hourly_rate, 0))`;
+}
+
+function instrChargeExpr() {
+  return `COALESCE(fl.instruction_charge_amount, ${dualHrsExpr()} * COALESCE(inst.instructor_rate, 0))`;
+}
 
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
-    let whereExtra = '';
+    let extra = '';
     const params = [];
-    if (req.user.role === 'instructor') { whereExtra = ' AND b.instructor_id = $1'; params.push(req.user.id); }
-    const result = await pool.query(`
-      SELECT u.id, u.name,
-        COUNT(b.id) as flight_count,
-        COALESCE(SUM(COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start)), 0) as total_hours,
-        COALESCE(SUM(
-          COALESCE(fl.aircraft_charge_amount,
-            COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * COALESCE(a.hourly_rate, 0))
-        ), 0) as total_rental,
-        COALESCE(SUM(
-          COALESCE(fl.instruction_charge_amount,
-            COALESCE(fl.dual_instruction_hours,
-              COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start)
-            ) * COALESCE(inst.instructor_rate, 0))
-        ), 0) as total_instruction
-      FROM users u
-      JOIN bookings b ON b.student_id = u.id AND b.status = 'completed' AND COALESCE(b.billing_voided, FALSE) = FALSE
-      LEFT JOIN aircraft a ON a.id = b.aircraft_id
-      LEFT JOIN users inst ON inst.id = b.instructor_id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
-      WHERE u.role = 'student' AND u.deleted_at IS NULL
-        AND (fl.id IS NOT NULL OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL))
-        ${whereExtra}
-      GROUP BY u.id, u.name
+    if (req.user.role === 'instructor') {
+      extra = ' AND b.instructor_id = $1';
+      params.push(req.user.id);
+    }
+
+    let sql = `
+      SELECT u.id, u.name, u.role,
+        COUNT(DISTINCT b.id)::int AS flight_count,
+        COALESCE(SUM(${hobbsExpr()}), 0) AS total_hours,
+        COALESCE(SUM(${acChargeExpr()}), 0) AS total_rental,
+        COALESCE(SUM(${instrChargeExpr()}), 0) AS total_instruction
+      ${BILLABLE_FLIGHT_SQL}
+      ${extra}
+      GROUP BY u.id, u.name, u.role
+      HAVING COUNT(DISTINCT b.id) > 0
       ORDER BY u.name
-    `, params);
+    `;
+    const filtered = appendBookingSourceFilter(sql, params);
+    const result = await pool.query(filtered.sql, filtered.params);
     res.json(result.rows);
   } catch (err) {
     console.error('Billing summary error:', err);
@@ -44,54 +82,73 @@ router.get('/summary', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/:studentId', authenticateToken, async (req, res) => {
+router.get('/audit-flags', authenticateToken, async (req, res) => {
   try {
-    const { studentId } = req.params;
-    if (req.user.role === 'student' && req.user.id !== parseInt(studentId)) {
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    let extraWhere = '';
+    const instructorId = req.user.role === 'instructor' ? req.user.id : (req.query.instructor_id ? parseInt(req.query.instructor_id, 10) : null);
+    const flags = await listHoursAuditFlags({ instructorId });
+    res.json(flags);
+  } catch (err) {
+    console.error('Billing audit flags error:', err);
+    res.status(500).json({ error: 'Failed to load audit flags' });
+  }
+});
+
+router.get('/:studentId', authenticateToken, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    if (req.user.role === 'student' && req.user.id !== studentId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (req.user.role === 'renter' && req.user.id !== studentId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    let extra = '';
     const params = [studentId];
-    if (req.user.role === 'instructor') { extraWhere = ' AND b.instructor_id = $2'; params.push(req.user.id); }
-    const result = await pool.query(`
+    if (req.user.role === 'instructor') {
+      extra = ' AND b.instructor_id = $2';
+      params.push(req.user.id);
+    }
+
+    let sql = `
       SELECT b.id, b.start_time, b.end_time, b.booking_type,
-        COALESCE(fl.hobbs_start, b.hobbs_start) as hobbs_start,
-        COALESCE(fl.hobbs_end, b.hobbs_end) as hobbs_end,
-        COALESCE(fl.tach_start, b.tach_start) as tach_start,
-        COALESCE(fl.tach_end, b.tach_end) as tach_end,
+        COALESCE(fl.hobbs_start, b.hobbs_start) AS hobbs_start,
+        COALESCE(fl.hobbs_end, b.hobbs_end) AS hobbs_end,
+        COALESCE(fl.tach_start, b.tach_start) AS tach_start,
+        COALESCE(fl.tach_end, b.tach_end) AS tach_end,
+        ${hobbsExpr()} AS hobbs_hours,
+        ${dualHrsExpr()} AS dual_instruction_hours,
         b.aircraft_id, a.tail_number, a.make_model,
-        a.hourly_rate as aircraft_rate,
-        COALESCE(inst.instructor_rate, 0) as instructor_rate,
-        inst.name as instructor_name,
-        COALESCE(fl.dual_instruction_hours,
-          CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END) as dual_instruction_hours,
-        COALESCE(fl.aircraft_charge_amount,
-          COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * COALESCE(a.hourly_rate, 0)) as aircraft_charge_amount,
-        COALESCE(fl.instruction_charge_amount,
-          COALESCE(fl.dual_instruction_hours,
-            CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
-          ) * COALESCE(inst.instructor_rate, 0)) as instruction_charge_amount
-      FROM bookings b
-      LEFT JOIN aircraft a ON a.id = b.aircraft_id
-      LEFT JOIN users inst ON inst.id = b.instructor_id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
-      WHERE b.student_id = $1 AND b.status = 'completed'
-        AND COALESCE(b.billing_voided, FALSE) = FALSE
-        AND (fl.id IS NOT NULL OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL))
-        ${extraWhere}
+        a.hourly_rate AS aircraft_rate,
+        COALESCE(inst.instructor_rate, 0) AS instructor_rate,
+        inst.name AS instructor_name,
+        ${acChargeExpr()} AS aircraft_charge_amount,
+        ${instrChargeExpr()} AS instruction_charge_amount
+      ${BILLABLE_FLIGHT_SQL}
+        AND b.student_id = $1
+        ${extra}
       ORDER BY b.start_time DESC
-    `, params);
-    let gsParams = [studentId];
-    let gsExtraWhere = '';
-    if (req.user.role === 'instructor') { gsExtraWhere = ' AND gs.instructor_id = $2'; gsParams.push(req.user.id); }
+    `;
+    const filtered = appendBookingSourceFilter(sql, params);
+    const result = await pool.query(filtered.sql, filtered.params);
+
+    const gsParams = [studentId];
+    let gsExtra = '';
+    if (req.user.role === 'instructor') {
+      gsExtra = ' AND gs.instructor_id = $2';
+      gsParams.push(req.user.id);
+    }
     const gsResult = await pool.query(`
       SELECT gs.id, gs.session_date, gs.ground_hours, gs.instructor_rate,
-        gs.instruction_charge_amount, gs.notes, inst.id as instructor_id, inst.name as instructor_name
+        gs.instruction_charge_amount, gs.notes, inst.id AS instructor_id, inst.name AS instructor_name
       FROM ground_sessions gs
       JOIN users inst ON inst.id = gs.instructor_id
-      WHERE gs.student_id = $1 ${gsExtraWhere}
+      WHERE gs.student_id = $1 ${gsExtra}
       ORDER BY gs.session_date DESC
     `, gsParams);
+
     res.json({ flights: result.rows, groundSessions: gsResult.rows });
   } catch (err) {
     console.error('Billing detail error:', err);
@@ -110,7 +167,7 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
     if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
     await client.query('BEGIN');
     const hobbsDelta = (b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0;
-    const tachDelta  = (b.tach_end  != null && b.tach_start  != null) ? parseFloat(b.tach_end)  - parseFloat(b.tach_start)  : 0;
+    const tachDelta = (b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0;
     if (hobbsDelta !== 0 || tachDelta !== 0) {
       if (b.student_id) await client.query(
         `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,

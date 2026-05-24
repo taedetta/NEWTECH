@@ -8,6 +8,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { recordHobbsReading } = require('../db/discrepancies');
+const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 
 const router = express.Router();
 
@@ -69,17 +70,31 @@ router.post('/', authenticateToken, async (req, res) => {
     if (dup.rows.length > 0) {
       return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
     }
+    const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
+    const acHrsVal = parseFloat(aircraft_hours) || 0;
+    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const audit = await auditInstructorHoursEntry({
+      instructorId,
+      entryDate,
+      aircraftId: (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
+      aircraftHours: acHrsVal,
+      instructionHours: instrHrsVal,
+      studentName: student_name || null,
+      bookingId: parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
+    });
+
     const result = await pool.query(`
-      INSERT INTO instructor_hours (instructor_id, aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      INSERT INTO instructor_hours (instructor_id, aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name, booking_id, audit_status, audit_message)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
-       entryDate,
-       parseFloat(aircraft_hours) || 0, parseFloat(instruction_hours) || 0,
+       entryDate, acHrsVal, instrHrsVal,
        aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
        instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
-       notes || null, student_name || null]
+       notes || null, student_name || null,
+       parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
+       audit.status, audit.message]
     );
-    const entry = result.rows[0];
+    const entry = { ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details };
 
     // If booking_id + hobbs readings provided, record for discrepancy tracking (fire-and-forget)
     if (booking_id && hobbs_start != null && hobbs_end != null) {
@@ -92,6 +107,9 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     res.status(201).json(entry);
+    if (!audit.ok && audit.status === 'flagged') {
+      console.warn(`[instructor-hours] Flagged entry id=${entry.id}: ${audit.message}`);
+    }
   } catch (err) {
     console.error('Instructor hours create error:', err);
     res.status(500).json({ error: 'Failed to create instructor hours entry' });
@@ -115,6 +133,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const result = await pool.query(`
       SELECT ih.id, ih.entry_date, ih.aircraft_hours, ih.instruction_hours,
              ih.aircraft_rate, ih.instructor_rate, ih.notes, ih.created_at, ih.student_name,
+             ih.audit_status, ih.audit_message, ih.booking_id,
              u.id as instructor_id, u.name as instructor_name,
              a.id as aircraft_id_val, a.tail_number, a.make_model,
              ROUND((ih.aircraft_hours * COALESCE(ih.aircraft_rate, 0)) + (ih.instruction_hours * COALESCE(ih.instructor_rate, 0)), 2) as total_billed
@@ -170,19 +189,77 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
     if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
+    const row = existing.rows[0];
+    const acHrsVal = parseFloat(aircraft_hours) || 0;
+    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const newDate = entry_date || row.entry_date;
+    const audit = await auditInstructorHoursEntry({
+      instructorId: row.instructor_id,
+      entryDate: newDate,
+      aircraftId: row.aircraft_id,
+      aircraftHours: acHrsVal,
+      instructionHours: instrHrsVal,
+      studentName: student_name ?? row.student_name,
+      bookingId: row.booking_id,
+    });
     const result = await pool.query(`
       UPDATE instructor_hours SET entry_date = COALESCE($1, entry_date), aircraft_hours = $2, instruction_hours = $3,
-        aircraft_rate = $4, instructor_rate = $5, notes = $6, student_name = $7, updated_at = NOW()
-      WHERE id = $8 RETURNING *`,
-      [entry_date || null, parseFloat(aircraft_hours) || 0, parseFloat(instruction_hours) || 0,
+        aircraft_rate = $4, instructor_rate = $5, notes = $6, student_name = $7,
+        audit_status = $8, audit_message = $9, updated_at = NOW()
+      WHERE id = $10 RETURNING *`,
+      [entry_date || null, acHrsVal, instrHrsVal,
        aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
        instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
-       notes || null, student_name || null, entryId]
+       notes || null, student_name || null,
+       audit.status, audit.message, entryId]
     );
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details });
   } catch (err) {
     console.error('Instructor hours update error:', err);
     res.status(500).json({ error: 'Failed to update entry' });
+  }
+});
+
+router.post('/reaudit', authenticateToken, async (req, res) => {
+  try {
+    const { role, id: userId } = req.user;
+    if (role === 'student') return res.status(403).json({ error: 'Access denied' });
+    const { start_date, end_date, instructor_id } = req.body || {};
+    const conditions = [];
+    const params = [];
+    let pi = 1;
+    if (role === 'instructor') {
+      conditions.push(`ih.instructor_id = $${pi++}`);
+      params.push(userId);
+    } else if (instructor_id) {
+      conditions.push(`ih.instructor_id = $${pi++}`);
+      params.push(parseInt(instructor_id, 10));
+    }
+    if (start_date) { conditions.push(`ih.entry_date >= $${pi++}`); params.push(start_date); }
+    if (end_date) { conditions.push(`ih.entry_date <= $${pi++}`); params.push(end_date); }
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const rows = await pool.query(`SELECT * FROM instructor_hours ih ${where} ORDER BY ih.entry_date DESC`, params);
+    let flagged = 0;
+    for (const row of rows.rows) {
+      const audit = await auditInstructorHoursEntry({
+        instructorId: row.instructor_id,
+        entryDate: row.entry_date,
+        aircraftId: row.aircraft_id,
+        aircraftHours: row.aircraft_hours,
+        instructionHours: row.instruction_hours,
+        studentName: row.student_name,
+        bookingId: row.booking_id,
+      });
+      await pool.query(
+        'UPDATE instructor_hours SET audit_status = $1, audit_message = $2, updated_at = NOW() WHERE id = $3',
+        [audit.status, audit.message, row.id]
+      );
+      if (audit.status === 'flagged') flagged++;
+    }
+    res.json({ ok: true, reviewed: rows.rows.length, flagged });
+  } catch (err) {
+    console.error('Instructor hours reaudit error:', err);
+    res.status(500).json({ error: 'Failed to re-audit instructor hours' });
   }
 });
 
