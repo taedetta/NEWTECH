@@ -6485,6 +6485,14 @@ async function loadDiscrepancies() {
         ? `<span style="background:rgba(245,158,11,0.12);color:#F59E0B;border:1px solid rgba(245,158,11,0.2);padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;">⚠️ Pending</span>`
         : `<span style="background:rgba(34,197,94,0.1);color:#22C55E;border:1px solid rgba(34,197,94,0.2);padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;">✅ Resolved</span>`;
       const deltaColor = parseFloat(d.delta_hours) > 0.5 ? 'color:#EF4444;font-weight:700' : 'color:#F59E0B;font-weight:600';
+      const resolveBtn = '<button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick=\'openDiscrepancyResolve(' + d.id + ', ' + JSON.stringify(d) + ')\'>Resolve</button>';
+      const canDeleteDisc = currentUser && ['owner','admin'].includes(currentUser.role);
+      const resolvedCell = isPending ? resolveBtn : (
+        '<span style="color:var(--gray-500);font-size:0.8rem">' + (d.resolved_by_name || '—') + '</span>' +
+        (canDeleteDisc
+          ? '<button class="btn btn-sm" style="margin-left:0.25rem;padding:2px 7px;font-size:0.72rem;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2);" onclick="deleteDiscrepancyEntry(' + d.id + ')">&#128465;</button>'
+          : '')
+      );
       return `<tr style="${isPending ? '' : 'opacity:0.7'}">
         <td style="white-space:nowrap">${flightDate}</td>
         <td>${d.student_name || '—'}</td>
@@ -6495,17 +6503,7 @@ async function loadDiscrepancies() {
         <td style="${deltaColor}">${parseFloat(d.delta_hours).toFixed(2)} hrs</td>
         <td>${statusBadge}${!isPending && d.resolution_reading ? `<br><span style="font-size:0.75rem;color:var(--gray-500)">Used: ${d.resolution_reading}</span>` : ''}</td>
         <td style="color:var(--gray-500);font-size:0.82rem;white-space:nowrap">${flagged}</td>
-        <td style="white-space:nowrap">${isPending
-          ? `<button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick="openDiscrepancyResolve(${d.id}, ${JSON.stringify(d).replace(/"/g,'&quot;')})">Resolve</button>`
-          : (() => {
-              var canDeleteDisc = currentUser && ['owner','admin'].includes(currentUser.role);
-              var resolvedInfo = '<span style="color:var(--gray-500);font-size:0.8rem">' + (d.resolved_by_name || '—') + '</span>';
-              var deleteBtn = canDeleteDisc
-                ? '<button class="btn btn-sm" style="margin-left:0.25rem;padding:2px 7px;font-size:0.72rem;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2);" onclick="deleteDiscrepancyEntry(' + d.id + ')">&#128465;</button>'
-                : '';
-              return resolvedInfo + deleteBtn;
-            })()
-        }</td>
+        <td style="white-space:nowrap">${resolvedCell}</td>
       </tr>`;
     }).join('');
   } catch (err) {
@@ -8914,7 +8912,7 @@ async function loadPeople(filter, skipReload) {
       var isDualRole = !!u.is_instructor && ['admin', 'owner'].includes(u.role) && u.role !== 'instructor';
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
       var roleLabel = u.role === 'owner' ? 'Owner' : u.role === 'instructor' ? 'Instructor' : isDualRole ? 'Admin / Instructor' : u.role === 'admin' ? 'Admin' : u.role === 'renter' ? 'Renter' : u.role === 'maintenance' ? 'Maintenance' : 'Student';
- onclick="openRoleChangeModal(' + u.id + ', \"" + escHtml(u.name).replace(/'/g, "\\'") + "\", '" + u.role + "', " + (!!u.is_instructor ? 'true' : 'false') + ')"✎</button>' : '';
+      var editRoleBtn = isOwner && !isSelf ? ' <button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:0.85rem;padding:0.15rem 0.3rem;border-radius:4px;line-height:1;vertical-align:middle;transition:color 0.15s" title="Edit user" onmouseover="this.style.color=\'var(--sky)\'" onmouseout="this.style.color=\'var(--gray-400)\'" onclick="openRoleChangeModal(' + u.id + ',\'' + escHtml(u.name).replace(/'/g,"\\'") + '\',\'' + u.role + '\', ' + (!!u.is_instructor ? 'true' : 'false') + ')">&#9998;</button>' : '';
 
       function makeToggle(perm, value) {
         var checked = isTargetOwner ? true : !!value;
@@ -10300,13 +10298,16 @@ function renderEnrollmentCard(e, debriefs, isOwnView, maneuverProgress) {
     </div>` : '';
 
     const toggleId = `ml-${e.id}-${s.id}`;
+    const signOffBtn = (!isOwnView && !done)
+      ? '<button class="btn btn-secondary btn-xs" onclick="event.stopPropagation();openSignOffModal(' + e.id + ',' + s.id + ',\'' + escHtml(s.name).replace(/'/g, "\\'") + '\')" style="font-size:0.7rem;padding:0.15rem 0.5rem">Sign Off</button>'
+      : '';
     return `<div class="stage-row ${done ? 'stage-done' : ''} ${isCurrent ? 'stage-current' : ''} ${hasManeuvers ? 'stage-row-clickable' : ''}"
       ${hasManeuvers ? `onclick="toggleManeuverList('${toggleId}',this)"` : ''}>
       <span class="stage-check">${done ? '&#10003;' : isCurrent ? '&#9654;' : '&#9675;'}</span>
       <span class="stage-name">${escHtml(s.name)}</span>
       ${hasManeuvers ? `<span class="maneuver-progress-count">${progressLabel}</span>` : ''}
       ${done && s.completion ? `<span class="stage-date">${new Date(s.completion.completed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>` : ''}
-      ${!isOwnView && !done ? `<button class="btn btn-secondary btn-xs" onclick="event.stopPropagation();openSignOffModal(${e.id},${s.id},'${escHtml(s.name).replace(/'/g,'\\\")}')" style="font-size:0.7rem;padding:0.15rem 0.5rem">Sign Off</button>` : ''}
+      ${signOffBtn}
       ${hasManeuvers ? `<span class="stage-maneuver-toggle">&#9654;</span>` : ''}
     </div>${maneuverListHtml}`;
   }).join('') : '';
