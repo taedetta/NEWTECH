@@ -128,7 +128,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     const result = await pool.query(
-      'SELECT id, email, name, password_hash, role, deleted_at, approval_status FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor FROM users WHERE LOWER(email) = LOWER($1)',
       [email]
     );
     if (result.rows.length === 0) {
@@ -155,7 +155,7 @@ router.post('/login', async (req, res) => {
     );
     const permissions = await getUserPermissions(user.id, user.role);
     res.cookie('token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    const response = { user: { id: user.id, email: user.email, name: user.name, role: user.role, permissions }, token };
+    const response = { user: { id: user.id, email: user.email, name: user.name, role: user.role, is_instructor: !!user.is_instructor, permissions }, token };
     console.log(`[auth] Login OK: ${user.email} (role=${user.role}, id=${user.id})`);
     res.json(response);
   } catch (err) {
@@ -250,7 +250,7 @@ router.post('/reset-password', async (req, res) => {
 router.get('/me', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.email, u.name, u.role, u.deleted_at, u.approval_status,
+      `SELECT u.id, u.email, u.name, u.role, u.deleted_at, u.approval_status, u.is_instructor,
          u.total_hobbs_hours, u.total_tach_hours, u.phone_number,
          ip.can_manage_aircraft, ip.can_manage_instructors,
          ip.can_manage_permissions, ip.can_manage_students,
@@ -282,7 +282,7 @@ router.get('/me', authenticateToken, async (req, res) => {
       res.cookie('token', freshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     }
     const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
-    const response = { user: { id: u.id, email: u.email, name: u.name, role: u.role, permissions,
+    const response = { user: { id: u.id, email: u.email, name: u.name, role: u.role, is_instructor: !!u.is_instructor, permissions,
       approval_status: u.approval_status || 'approved',
       total_hobbs_hours: u.total_hobbs_hours || 0,
       total_tach_hours: u.total_tach_hours || 0,

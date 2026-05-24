@@ -64,21 +64,70 @@ async function ensureDatabaseSchema(pool) {
       console.error('[bootstrap] CMS seed failed:', seedErr.message);
     }
 
-    // Create default owner if no users exist
+    // Create default admin account if no users exist
     const users = await pool.query('SELECT COUNT(*) AS cnt FROM users');
     if (parseInt(users.rows[0].cnt, 10) === 0) {
-      const email = process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
-      const pass = process.env.OWNER_PASSWORD || 'NewTech2026!';
+      const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
+      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
       const hash = await bcrypt.hash(pass, 12);
-      await pool.query(
+      const inserted = await pool.query(
         `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor)
-         VALUES ($1, $2, $3, 'owner', 'approved', TRUE)`,
+         VALUES ($1, $2, $3, 'admin', 'approved', TRUE)
+         RETURNING id`,
         [email.toLowerCase(), 'Evaughntae White', hash]
       );
-      console.log(`[bootstrap] Created owner account: ${email}`);
+      await pool.query(
+        `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
+         VALUES ($1, TRUE, TRUE, TRUE, TRUE, TRUE)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [inserted.rows[0].id]
+      );
+      console.log(`[bootstrap] Created admin/instructor account: ${email}`);
     }
   } catch (err) {
     console.error('[bootstrap] Schema bootstrap error:', err.message);
+  }
+}
+
+async function ensureDefaultAdminAccount(pool) {
+  const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
+  try {
+    const existing = await pool.query(
+      'SELECT id, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
+      [email]
+    );
+    if (existing.rows.length === 0) return;
+
+    const userId = existing.rows[0].id;
+    if (existing.rows[0].role === 'owner') {
+      await pool.query(
+        `UPDATE users SET role = 'admin', is_instructor = TRUE, approval_status = 'approved', updated_at = NOW()
+         WHERE id = $1`,
+        [userId]
+      );
+      console.log(`[bootstrap] Corrected ${email} from owner to admin/instructor`);
+    } else {
+      await pool.query(
+        `UPDATE users SET is_instructor = TRUE, approval_status = 'approved', updated_at = NOW()
+         WHERE id = $1 AND (is_instructor IS NOT TRUE OR approval_status != 'approved')`,
+        [userId]
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
+       VALUES ($1, TRUE, TRUE, TRUE, TRUE, TRUE)
+       ON CONFLICT (user_id) DO UPDATE SET
+         can_manage_aircraft = TRUE,
+         can_manage_instructors = TRUE,
+         can_manage_permissions = TRUE,
+         can_manage_students = TRUE,
+         can_edit_website = TRUE,
+         updated_at = NOW()`,
+      [userId]
+    );
+  } catch (err) {
+    console.error('[bootstrap] ensureDefaultAdminAccount error:', err.message);
   }
 }
 
@@ -217,6 +266,7 @@ async function runStartup({ pool, polsiaApiKey, r2BaseUrl }) {
   // Bootstrap schema on fresh databases (e.g. new Render Postgres)
   try {
     await ensureDatabaseSchema(pool);
+    await ensureDefaultAdminAccount(pool);
   } catch (err) {
     console.error('[bootstrap] startup error:', err.message);
   }

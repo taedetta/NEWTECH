@@ -4572,8 +4572,10 @@ async function enterApp() {
   const roleLabels = { owner: 'Owner', instructor: 'Instructor', student: 'Student', admin: 'Admin', maintenance: 'Maintenance', renter: 'Renter' };
   const roleEl = document.getElementById('sidebar-role');
   if (roleEl) {
-    roleEl.textContent = roleLabels[currentUser.role] || currentUser.role;
+    const isDualRole = !!currentUser.is_instructor && currentUser.role === 'admin';
+    roleEl.textContent = isDualRole ? 'Admin / Instructor' : (roleLabels[currentUser.role] || currentUser.role);
     if (currentUser.role === 'owner') roleEl.style.color = '#FBBF24';
+    else if (currentUser.role === 'admin') roleEl.style.color = '#F59E0B';
   }
   syncSidebarAuth(true);
 
@@ -4731,10 +4733,11 @@ async function enterApp() {
     console.error('[ENTER-APP] Error showing admin nav:', e);
   }
 
-  // Source download section: owner only
+  // Source download section: admin with website edit access (same as owner)
   const sourceDownloadSection = document.getElementById('source-download-section');
   if (sourceDownloadSection) {
-    sourceDownloadSection.classList.toggle('hidden', currentUser.role !== 'owner');
+    const canDownloadSource = currentUser.role === 'owner' || currentUser.role === 'admin' || !!(perms.can_edit_website);
+    sourceDownloadSection.classList.toggle('hidden', !canDownloadSource);
   }
 
   // Add Aircraft button: visible to owner or instructor with can_manage_aircraft
@@ -8871,7 +8874,7 @@ async function loadPeople(filter, skipReload) {
 
   // Show claim-owner banner if no owner exists
   var banner = document.getElementById('claim-owner-banner');
-  if (!hasOwnerAccount && currentUser.role !== 'student') {
+  if (!hasOwnerAccount && currentUser.role !== 'student' && currentUser.role !== 'admin') {
     banner.style.display = 'flex';
   } else {
     banner.style.display = 'none';

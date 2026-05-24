@@ -32,7 +32,7 @@ const OWNER = {
   email: process.env.LOCAL_OWNER_EMAIL || 'evaughntaemw@gmail.com',
   name: process.env.LOCAL_OWNER_NAME || 'Evaughntae White',
   password: process.env.LOCAL_OWNER_PASSWORD || 'NewTech2026!',
-  role: 'owner',
+  role: 'admin',
 };
 
 async function ensureDatabase() {

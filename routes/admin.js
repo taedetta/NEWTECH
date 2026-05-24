@@ -74,7 +74,7 @@ router.post('/backup/trigger', authenticateToken, requireRole('owner', 'admin'),
 
 // ─── SOURCE DOWNLOAD ────────────────────────────────────
 
-router.get('/download-source', authenticateToken, requireRole('owner'), async (req, res) => {
+router.get('/download-source', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const projectRoot = path.join(__dirname, '..');
     const dateStr = new Date().toISOString().slice(0, 10);
