@@ -16,6 +16,7 @@ const {
   checkStudentSoloEligible,
   runPreflightChecks,
 } = require('../lib/booking-rules');
+const { buildSourceParam } = require('../db/source-wrapper');
 
 const router = express.Router();
 
@@ -578,8 +579,9 @@ router.post('/recurring', authenticateToken, async (req, res) => {
 
 async function createBookingInternal(client, req) {
   const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
-  const sid = student_id ? parseInt(student_id, 10) : null;
+  let sid = student_id ? parseInt(student_id, 10) : null;
   const iid = instructor_id ? parseInt(instructor_id, 10) : null;
+  if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
   if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
   const start = new Date(start_time);
   const end = new Date(end_time);
@@ -593,8 +595,10 @@ async function createBookingInternal(client, req) {
   if (grounding.blocked) return { error: `Aircraft grounded: ${grounding.reason}` };
 
   let booking_type = 'dual';
-  if (sid && !iid) booking_type = 'student_solo';
-  else if (!sid && iid) booking_type = 'instructor_solo';
+  if (sid && !iid) {
+    const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
+    booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
+  } else if (!sid && iid) booking_type = 'instructor_solo';
 
   if (booking_type === 'student_solo') {
     const solo = await checkStudentSoloEligible(client, sid);
@@ -608,10 +612,11 @@ async function createBookingInternal(client, req) {
   const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
   if (conflicts.length) return { error: 'Scheduling conflict', conflicts };
 
+  const { source } = buildSourceParam();
   const result = await client.query(
-    `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+    `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type, source]
   );
   return { booking: result.rows[0] };
 }
@@ -620,10 +625,13 @@ router.post('/', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
-    const sid = student_id ? parseInt(student_id) : null;
+    let sid = student_id ? parseInt(student_id) : null;
     const iid = instructor_id ? parseInt(instructor_id) : null;
-    if (['student', 'renter'].includes(req.user.role) && sid && sid !== req.user.id) {
-      return res.status(403).json({ error: 'Students and renters can only create bookings for themselves' });
+    if (['student', 'renter'].includes(req.user.role)) {
+      sid = req.user.id;
+      if (student_id && parseInt(student_id) !== req.user.id) {
+        return res.status(403).json({ error: 'Students and renters can only create bookings for themselves' });
+      }
     }
     if (!sid && !iid) return res.status(400).json({ error: 'At least one person (student or instructor) is required' });
     if (!aircraft_id || !start_time || !end_time) return res.status(400).json({ error: 'Aircraft, start time, and end time are required' });
@@ -640,8 +648,10 @@ router.post('/', authenticateToken, async (req, res) => {
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
     let booking_type = 'dual';
-    if (sid && !iid) booking_type = 'student_solo';
-    else if (!sid && iid) booking_type = 'instructor_solo';
+    if (sid && !iid) {
+      const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
+      booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
+    } else if (!sid && iid) booking_type = 'instructor_solo';
 
     const grounding = await checkGroundingSquawk(client, aircraft_id);
     if (grounding.blocked) return res.status(409).json({ error: 'Aircraft is grounded due to open squawk', reason: grounding.reason });
@@ -673,7 +683,8 @@ router.post('/', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
-    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+    const selfService = ['student', 'renter'].includes(req.user.role);
+    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true' && !selfService) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
       if (!availCheck.available) {
@@ -707,10 +718,11 @@ router.post('/', authenticateToken, async (req, res) => {
         });
       }
     }
+    const { source } = buildSourceParam();
     const result = await client.query(
-      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type, source]
     );
     await client.query('COMMIT');
     const booking = await pool.query(

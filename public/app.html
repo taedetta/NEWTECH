@@ -4635,9 +4635,9 @@ async function enterApp() {
   }
   // ── End maintenance role ──
 
-  // ── Renter role: limited nav (Dashboard, Schedule, Fleet, My Portal, Flight Log) ──
+  // ── Renter role: limited nav (Dashboard, Schedule, Fleet, My Portal, Flight Log, History, Billing) ──
   if (currentUser.role === 'renter') {
-    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log']);
+    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -4679,10 +4679,10 @@ async function enterApp() {
     if (canSeeDisc) loadDiscrepanciesBadge();
   }
 
-  // Students can't see People page
+  // Students and renters can't see People page
   const navPeople = document.getElementById('nav-people');
   if (navPeople) {
-    navPeople.classList.toggle('hidden', currentUser.role === 'student');
+    navPeople.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
   }
 
   // At-Risk: visible to owner, admin, instructor — not students
@@ -4722,9 +4722,13 @@ async function enterApp() {
     navIH.classList.toggle('hidden', currentUser.role === 'student');
   }
 
-  // Booking History: visible to instructor, admin, owner — NOT students
+  // Booking History: visible to students, renters, instructors, admin, owner
   const navBH = document.getElementById('nav-history');
-  if (navBH) navBH.classList.toggle('hidden', currentUser.role === 'student');
+  if (navBH) navBH.classList.toggle('hidden', currentUser.role === 'maintenance');
+
+  // Billing: students/renters see own billing; staff see overview
+  const navBilling = document.getElementById('nav-billing');
+  if (navBilling) navBilling.classList.toggle('hidden', ['maintenance'].includes(currentUser.role));
 
   // Endorsements: visible to all roles
   const navEndorse = document.getElementById('nav-endorsements');
@@ -7488,9 +7492,12 @@ async function openBookingModal() {
         '');
   }
 
-  // Instructor field: "None" for student solo, then all instructors
+  // Instructor field: "None" for solo student/rental, then all instructors
+  const soloLabel = currentUser.role === 'renter'
+    ? '— No Instructor (aircraft rental) —'
+    : '— No Instructor (solo student) —';
   document.getElementById('booking-instructor').innerHTML =
-    '<option value="">— No Instructor (solo student) —</option>' +
+    `<option value="">${soloLabel}</option>` +
     (instructors.length ?
       instructors.map(u => `<option value="${u.id}">${u.name}</option>`).join('') :
       '');
@@ -7995,7 +8002,14 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
   const instructor_id = instructorVal ? parseInt(instructorVal) : null;
 
   if (!student_id && !instructor_id) {
-    errEl.textContent = 'At least one person (student or instructor) must be on the booking';
+    errEl.textContent = 'Select an instructor for a dual lesson, or leave instructor blank for solo/rental flight';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const endSel = document.getElementById('booking-end');
+  if (!endSel.value || endSel.disabled) {
+    errEl.textContent = 'Select a valid end time. If none are available, choose a different start time or instructor.';
     errEl.classList.remove('hidden');
     return;
   }
@@ -11931,14 +11945,17 @@ async function loadHistoryLegacyPage() {
       allAircraft.map(a => `<option value="${a.id}">${escHtml(a.tail_number)} — ${escHtml(a.make_model)}</option>`).join('');
   }
   if (stuSel.options.length <= 1 && allUsers && allUsers.length > 0) {
-    const students = allUsers.filter(u => u.role === 'student');
+    const students = allUsers.filter(u => u.role === 'student' || u.role === 'renter');
     stuSel.innerHTML = '<option value="">All Students</option>' +
-      students.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
+      students.map(u => `<option value="${u.id}">${escHtml(u.name)}${u.role === 'renter' ? ' (Renter)' : ''}</option>`).join('');
   }
-  // Only show instructor filter to non-instructors
+  // Hide student/instructor filters for students and renters (API scopes to self)
+  const isSelfService = currentUser && ['student', 'renter'].includes(currentUser.role);
+  const stuWrap = document.getElementById('history-student-filter-wrap');
   const instWrap = document.getElementById('history-instructor-filter-wrap');
+  if (stuWrap) stuWrap.classList.toggle('hidden', isSelfService);
   const isInstructor = currentUser && currentUser.role === 'instructor';
-  if (instWrap) instWrap.classList.toggle('hidden', isInstructor);
+  if (instWrap) instWrap.classList.toggle('hidden', isInstructor || isSelfService);
   if (!isInstructor && instSel.options.length <= 1 && allUsers && allUsers.length > 0) {
     const instructors = allUsers.filter(u => u.role === 'instructor' || u.role === 'admin' || u.role === 'owner');
     instSel.innerHTML = '<option value="">All Instructors</option>' +

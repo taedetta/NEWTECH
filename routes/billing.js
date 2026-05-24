@@ -10,7 +10,9 @@ function appendBookingSourceFilter(sql, params) {
   const source = getAppEnv();
   const newParams = [...params, source];
   const idx = newParams.length;
-  const clause = sql.toUpperCase().includes('WHERE') ? ` AND b.source = $${idx}` : ` WHERE b.source = $${idx}`;
+  const clause = sql.toUpperCase().includes('WHERE')
+    ? ` AND (b.source IS NOT DISTINCT FROM $${idx} OR (b.source IS NULL AND $${idx} = 'production'))`
+    : ` WHERE (b.source IS NOT DISTINCT FROM $${idx} OR (b.source IS NULL AND $${idx} = 'production'))`;
   const tailMatch = sql.match(/\s(ORDER\s+BY|GROUP\s+BY|LIMIT\s|OFFSET\s|FOR\s+UPDATE)/i);
   const newSql = tailMatch && tailMatch.index != null
     ? sql.slice(0, tailMatch.index) + clause + sql.slice(tailMatch.index)
@@ -29,10 +31,6 @@ const BILLABLE_FLIGHT_SQL = `
   WHERE b.status = 'completed'
     AND COALESCE(b.billing_voided, FALSE) = FALSE
     AND b.student_id IS NOT NULL
-    AND (
-      fl.id IS NOT NULL
-      OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NOT NULL)
-    )
 `;
 
 function hobbsExpr() {
@@ -54,6 +52,7 @@ function instrChargeExpr() {
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
+    if (req.user.role === 'renter') return res.status(403).json({ error: 'Access denied' });
     let extra = '';
     const params = [];
     if (req.user.role === 'instructor') {

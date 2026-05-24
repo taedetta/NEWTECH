@@ -53,7 +53,7 @@ const ROLES = [
     name: 'renter',
     email: 'qa-renter@test.local',
     password: PASSWORD,
-    pages: ['dashboard', 'schedule', 'history', 'fleet', 'tracking', 'flight-log'],
+    pages: ['dashboard', 'schedule', 'history', 'fleet', 'tracking', 'flight-log', 'billing'],
   },
 ];
 
