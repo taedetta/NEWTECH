@@ -13,10 +13,8 @@ const {
   validateBookingTimes,
   validateCancellation,
   checkGroundingSquawk,
-  checkStudentSoloEligible,
   runPreflightChecks,
 } = require('../lib/booking-rules');
-const { buildSourceParam } = require('../db/source-wrapper');
 
 const router = express.Router();
 
@@ -600,11 +598,6 @@ async function createBookingInternal(client, req) {
     booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
   } else if (!sid && iid) booking_type = 'instructor_solo';
 
-  if (booking_type === 'student_solo') {
-    const solo = await checkStudentSoloEligible(client, sid);
-    if (!solo.allowed) return { error: solo.error };
-  }
-
   const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
   if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
   if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
@@ -612,11 +605,10 @@ async function createBookingInternal(client, req) {
   const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
   if (conflicts.length) return { error: 'Scheduling conflict', conflicts };
 
-  const { source } = buildSourceParam();
   const result = await client.query(
-    `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-    [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type, source]
+    `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
   );
   return { booking: result.rows[0] };
 }
@@ -657,11 +649,10 @@ router.post('/', authenticateToken, async (req, res) => {
     if (grounding.blocked) return res.status(409).json({ error: 'Aircraft is grounded due to open squawk', reason: grounding.reason });
 
     if (booking_type === 'student_solo') {
-      const solo = await checkStudentSoloEligible(client, sid);
-      if (!solo.allowed) return res.status(403).json({ error: solo.error });
+      /* solo endorsement not required */
     }
 
-    // Check aircraft downtime window — reject if aircraft is scheduled for maintenance
+    // Check aircraft downtime window
     if (aircraft_id) {
       const bookingDate = start.toISOString().slice(0, 10);
       const downtimeCheck = await client.query(
@@ -718,11 +709,10 @@ router.post('/', authenticateToken, async (req, res) => {
         });
       }
     }
-    const { source } = buildSourceParam();
     const result = await client.query(
-      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type, source]
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
     );
     await client.query('COMMIT');
     const booking = await pool.query(

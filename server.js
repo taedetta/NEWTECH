@@ -163,7 +163,7 @@ const POLSIA_R2_BASE_URL = process.env.POLSIA_R2_BASE_URL || 'https://polsia.com
 app.listen(PORT, async () => {
   const appEnv = process.env.APP_ENV || 'production';
   const nodeEnv = process.env.NODE_ENV || 'development';
-  console.log(`FlightSlate running on port ${PORT} (${nodeEnv}) with source isolation: ${appEnv}`);
+  console.log(`FlightSlate running on port ${PORT} (${nodeEnv})`);
 
   // Startup tasks — await so file-override rehydration completes before serving
   await runStartup({ pool, polsiaApiKey: POLSIA_API_KEY, r2BaseUrl: POLSIA_R2_BASE_URL });

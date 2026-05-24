@@ -3,7 +3,6 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
-const { addSourceFilter } = require('../db/source-wrapper');
 
 const router = express.Router();
 
@@ -57,15 +56,10 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 });
 
 // DELETE /api/aircraft/:id — Owner/Admin only. Cancels future bookings, removes related downtime/squawks, then deletes the aircraft.
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintenance'), async (req, res) => {
   const client = await pool.connect();
   try {
-    // Source-filtered lookup of the aircraft record (maintains source isolation boundary)
-    const { sql: aircraftSql, params: aircraftParams } = addSourceFilter(
-      'SELECT id, tail_number FROM aircraft WHERE id = $1',
-      [req.params.id]
-    );
-    const aircraft = await client.query(aircraftSql, aircraftParams);
+    const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);
     if (aircraft.rows.length === 0) {
       return res.status(404).json({ error: 'Aircraft not found' });
     }
@@ -90,12 +84,7 @@ router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (r
     // Delete related squawk records — aircraft_id scoping is sufficient
     await client.query('DELETE FROM squawks WHERE aircraft_id = $1', [req.params.id]);
 
-    // Delete the aircraft — source filter maintains isolation boundary
-    const { sql: deleteSql, params: deleteParams } = addSourceFilter(
-      'DELETE FROM aircraft WHERE id = $1',
-      [req.params.id]
-    );
-    await client.query(deleteSql, deleteParams);
+    await client.query('DELETE FROM aircraft WHERE id = $1', [req.params.id]);
 
     await client.query('COMMIT');
 
@@ -135,7 +124,7 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
 
 // PATCH /api/aircraft/:id/hobbs
 router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
-  if (!['owner', 'instructor', 'admin'].includes(req.user.role)) {
+  if (!['owner', 'instructor', 'admin', 'maintenance'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Only instructors and above can update aircraft hours' });
   }
   const { hobbs, tach, note } = req.body;

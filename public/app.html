@@ -1424,6 +1424,8 @@
           <a onclick="navigate('fleet')" data-page="fleet"><span class="nav-icon">&#9992;</span> Fleet</a>
           <a onclick="navigate('tracking')" data-page="tracking" id="nav-tracking"><span class="nav-icon">&#127979;</span> Track Flights</a>
           <a onclick="navigate('maintenance')" data-page="maintenance"><span class="nav-icon">&#128295;</span> Maintenance</a>
+          <a onclick="navigate('billing')" data-page="billing" id="nav-billing"><span class="nav-icon">&#128176;</span> Billing</a>
+          <a onclick="navigate('flight-log')" data-page="flight-log" id="nav-flight-log"><span class="nav-icon">&#128203;</span> Flight Log</a>
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <div class="nav-divider"></div>
           <div class="nav-section-label">Management</div>
@@ -1433,9 +1435,7 @@
           <a onclick="navigate('progress')" data-page="progress" id="nav-progress"><span class="nav-icon">&#128200;</span> Progress</a>
           <a onclick="navigate('at-risk')" data-page="at-risk" id="nav-at-risk" class="hidden"><span class="nav-icon">&#9888;</span> At-Risk</a>
           <a onclick="navigate('leads')" data-page="leads" id="nav-leads" class="hidden"><span class="nav-icon">&#128231;</span> Leads</a>
-          <a onclick="navigate('billing')" data-page="billing" id="nav-billing"><span class="nav-icon">&#128176;</span> Billing</a>
           <a onclick="navigate('instructor-hours')" data-page="instructor-hours" id="nav-instructor-hours" class="hidden"><span class="nav-icon">&#9997;</span> Instructor Hours</a>
-          <a onclick="navigate('flight-log')" data-page="flight-log" id="nav-flight-log"><span class="nav-icon">&#128203;</span> Flight Log</a>
           <a onclick="navigate('hours-audit')" data-page="hours-audit" id="nav-hours-audit" style="display:none"><span class="nav-icon">&#128221;</span> Hours Audit</a>
           <a onclick="navigate('website-editor')" data-page="website-editor" id="nav-website-editor" class="hidden"><span class="nav-icon">&#127760;</span> Website Editor</a>
           <a onclick="navigate('programs')" data-page="programs" id="nav-programs" class="hidden"><span class="nav-icon">&#128203;</span> Programs</a>
@@ -2044,6 +2044,10 @@
             <h1 id="billing-title">Billing</h1>
           </div>
           <div id="billing-audit-banner" class="hidden" style="margin-bottom:1.25rem;padding:0.85rem 1rem;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);color:var(--gray-200);font-size:0.88rem;"></div>
+          <div id="billing-view-tabs" class="hidden" style="display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-sm billing-view-tab active" data-view="students" onclick="switchBillingView('students')">All Students</button>
+            <button type="button" class="btn btn-secondary btn-sm billing-view-tab" data-view="my" onclick="switchBillingView('my')">My Activity</button>
+          </div>
 
           <!-- Owner: student selector -->
           <div id="billing-student-selector" class="hidden" style="margin-bottom:1.5rem;">
@@ -3314,21 +3318,21 @@
         </div>
         <div class="form-group">
           <label>Aircraft</label>
-          <select id="booking-aircraft" required onchange="refreshBookingPreflight()"></select>
+          <select id="booking-aircraft" onchange="refreshBookingPreflight()"></select>
         </div>
         <div class="form-group">
           <label>Date</label>
-          <input type="date" id="booking-date" required onchange="rebuildBookingTimePickers();refreshBookingAvailability();refreshBookingAircraft()">
+          <input type="date" id="booking-date" onchange="rebuildBookingTimePickers();refreshBookingAvailability();refreshBookingAircraft()">
         </div>
         <div id="booking-avail-notice" class="avail-notice hidden"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
           <div class="form-group">
             <label>Start Time</label>
-            <select id="booking-start" required onchange="updateBookingEndTimes(); if(document.getElementById('booking-instructor').value) refreshBookingAvailability(); refreshBookingPreflight();"></select>
+            <select id="booking-start" onchange="updateBookingEndTimes(); if(document.getElementById('booking-instructor').value) refreshBookingAvailability(); refreshBookingPreflight();"></select>
           </div>
           <div class="form-group">
             <label>End Time</label>
-            <select id="booking-end" required onchange="refreshBookingPreflight()"></select>
+            <select id="booking-end" onchange="refreshBookingPreflight()"></select>
           </div>
         </div>
         <div class="form-group">
@@ -4620,6 +4624,10 @@ async function enterApp() {
     document.querySelectorAll('.nav-section-label').forEach(el => el.style.display = 'none');
     // Hide nav-divider too
     document.querySelectorAll('.nav-divider').forEach(el => el.style.display = 'none');
+    const addAircraftBtnM = document.getElementById('add-aircraft-btn');
+    if (addAircraftBtnM) addAircraftBtnM.classList.remove('hidden');
+    const downtimeBtnM = document.getElementById('schedule-downtime-btn');
+    if (downtimeBtnM) downtimeBtnM.classList.remove('hidden');
     // Load user + aircraft data in parallel with fresh auth check (faster startup)
   const [freshData] = await Promise.all([
     api('/api/auth/me'),
@@ -4726,9 +4734,13 @@ async function enterApp() {
   const navBH = document.getElementById('nav-history');
   if (navBH) navBH.classList.toggle('hidden', currentUser.role === 'maintenance');
 
-  // Billing: students/renters see own billing; staff see overview
+  // Billing: students/renters see own billing; staff see overview (+ my activity tab)
   const navBilling = document.getElementById('nav-billing');
   if (navBilling) navBilling.classList.toggle('hidden', ['maintenance'].includes(currentUser.role));
+
+  // Daily roster: staff only (not students/renters)
+  const rosterBtn = document.getElementById('schedule-roster-btn');
+  if (rosterBtn) rosterBtn.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
 
   // Endorsements: visible to all roles
   const navEndorse = document.getElementById('nav-endorsements');
@@ -4772,7 +4784,7 @@ async function enterApp() {
 
   // Add Aircraft button: visible to owner or instructor with can_manage_aircraft
   const addAircraftBtn = document.getElementById('add-aircraft-btn');
-  const canManageAircraft = currentUser.role === 'owner' || perms.can_manage_aircraft;
+  const canManageAircraft = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || perms.can_manage_aircraft;
   if (addAircraftBtn) addAircraftBtn.classList.toggle('hidden', !canManageAircraft);
 
   // Load user + aircraft data in parallel with fresh auth check (faster startup)
@@ -4790,6 +4802,23 @@ async function enterApp() {
   }
   // Students land on their portal; everyone else lands on dashboard
   navigate(currentUser.role === 'student' ? 'portal' : 'dashboard');
+  startAppPolling();
+}
+
+let appPollTimer = null;
+function startAppPolling() {
+  if (appPollTimer) clearInterval(appPollTimer);
+  appPollTimer = setInterval(function() {
+    if (!token || !currentUser) return;
+    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+      loadApprovalsBadge();
+      if (currentUser.role === 'owner' || currentUser.role === 'admin') loadDiscrepanciesBadge();
+    }
+    if (currentPage === 'schedule') loadCalendar();
+    else if (currentPage === 'dashboard') loadDashboard();
+    else if (currentPage === 'approvals') loadApprovals();
+    else if (currentPage === 'tracking') loadTrackFlights();
+  }, 45000);
 }
 
 // ─── NAVIGATION ───
@@ -7964,6 +7993,35 @@ async function refreshBookingAircraft() {
   }
 }
 
+function resolveBookingStudentId() {
+  if (currentUser && ['student', 'renter'].includes(currentUser.role)) {
+    const locked = document.getElementById('booking-student-locked-id')?.value;
+    return locked ? parseInt(locked, 10) : currentUser.id;
+  }
+  const val = document.getElementById('booking-student')?.value;
+  return val ? parseInt(val, 10) : null;
+}
+
+function ensureBookingEndTime(startTime) {
+  const endSel = document.getElementById('booking-end');
+  if (!endSel) return null;
+  if (endSel.disabled) endSel.disabled = false;
+  if (!endSel.value || endSel.value === '') {
+    rebuildBookingTimePickers();
+    if (!endSel.value && endSel.options.length) {
+      const pick = Array.from(endSel.options).find(o => o.value && o.value > startTime);
+      endSel.value = pick ? pick.value : (endSel.options[0]?.value || '');
+    }
+    if (!endSel.value) {
+      const [sh, sm] = startTime.split(':').map(Number);
+      const eh = Math.min(sh + 1, 23);
+      endSel.innerHTML = `<option value="${String(eh).padStart(2,'0')}:${String(sm||0).padStart(2,'0')}">${String(eh).padStart(2,'0')}:${String(sm||0).padStart(2,'0')}</option>`;
+      endSel.value = endSel.options[0].value;
+    }
+  }
+  return endSel.value;
+}
+
 document.getElementById('booking-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('booking-error');
@@ -7975,11 +8033,19 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
 
   const date = document.getElementById('booking-date').value;
   const startTime = document.getElementById('booking-start').value;
-  const endTime = document.getElementById('booking-end').value;
 
-  if (!date || !startTime || !endTime) {
-    errEl.textContent = 'Please fill in all time fields';
+  if (!date || !startTime) {
+    errEl.textContent = 'Please select a date and start time';
     errEl.classList.remove('hidden');
+    showToast('Please select a date and start time', 'error');
+    return;
+  }
+
+  const endTime = ensureBookingEndTime(startTime);
+  if (!endTime) {
+    errEl.textContent = 'Please select a valid end time';
+    errEl.classList.remove('hidden');
+    showToast('Please select a valid end time', 'error');
     return;
   }
 
@@ -7994,23 +8060,22 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
   }
 
   // Students and renters are locked to their own ID; others read from the dropdown
-  const studentVal = (currentUser.role === 'student' || currentUser.role === 'renter')
-    ? document.getElementById('booking-student-locked-id').value
-    : document.getElementById('booking-student').value;
   const instructorVal = document.getElementById('booking-instructor').value;
-  const student_id = studentVal ? parseInt(studentVal) : null;
-  const instructor_id = instructorVal ? parseInt(instructorVal) : null;
+  const student_id = resolveBookingStudentId();
+  const instructor_id = instructorVal ? parseInt(instructorVal, 10) : null;
 
   if (!student_id && !instructor_id) {
     errEl.textContent = 'Select an instructor for a dual lesson, or leave instructor blank for solo/rental flight';
     errEl.classList.remove('hidden');
+    showToast('Select an instructor or book solo/rental', 'error');
     return;
   }
 
-  const endSel = document.getElementById('booking-end');
-  if (!endSel.value || endSel.disabled) {
-    errEl.textContent = 'Select a valid end time. If none are available, choose a different start time or instructor.';
+  const aircraftId = parseInt(document.getElementById('booking-aircraft').value, 10);
+  if (!aircraftId || isNaN(aircraftId)) {
+    errEl.textContent = 'Please select an aircraft';
     errEl.classList.remove('hidden');
+    showToast('Please select an aircraft', 'error');
     return;
   }
 
@@ -8031,7 +8096,7 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
   const payload = {
     student_id,
     instructor_id,
-    aircraft_id: parseInt(document.getElementById('booking-aircraft').value),
+    aircraft_id: aircraftId,
     start_time, end_time,
     local_date: date,
     local_start: startTime,
@@ -8049,9 +8114,11 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     } else {
       await api('/api/bookings', { method: 'POST', body: JSON.stringify(payload) });
     }
+    showToast('Booking confirmed', 'success');
     closeBookingModal();
     if (currentPage === 'schedule') loadCalendar();
     else if (currentPage === 'dashboard') loadDashboard();
+    else loadCalendar();
   } catch (err) {
     const bottomConflictEl = document.getElementById('booking-conflicts-bottom');
     bottomConflictEl.classList.add('hidden');
@@ -8768,11 +8835,9 @@ async function loadFleet() {
 
   emptyEl.classList.add('hidden');
   const perms = currentUser.permissions || {};
-  const canEdit = currentUser.role === 'owner' || perms.can_manage_aircraft;
-  // All instructors, admins, and owners can edit hours
-  const canEditHours = ['owner', 'instructor', 'admin'].includes(currentUser.role);
-  // Only owner and admin can delete aircraft
-  const canDelete = currentUser.role === 'owner' || currentUser.role === 'admin';
+  const canEdit = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || perms.can_manage_aircraft;
+  const canEditHours = ['owner', 'instructor', 'admin', 'maintenance'].includes(currentUser.role);
+  const canDelete = ['owner', 'admin', 'maintenance'].includes(currentUser.role);
 
   // Show/hide Schedule Downtime button based on permission
   document.getElementById('schedule-downtime-btn').classList.toggle('hidden', !canEdit);
@@ -9508,7 +9573,7 @@ async function loadMaintenanceFleet() {
   }
   emptyEl.classList.add('hidden');
 
-  const canManage = currentUser.role === 'owner' || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
+  const canManage = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
   // All instructors can edit Hobbs/Tach hours
   const canEditHours = ['owner', 'instructor', 'admin'].includes(currentUser.role);
 
@@ -9603,7 +9668,7 @@ async function loadSquawks() {
 
     const tbody = document.getElementById('squawk-table');
     const emptyEl = document.getElementById('squawk-empty');
-    const canManage = currentUser.role === 'owner' || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
+    const canManage = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
 
     if (squawks.length === 0) {
       tbody.innerHTML = '';
@@ -9883,7 +9948,7 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
 // ─── INSPECTION MODAL ─────────────────────────────────────
 function openInspectionModal(aircraftId, tailNumber) {
   const ac = allAircraft.find(a => a.id === aircraftId);
-  const canManage = currentUser.role === 'owner' || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
+  const canManage = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
 
   document.getElementById('insp-aircraft-id').value = aircraftId;
   document.getElementById('inspection-modal-title').textContent = `${tailNumber} — Hours & Inspections`;
@@ -9923,7 +9988,7 @@ document.getElementById('inspection-form').addEventListener('submit', async (e) 
   const next_100hr_due = document.getElementById('insp-100hr').value;
   const next_annual_due = document.getElementById('insp-annual').value;
 
-  const canManage = currentUser.role === 'owner' || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
+  const canManage = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
 
   try {
     // Update Hobbs and/or Tach if provided
@@ -10026,7 +10091,7 @@ async function loadInspections() {
   }
   emptyEl.classList.add('hidden');
 
-  const canManage = currentUser.role === 'owner' || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
+  const canManage = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
 
   // All instructors can edit hours
   const canEditHours = ['owner', 'instructor', 'admin'].includes(currentUser.role);
@@ -10103,7 +10168,7 @@ async function loadADs(aircraftId) {
   if (!el) return;
 
   const ac = allAircraft.find(a => a.id === aircraftId);
-  const canManage = currentUser.role === 'owner' || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
+  const canManage = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || (currentUser.permissions && currentUser.permissions.can_manage_aircraft);
 
   try {
     const ads = await api(`/api/aircraft/${aircraftId}/ads`);
@@ -11279,14 +11344,71 @@ async function loadBillingAuditBanner() {
   }
 }
 
+let billingViewMode = 'students';
+
+function switchBillingView(mode) {
+  billingViewMode = mode;
+  document.querySelectorAll('.billing-view-tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.view === mode);
+  });
+  currentBillingStudentId = null;
+  if (mode === 'my') loadBillingMyActivity();
+  else loadBilling();
+}
+
+async function loadBillingMyActivity() {
+  var tabsEl = document.getElementById('billing-view-tabs');
+  var selectorEl = document.getElementById('billing-student-selector');
+  var detailEl = document.getElementById('billing-detail');
+  var emptyEl = document.getElementById('billing-empty');
+  if (tabsEl) tabsEl.classList.remove('hidden');
+  selectorEl.classList.add('hidden');
+  emptyEl.classList.add('hidden');
+  detailEl.classList.remove('hidden');
+  document.getElementById('billing-back-btn').classList.add('hidden');
+  document.getElementById('billing-title').textContent = 'My Billing Activity';
+  document.getElementById('billing-student-name').textContent = currentUser.name + ' — flights as instructor or student';
+  try {
+    var flights = await api('/api/billing/my-activity');
+    currentBillingFlights = flights;
+    currentBillingGroundSessions = [];
+    if (!flights.length) {
+      emptyEl.classList.remove('hidden');
+      detailEl.classList.add('hidden');
+      return;
+    }
+    await loadBillingForStudent(currentUser.id);
+    // Re-render with my-activity flights (may include as instructor)
+    currentBillingFlights = flights;
+    var tbody = document.getElementById('billing-flights-table');
+    if (tbody) {
+      tbody.innerHTML = flights.map(function(f) {
+        var hrs = billingHobbsHours(f);
+        var rental = parseFloat(f.aircraft_charge_amount || 0);
+        var instr = parseFloat(f.instruction_charge_amount || 0);
+        var d = new Date(f.start_time);
+        var dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        var roleTag = f.my_role === 'instructor' ? 'Instr' : 'Student';
+        return '<tr><td>' + dateStr + '</td><td>' + escHtml(f.tail_number || '—') + '</td><td><span class="tag tag-sky">' + roleTag + '</span></td><td>' + hrs.toFixed(1) + '</td><td style="color:var(--sky)">$' + rental.toFixed(0) + '</td><td style="color:var(--amber)">$' + instr.toFixed(0) + '</td><td style="font-weight:600">$' + (rental + instr).toFixed(0) + '</td></tr>';
+      }).join('');
+    }
+  } catch (e) {
+    emptyEl.classList.remove('hidden');
+    emptyEl.querySelector('h3').textContent = 'Could not load activity';
+  }
+}
+
 async function loadBilling() {
   const role = currentUser.role;
   const selectorEl = document.getElementById('billing-student-selector');
   const detailEl = document.getElementById('billing-detail');
   const emptyEl = document.getElementById('billing-empty');
   const backBtn = document.getElementById('billing-back-btn');
+  const tabsEl = document.getElementById('billing-view-tabs');
+  const isStaff = ['owner', 'admin', 'instructor'].includes(role);
 
   if (role === 'student' || role === 'renter') {
+    if (tabsEl) tabsEl.classList.add('hidden');
     // Students/renters see their own billing directly
     selectorEl.classList.add('hidden');
     backBtn.classList.add('hidden');
@@ -11297,7 +11419,12 @@ async function loadBilling() {
     return;
   }
 
-  // Owner/admin/instructor: show student overview
+  // Owner/admin/instructor: show student overview or my activity
+  if (tabsEl) tabsEl.classList.toggle('hidden', !isStaff);
+  if (isStaff && billingViewMode === 'my') {
+    await loadBillingMyActivity();
+    return;
+  }
   document.getElementById('billing-title').textContent = 'Billing';
   try {
     await loadBillingAuditBanner();

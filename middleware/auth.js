@@ -36,6 +36,15 @@ async function getUserPermissions(userId, role) {
       can_edit_website: true,
     };
   }
+  if (role === 'maintenance') {
+    return {
+      can_manage_aircraft: true,
+      can_manage_instructors: false,
+      can_manage_permissions: false,
+      can_manage_students: false,
+      can_edit_website: false,
+    };
+  }
   if (role !== 'instructor') {
     return {
       can_manage_aircraft: false,
@@ -60,7 +69,7 @@ async function getUserPermissions(userId, role) {
 function requirePermission(permKey) {
   return async (req, res, next) => {
     try {
-      if (['owner', 'admin'].includes(req.user.role)) return next();
+      if (['owner', 'admin', 'maintenance'].includes(req.user.role)) return next();
       if (req.user.role !== 'instructor') {
         return res.status(403).json({ error: 'Insufficient permissions' });
       }

@@ -3,22 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
-const { getAppEnv } = require('../db/source-wrapper');
 const { listHoursAuditFlags } = require('../lib/hours-audit');
-
-function appendBookingSourceFilter(sql, params) {
-  const source = getAppEnv();
-  const newParams = [...params, source];
-  const idx = newParams.length;
-  const clause = sql.toUpperCase().includes('WHERE')
-    ? ` AND (b.source IS NOT DISTINCT FROM $${idx} OR (b.source IS NULL AND $${idx} = 'production'))`
-    : ` WHERE (b.source IS NOT DISTINCT FROM $${idx} OR (b.source IS NULL AND $${idx} = 'production'))`;
-  const tailMatch = sql.match(/\s(ORDER\s+BY|GROUP\s+BY|LIMIT\s|OFFSET\s|FOR\s+UPDATE)/i);
-  const newSql = tailMatch && tailMatch.index != null
-    ? sql.slice(0, tailMatch.index) + clause + sql.slice(tailMatch.index)
-    : sql + clause;
-  return { sql: newSql, params: newParams };
-}
 
 const router = express.Router();
 
@@ -72,12 +57,40 @@ router.get('/summary', authenticateToken, async (req, res) => {
       HAVING COUNT(DISTINCT b.id) > 0
       ORDER BY u.name
     `;
-    const filtered = appendBookingSourceFilter(sql, params);
-    const result = await pool.query(filtered.sql, filtered.params);
+    const result = await pool.query(sql, params);
     res.json(result.rows);
   } catch (err) {
     console.error('Billing summary error:', err);
     res.status(500).json({ error: 'Failed to fetch billing summary' });
+  }
+});
+
+router.get('/my-activity', authenticateToken, async (req, res) => {
+  try {
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    const uid = req.user.id;
+    const sql = `
+      SELECT b.id, b.start_time, b.end_time, b.booking_type,
+        COALESCE(fl.hobbs_start, b.hobbs_start) AS hobbs_start,
+        COALESCE(fl.hobbs_end, b.hobbs_end) AS hobbs_end,
+        ${hobbsExpr()} AS hobbs_hours,
+        ${dualHrsExpr()} AS dual_instruction_hours,
+        a.tail_number, a.make_model,
+        s.name AS student_name, inst.name AS instructor_name,
+        ${acChargeExpr()} AS aircraft_charge_amount,
+        ${instrChargeExpr()} AS instruction_charge_amount,
+        CASE WHEN b.instructor_id = $1 THEN 'instructor' WHEN b.student_id = $1 THEN 'student' END AS my_role
+      ${BILLABLE_FLIGHT_SQL}
+        AND (b.instructor_id = $1 OR b.student_id = $1)
+      ORDER BY b.start_time DESC
+    `;
+    const result = await pool.query(sql, [uid]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Billing my-activity error:', err);
+    res.status(500).json({ error: 'Failed to fetch billing activity' });
   }
 });
 
@@ -130,8 +143,7 @@ router.get('/:studentId', authenticateToken, async (req, res) => {
         ${extra}
       ORDER BY b.start_time DESC
     `;
-    const filtered = appendBookingSourceFilter(sql, params);
-    const result = await pool.query(filtered.sql, filtered.params);
+    const result = await pool.query(sql, params);
 
     const gsParams = [studentId];
     let gsExtra = '';
