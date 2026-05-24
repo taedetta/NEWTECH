@@ -67,6 +67,14 @@ SET start_date = COALESCE(start_date, override_date),
     end_date = COALESCE(end_date, override_date)
 WHERE start_date IS NULL AND override_date IS NOT NULL;
 
+-- Backfill is_instructor for approved CFIs created before auto-flag fix
+UPDATE users
+SET is_instructor = TRUE, updated_at = NOW()
+WHERE role = 'instructor'
+  AND deleted_at IS NULL
+  AND COALESCE(approval_status, 'approved') = 'approved'
+  AND COALESCE(is_instructor, FALSE) = FALSE;
+
 -- ── Seed default at-risk thresholds if missing ──
 INSERT INTO school_settings (key, value, updated_at) VALUES
   ('at_risk_low_days', '14', NOW()),

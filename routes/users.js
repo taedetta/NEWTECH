@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../db/index');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const { inviteEmail, sendEmail } = require('../email-templates');
+const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.get('/', authenticateToken, async (req, res) => {
         `SELECT u.id, u.name, u.role, u.is_instructor,
           EXISTS (SELECT 1 FROM instructor_availability WHERE instructor_id = u.id) as has_instructor_availability
          FROM users u
-         WHERE u.deleted_at IS NULL AND u.is_instructor = true
+         WHERE ${BOOKABLE_INSTRUCTOR_WHERE}
          ORDER BY u.name`
       );
       return res.json(result.rows);
@@ -77,9 +78,11 @@ router.post('/invite', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
     const passwordHash = await bcrypt.hash(password, 12);
+    const isInstructorRole = targetRole === 'instructor';
     const result = await pool.query(
-      `INSERT INTO users (email, name, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, email, name, role, created_at`,
-      [email.toLowerCase(), name, passwordHash, targetRole]
+      `INSERT INTO users (email, name, password_hash, role, is_instructor, approval_status)
+       VALUES ($1, $2, $3, $4, $5, 'approved') RETURNING id, email, name, role, created_at`,
+      [email.toLowerCase(), name, passwordHash, targetRole, isInstructorRole]
     );
     res.status(201).json(result.rows[0]);
     const { subject, html, text } = inviteEmail({
@@ -183,7 +186,10 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
         return res.status(403).json({ error: 'Cannot change the last owner\'s role' });
       }
     }
-    await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2', [role, targetId]);
+    await pool.query(
+      'UPDATE users SET role = $1, is_instructor = CASE WHEN $1 = \'instructor\' THEN TRUE ELSE is_instructor END, updated_at = NOW() WHERE id = $2',
+      [role, targetId]
+    );
     // Audit log — non-fatal on failure
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,

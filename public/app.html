@@ -4273,6 +4273,12 @@ let selectedBookingDate = null; // tracks the last calendar-clicked date for the
 let allBookings = [];
 let allAircraft = [];
 let allUsers = [];
+
+function isBookableInstructor(u) {
+  if (!u || u.deleted_at) return false;
+  if (u.approval_status && u.approval_status !== 'approved') return false;
+  return u.is_instructor === true || u.role === 'instructor';
+}
 let editingAircraftId = null;
 let hasOwnerAccount = false;
 let currentPeopleFilter = 'all';
@@ -7559,7 +7565,7 @@ async function openBookingModal(editBookingId) {
   currentBookingAvailSlots = null;
 
   const students = allUsers.filter(u => u.role === 'student' || u.role === 'renter');
-  const instructors = allUsers.filter(u => u.is_instructor === true);
+  const instructors = allUsers.filter(isBookableInstructor);
   let aircraft = allAircraft.filter(a => a.status === 'available');
 
   // Filter out aircraft in maintenance downtime on the selected date
@@ -16808,7 +16814,7 @@ async function loadAvailabilityPage() {
     const sel = document.getElementById('avail-instructor-select');
     if (sel && sel.options.length === 0) {
       // Populate with instructors
-      const instructors = (allUsers || []).filter(u => ['instructor','admin','owner'].includes(u.role) && !u.deleted_at);
+      const instructors = (allUsers || []).filter(isBookableInstructor);
       sel.innerHTML = instructors.map(u => `<option value="${u.id}"${u.id === currentUser.id ? ' selected' : ''}>${u.name}</option>`).join('');
     }
   }
@@ -16997,7 +17003,12 @@ async function saveAvailWindow() {
   try {
     await api('/api/instructor-availability', {
       method: 'POST',
-      body: JSON.stringify({ instructor_id: availEditingInstructorId, day_of_week: dayOfWeek, start_time: start, end_time: end })
+      body: JSON.stringify({
+        instructor_id: availEditingInstructorId,
+        day_of_week: dayOfWeek,
+        start_time: start.length === 5 ? start + ':00' : start,
+        end_time: end.length === 5 ? end + ':00' : end,
+      })
     });
     closeAddWindowModal();
     showToast('Availability added', 'success');
@@ -17145,12 +17156,12 @@ async function saveOverride() {
     // no time range — full day block
   } else if (type === 'unavailable_hours') {
     payload.is_available = false;
-    payload.start_time = startTime;
-    payload.end_time = endTime;
+    payload.start_time = startTime.length === 5 ? startTime + ':00' : startTime;
+    payload.end_time = endTime.length === 5 ? endTime + ':00' : endTime;
   } else if (type === 'available_hours') {
     payload.is_available = true;
-    payload.start_time = startTime;
-    payload.end_time = endTime;
+    payload.start_time = startTime.length === 5 ? startTime + ':00' : startTime;
+    payload.end_time = endTime.length === 5 ? endTime + ':00' : endTime;
   }
 
   try {

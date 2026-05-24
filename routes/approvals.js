@@ -50,9 +50,11 @@ router.post('/:id/approve', ...canApprove, async (req, res) => {
     const { id } = req.params;
     const result = await pool.query(
       `UPDATE users
-       SET approval_status = 'approved', updated_at = NOW()
+       SET approval_status = 'approved',
+           is_instructor = CASE WHEN role = 'instructor' THEN TRUE ELSE is_instructor END,
+           updated_at = NOW()
        WHERE id = $1 AND approval_status = 'pending'
-       RETURNING id, name, email, role`,
+       RETURNING id, name, email, role, is_instructor`,
       [id]
     );
     if (result.rows.length === 0) {

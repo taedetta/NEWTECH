@@ -15,6 +15,7 @@ const {
   checkGroundingSquawk,
   runPreflightChecks,
 } = require('../lib/booking-rules');
+const { BOOKABLE_INSTRUCTOR_WHERE, timeToComparable } = require('../lib/instructors');
 
 const router = express.Router();
 
@@ -184,13 +185,15 @@ async function isInstructorAvailable(client, instructorId, startTime, endTime, {
   );
   for (const ov of overrides.rows) {
     if (ov.start_time && ov.end_time) {
-      if (startTimeStr < ov.end_time && endTimeStr > ov.start_time) {
+      const ovStart = timeToComparable(ov.start_time);
+      const ovEnd = timeToComparable(ov.end_time);
+      if (startTimeStr < ovEnd && endTimeStr > ovStart) {
         if (!ov.is_available) return { available: false, reason: ov.reason || 'Instructor has a time block override' };
         return { available: true };
       }
     } else {
       if (!ov.is_available) return { available: false, reason: ov.reason || 'Instructor is unavailable on this date' };
-      return { available: true };
+      if (ov.is_available) return { available: true };
     }
   }
   const weekly = await client.query(
@@ -204,8 +207,8 @@ async function isInstructorAvailable(client, instructorId, startTime, endTime, {
   );
   if (anyConfig.rows.length === 0) return { available: true };
   for (const slot of weekly.rows) {
-    const slotStart = slot.start_time;
-    const slotEnd = slot.end_time;
+    const slotStart = timeToComparable(slot.start_time);
+    const slotEnd = timeToComparable(slot.end_time);
     if (startTimeStr >= slotStart && endTimeStr <= slotEnd) return { available: true };
   }
   return { available: false, reason: 'Outside instructor scheduled availability hours' };
@@ -711,7 +714,7 @@ router.post('/', authenticateToken, async (req, res) => {
         const nextSlots = await findNextAvailableSlots(client, iid, start_time, durationMinutes, 3);
         const instrName = (await client.query('SELECT name FROM users WHERE id=$1', [iid])).rows[0]?.name || 'Instructor';
         const allInst = await client.query(
-          `SELECT id, name FROM users WHERE is_instructor = true AND id != $1 AND deleted_at IS NULL`, [iid]
+          `SELECT id, name FROM users u WHERE ${BOOKABLE_INSTRUCTOR_WHERE} AND u.id != $1`, [iid]
         );
         const alternatives = [];
         for (const inst of allInst.rows) {

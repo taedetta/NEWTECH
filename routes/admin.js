@@ -8,6 +8,7 @@ const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getAllOverrides } = require('../db/file-overrides');
 const { emailFullDataBackup } = require('../lib/full-data-backup');
+const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue } = require('../lib/instructors');
 const { execSync } = require('child_process');
 
 const router = express.Router();
@@ -367,7 +368,7 @@ router.post('/instructor-availability', authenticateToken, requireRole('instruct
     const result = await client.query(
       `INSERT INTO instructor_availability (instructor_id, day_of_week, start_time, end_time)
        VALUES ($1, $2, $3, $4) RETURNING *`,
-      [iid, parseInt(day_of_week), start_time, end_time]
+      [iid, parseInt(day_of_week), normalizeTimeValue(start_time), normalizeTimeValue(end_time)]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -430,9 +431,18 @@ router.post('/instructor-availability/overrides', authenticateToken, requireRole
 
     const result = await client.query(
       `INSERT INTO instructor_availability_overrides
-         (instructor_id, start_date, end_date, is_available, start_time, end_time, reason, override_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [iid, start_date, end_date, is_available !== false, start_time || null, end_time || null, reason || null, override_type || 'personal']
+         (instructor_id, start_date, end_date, override_date, is_available, start_time, end_time, reason, override_type)
+       VALUES ($1, $2, $3, $2, $4, $5, $6, $7, $8) RETURNING *`,
+      [
+        iid,
+        start_date,
+        end_date,
+        is_available !== false,
+        normalizeTimeValue(start_time),
+        normalizeTimeValue(end_time),
+        reason || null,
+        override_type || 'personal',
+      ]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -475,7 +485,7 @@ router.get('/instructor-availability/all', authenticateToken, requireRole('admin
     const dayOfWeek = dateObj.getUTCDay();
 
     const instructors = await client.query(
-      `SELECT id, name FROM users WHERE is_instructor = true AND deleted_at IS NULL ORDER BY name`
+      `SELECT id, name FROM users u WHERE ${BOOKABLE_INSTRUCTOR_WHERE} ORDER BY name`
     );
 
     const result = [];
