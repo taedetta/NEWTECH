@@ -1,0 +1,177 @@
+/**
+ * Startup tasks — runs once on server boot.
+ * Extracted from server.js to keep entry file under 300 lines.
+ * Owns: image migration, training program seeding, backup scheduler, file override rehydration.
+ */
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+
+// backup-service.js removed from services/ — backup scheduling skipped
+// migrateDataUriImagesToR2 is provided inline below
+
+function toCentral(date) {
+  return new Date(date.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+}
+
+function isoDate(date) {
+  const d = toCentral(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+async function migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl) {
+  if (!r2BaseUrl || !polsiaApiKey) { console.log('[image-migration] Skipping — R2 env vars not set'); return; }
+  try {
+    const result = await pool.query("SELECT key, value FROM site_content WHERE key LIKE '%image%' AND value LIKE 'data:%'");
+    if (result.rows.length === 0) { console.log('[image-migration] No data-URI images to migrate'); return; }
+    console.log(`[image-migration] Found ${result.rows.length} data-URI image(s) to migrate to R2`);
+    for (const row of result.rows) {
+      try {
+        const dataUri = row.value;
+        const commaIdx = dataUri.indexOf(',');
+        if (commaIdx === -1) continue;
+        const mimeType = dataUri.substring(5, commaIdx).replace(';base64', '').split(';')[0] || 'image/jpeg';
+        const base64Data = dataUri.substring(commaIdx + 1).replace(/\b/g, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+        const ext = mimeType.split('/')[1] || 'jpg';
+        const uniqueName = `cms-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const bnd = `----FSBoundary${Date.now()}`;
+        const body = Buffer.concat([
+          Buffer.from(`--${bnd}\r\nContent-Disposition: form-data; name="file"; filename="${uniqueName}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
+          buffer,
+          Buffer.from(`\r\n--${bnd}--\r\n`),
+        ]);
+        const uploadRes = await fetch(`${r2BaseUrl}/api/proxy/r2/upload`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${polsiaApiKey}`, 'Content-Type': `multipart/form-data; boundary=${bnd}`, 'Content-Length': String(body.length) },
+          body,
+        });
+        if (uploadRes.ok) {
+          const data = await uploadRes.json();
+          const imageUrl = data.file?.url || data.url || data.publicUrl;
+          if (imageUrl) {
+            await pool.query('UPDATE site_content SET value = $1, updated_at = NOW() WHERE key = $2', [imageUrl, row.key]);
+            console.log(`[image-migration] migrated ${row.key} to ${imageUrl}`);
+          }
+        }
+      } catch (itemErr) { console.error(`[image-migration] ${row.key} error: ${itemErr.message}`); }
+    }
+  } catch (err) { console.error('[image-migration] error:', err.message); }
+}
+
+async function ensureTrainingPrograms(pool) {
+  try {
+    const check = await pool.query('SELECT COUNT(*) as cnt FROM training_programs');
+    if (parseInt(check.rows[0].cnt) > 0) return;
+    console.log('Seeding training programs...');
+    const programs = [
+      { name: 'Private Pilot License', code: 'PPL', description: 'FAA Private Pilot Certificate', stages: ['Pre-Solo Dual','First Solo','Post-Solo Dual','Cross-Country Dual','Cross-Country Solo','Night Training','Instrument & Hood Work','Checkride Prep','Checkride'] },
+      { name: 'Instrument Rating', code: 'IFR', description: 'FAA Instrument Rating — fly in IMC under IFR', stages: ['Instrument Fundamentals','Navigation & Holds','Instrument Approaches','IFR Cross-Country','Unusual Attitudes & Emergencies','Checkride Prep','Checkride'] },
+      { name: 'Commercial Pilot License', code: 'CPL', description: 'FAA Commercial Pilot Certificate', stages: ['Complex Aircraft Transition','Commercial Maneuvers','Commercial Cross-Country','Night Commercial Training','High Altitude & Oxygen','Checkride Prep','Checkride'] },
+    ];
+    for (const p of programs) {
+      const r = await pool.query(`INSERT INTO training_programs (name, code, description) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING RETURNING id`, [p.name, p.code, p.description]);
+      const pid = r.rows.length > 0 ? r.rows[0].id : (await pool.query(`SELECT id FROM training_programs WHERE code = $1`, [p.code])).rows[0].id;
+      for (let i = 0; i < p.stages.length; i++) {
+        await pool.query(`INSERT INTO program_stages (program_id, name, order_index) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [pid, p.stages[i], i + 1]);
+      }
+    }
+    console.log('Training programs seeded.');
+  } catch (err) { console.error('Training programs seed check failed:', err.message); }
+}
+
+async function runStartupVerification(port) {
+  // startup-verification.js removed — skipping verification
+  console.log('[startup] Route verification not configured (startup-verification.js missing)');
+  return { passed: [], failed: [], criticalFailures: [] };
+}
+
+async function startBackup(pool) {
+  // backup-service.js removed — backup scheduling not available
+  console.log('[startup] Backup scheduler not configured (backup-service.js missing)');
+}
+
+/**
+ * Rehydrate editor file changes from database to filesystem.
+ * Render's filesystem is ephemeral — every deploy rebuilds from GitHub,
+ * wiping any editor changes. This restores them from the DB on boot.
+ */
+async function rehydrateFileOverrides(pool) {
+  try {
+    // Check if file_overrides table exists (may not on first deploy before migration runs)
+    const tableCheck = await pool.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'file_overrides'
+    `);
+    if (tableCheck.rows.length === 0) {
+      console.log('[file-overrides] Table not yet created — skipping rehydration');
+      return;
+    }
+
+    const result = await pool.query(
+      'SELECT file_path, content, updated_at FROM file_overrides ORDER BY updated_at ASC'
+    );
+    if (result.rows.length === 0) {
+      console.log('[file-overrides] No overrides to rehydrate');
+      return;
+    }
+
+    const projectRoot = path.join(__dirname, '..');
+    let applied = 0;
+    let skipped = 0;
+
+    for (const row of result.rows) {
+      try {
+        const fullPath = path.join(projectRoot, row.file_path);
+        // Safety: only write within project root
+        if (!fullPath.startsWith(projectRoot)) {
+          console.warn(`[file-overrides] Skipping path outside project root: ${row.file_path}`);
+          skipped++;
+          continue;
+        }
+        // Ensure parent directory exists
+        const dir = path.dirname(fullPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(fullPath, row.content, 'utf8');
+        applied++;
+      } catch (fileErr) {
+        console.error(`[file-overrides] Failed to rehydrate ${row.file_path}: ${fileErr.message}`);
+        skipped++;
+      }
+    }
+    console.log(`[file-overrides] Rehydrated ${applied} file(s), skipped ${skipped}`);
+  } catch (err) {
+    console.error('[file-overrides] Rehydration error:', err.message);
+  }
+}
+
+/**
+ * Run all startup tasks. Call once from server.js after app.listen().
+ */
+async function runStartup({ pool, polsiaApiKey, r2BaseUrl }) {
+  // Rehydrate editor file overrides FIRST and AWAIT it — restores admin edits
+  // lost on deploy. Must complete before the app serves any requests so that
+  // download-source endpoints and the live filesystem reflect editor changes.
+  try {
+    await rehydrateFileOverrides(pool);
+  } catch (err) {
+    console.error('[file-overrides] startup error:', err.message);
+  }
+
+  migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl).catch(err => console.error('[image-migration] startup error:', err.message));
+  ensureTrainingPrograms(pool).catch(err => console.error('[training-seed] startup error:', err.message));
+  startBackup(pool);
+  runStartupVerification(process.env.PORT || 3000).then(({ passed, failed, criticalFailures }) => {
+    if (criticalFailures.length > 0) {
+      console.error('[CRITICAL] Routes failed verification — see above. Process will continue but site may be broken.');
+    }
+  });
+}
+
+module.exports = { runStartup };

@@ -1,0 +1,49 @@
+# Environment (copy to .env for local dev — never commit .env)
+.env
+.env.*
+!.env.example
+
+# Dependencies & runtime
+node_modules/
+.DS_Store
+
+# Local dev data
+data/live-cms.json
+
+# Polsia / editor artifacts
+.claude/
+.claude.json*
+.tmp/
+projects/
+*.jsonl
+
+# Debug & one-off fix scripts (not part of app)
+do_fix*.js
+check*.js
+verify*.js
+test*.js
+fix-*.js
+fix_*.js
+debug*.js
+browser_*.js
+delete-test.js
+run-test-backup.js
+push-to-github.js
+push-all-to-newner.js
+push-to-newtech.mjs
+real_fetch.js
+replace-code-tab.js
+insert-js.js
+extract_js.js
+analyze_js.js
+find_*.js
+final-check.js
+startup-verification.js
+
+# Debug screenshots
+availability-*.png
+dashboard-check.png
+
+# Auth helper scripts (local only)
+scripts/github-web-login.js
+scripts/render-login.js

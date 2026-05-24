@@ -1,0 +1,30 @@
+{
+  "name": "express-postgres-starter",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "npm run migrate",
+    "migrate": "node migrate.js",
+    "setup": "node scripts/fetch-live-cms.js && node scripts/setup-local.js",
+    "sync-cms": "node scripts/fetch-live-cms.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.18.2",
+    "form-data": "^4.0.5",
+    "jsonwebtoken": "^9.0.3",
+    "node-fetch": "^2.7.0",
+    "openai": "^4.77.0",
+    "pdfkit": "^0.15.0",
+    "pg": "^8.11.3"
+  },
+  "description": "A minimal Express.js template with PostgreSQL connection, designed for Polsia infrastructure provisioning.",
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

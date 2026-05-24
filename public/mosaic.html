@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOSAIC Rule — FAA Light-Sport Aircraft Modernization | New Tech Aviation</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png?v=2">
+    <link rel="apple-touch-icon" sizes="180x180" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png?v=2">
+    <meta name="description" content="Complete guide to the FAA MOSAIC final rule — Modernization of Special Airworthiness Certificates. What changed for Sport Pilot, new aircraft eligibility, expanded privileges, and how to get started at New Tech Aviation.">
+    <meta name="robots" content="index, follow">
+    <meta property="og:title" content="MOSAIC Rule — FAA Light-Sport Aircraft Modernization | New Tech Aviation">
+    <meta property="og:description" content="The FAA MOSAIC rule expanded Light-Sport Aircraft eligibility and Sport Pilot privileges. Learn what changed, what stayed the same, and how to take advantage of MOSAIC today.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://www.newtechaviation.com/mosaic">
+    <meta property="og:site_name" content="New Tech Aviation">
+    <meta property="og:image" content="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png">
+    <link rel="canonical" href="https://www.newtechaviation.com/mosaic">
+    <meta name="theme-color" content="#0F1D2F">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,700;0,800;1,700&display=swap" rel="stylesheet">
+
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --navy: #0F1D2F;
+            --navy-light: #1A2D45;
+            --navy-mid: #162439;
+            --blue: #2563EB;
+            --blue-light: #3B82F6;
+            --sky: #0EA5E9;
+            --amber: #D97706;
+            --amber-light: #F59E0B;
+            --white: #FFFFFF;
+            --off-white: #F8FAFC;
+            --gray-50: #F1F5F9;
+            --gray-100: #E2E8F0;
+            --gray-200: #CBD5E1;
+            --gray-300: #94A3B8;
+            --gray-400: #64748B;
+            --gray-500: #475569;
+            --gray-600: #334155;
+            --gray-700: #1E293B;
+            --green: #059669;
+            --green-light: #10B981;
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-serif: 'Playfair Display', Georgia, serif;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--font);
+            color: var(--gray-700);
+            line-height: 1.6;
+            background: var(--white);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        img { max-width: 100%; height: auto; display: block; }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        /* ─── NAVIGATION ─── */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(15, 29, 47, 0.97);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+
+        .nav-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 80px;
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            text-decoration: none;
+            color: var(--white);
+        }
+
+        .nav-brand-logo {
+            width: 180px;
+            height: auto;
+            max-height: 80px;
+            object-fit: contain;
+            display: block;
+            filter: drop-shadow(0 1px 4px rgba(79,195,247,0.18));
+        }
+
+        @media (max-width: 600px) {
+            .nav-brand-logo { width: 130px; max-height: 60px; }
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 1.75rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: rgba(255,255,255,0.7);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover { color: var(--white); }
+
+        .nav-links a.nav-active {
+            color: var(--amber-light);
+            font-weight: 700;
+        }
+
+        .nav-cta {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.55rem 1.2rem;
+            background: var(--amber);
+            color: var(--white) !important;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: background 0.2s, transform 0.2s;
+        }
+
+        .nav-cta:hover { background: var(--amber-light); transform: translateY(-1px); }
+
+        .nav-login {
+            padding: 0.5rem 1.1rem;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: border-color 0.2s, color 0.2s;
+        }
+
+        .nav-login:hover { border-color: rgba(255,255,255,0.5); color: var(--white) !important; }
+
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--white);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem;
+        }
+
+        /* ─── MOBILE NAV ─── */
+        .mobile-nav {
+            position: fixed;
+            top: 80px;
+            left: 0;
+            right: 0;
+            background: rgba(15, 29, 47, 0.98);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding: 1.5rem;
+            z-index: 99;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            transform: translateY(-100%);
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 0.3s ease, opacity 0.25s ease;
+        }
+
+        .mobile-nav.open {
+            transform: translateY(0);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .mobile-nav a {
+            color: rgba(255,255,255,0.75);
+            text-decoration: none;
+            font-size: 1rem;
+            font-weight: 500;
+            padding: 0.75rem 0.5rem;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            border-radius: 8px;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .mobile-nav a:hover, .mobile-nav a:active {
+            background: rgba(255,255,255,0.05);
+            color: var(--white);
+        }
+
+        .mobile-nav a.nav-active-mobile {
+            color: var(--amber-light);
+            font-weight: 700;
+        }
+
+        /* ─── PAGE HERO ─── */
+        .page-hero {
+            background: var(--navy);
+            padding: 9rem 0 5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .page-hero::before {
+            content: '';
+            position: absolute;
+            top: -30%;
+            right: -10%;
+            width: 700px;
+            height: 700px;
+            background: radial-gradient(circle, rgba(37,99,235,0.07) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .page-hero::after {
+            content: '';
+            position: absolute;
+            bottom: -20%;
+            left: -5%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(217,119,6,0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .page-hero-inner {
+            position: relative;
+            z-index: 2;
+        }
+
+        .hero-rule-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 1rem;
+            background: rgba(37,99,235,0.15);
+            border: 1px solid rgba(37,99,235,0.35);
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #93C5FD;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 1.75rem;
+        }
+
+        .hero-rule-badge span {
+            width: 6px;
+            height: 6px;
+            background: #93C5FD;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .page-hero h1 {
+            font-family: var(--font-serif);
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 800;
+            line-height: 1.1;
+            color: var(--white);
+            letter-spacing: -1px;
+            max-width: 820px;
+            margin-bottom: 1.5rem;
+        }
+
+        .page-hero h1 em {
+            font-style: italic;
+            color: var(--amber-light);
+        }
+
+        .page-hero-sub {
+            font-size: 1.15rem;
+            color: rgba(255,255,255,0.65);
+            max-width: 640px;
+            line-height: 1.75;
+            margin-bottom: 2.5rem;
+        }
+
+        .hero-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.25rem;
+        }
+
+        .hero-meta-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.45rem 1rem;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px;
+            font-size: 0.82rem;
+            color: rgba(255,255,255,0.65);
+            font-weight: 500;
+        }
+
+        .hero-meta-chip strong {
+            color: rgba(255,255,255,0.9);
+            font-weight: 600;
+        }
+
+        /* ─── SECTIONS ─── */
+        .section { padding: 5.5rem 0; }
+        .section-light { background: var(--white); }
+        .section-gray { background: var(--gray-50); }
+        .section-dark { background: var(--navy); color: var(--white); }
+        .section-mid { background: var(--navy-mid); color: var(--white); }
+
+        .section-header {
+            max-width: 720px;
+            margin: 0 auto 3.5rem;
+            text-align: center;
+        }
+
+        .section-header.left { text-align: left; margin-left: 0; }
+
+        .section-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 0.75rem;
+        }
+
+        .section-label.blue { color: #60A5FA; }
+        .section-label.green { color: var(--green-light); }
+
+        .section-header h2 {
+            font-size: clamp(1.75rem, 3vw, 2.5rem);
+            font-weight: 800;
+            letter-spacing: -1px;
+            line-height: 1.15;
+            color: var(--gray-700);
+            margin-bottom: 1rem;
+        }
+
+        .section-dark .section-header h2,
+        .section-mid .section-header h2 { color: var(--white); }
+
+        .section-header p {
+            font-size: 1.05rem;
+            color: var(--gray-400);
+            line-height: 1.75;
+        }
+
+        .section-dark .section-header p,
+        .section-mid .section-header p { color: rgba(255,255,255,0.6); }
+
+        /* ─── WHAT IS MOSAIC ─── */
+        .mosaic-intro-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3rem;
+            align-items: start;
+        }
+
+        .mosaic-intro-text h3 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: var(--gray-700);
+            margin-bottom: 1rem;
+        }
+
+        .mosaic-intro-text p {
+            font-size: 1rem;
+            color: var(--gray-500);
+            line-height: 1.8;
+            margin-bottom: 1rem;
+        }
+
+        .mosaic-intro-text p:last-child { margin-bottom: 0; }
+
+        .rule-ref-box {
+            background: rgba(15,29,47,0.04);
+            border: 1px solid var(--gray-100);
+            border-left: 3px solid var(--blue);
+            border-radius: 10px;
+            padding: 1.5rem 1.75rem;
+        }
+
+        .rule-ref-box h4 {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--blue);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 1rem;
+        }
+
+        .rule-ref-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .rule-ref-item:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+
+        .rule-ref-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--gray-400);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .rule-ref-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+
+        /* ─── COMPARISON TABLE ─── */
+        .compare-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+            border: 1px solid var(--gray-100);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .compare-col { }
+
+        .compare-header {
+            padding: 1.25rem 1.75rem;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .compare-header.before {
+            background: #FEF2F2;
+            color: #B91C1C;
+            border-bottom: 1px solid #FECACA;
+        }
+
+        .compare-header.after {
+            background: #ECFDF5;
+            color: #065F46;
+            border-bottom: 1px solid #A7F3D0;
+            border-left: 1px solid var(--gray-100);
+        }
+
+        .compare-item {
+            padding: 1.1rem 1.75rem;
+            border-bottom: 1px solid var(--gray-100);
+            font-size: 0.95rem;
+            color: var(--gray-600);
+            line-height: 1.5;
+        }
+
+        .compare-item:last-child { border-bottom: none; }
+
+        .compare-item.after-item { border-left: 1px solid var(--gray-100); }
+
+        .compare-item strong {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--gray-400);
+            margin-bottom: 0.3rem;
+        }
+
+        .compare-item .value {
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+
+        .compare-item.after-item .value { color: var(--green); }
+
+        /* ─── PRIVILEGES CARDS ─── */
+        .privilege-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+        }
+
+        .privilege-card {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 2rem;
+            transition: background 0.2s, transform 0.2s;
+        }
+
+        .privilege-card:hover {
+            background: rgba(255,255,255,0.09);
+            transform: translateY(-3px);
+        }
+
+        .privilege-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1.25rem;
+            background: rgba(217,119,6,0.15);
+        }
+
+        .privilege-icon.blue { background: rgba(37,99,235,0.15); }
+        .privilege-icon.green { background: rgba(5,150,105,0.15); }
+
+        .privilege-card h3 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--white);
+            margin-bottom: 0.6rem;
+            letter-spacing: -0.3px;
+        }
+
+        .privilege-card p {
+            font-size: 0.9rem;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.65;
+        }
+
+        .new-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.6rem;
+            background: rgba(5,150,105,0.2);
+            border: 1px solid rgba(5,150,105,0.3);
+            border-radius: 100px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            color: var(--green-light);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+
+        /* ─── LIMITATIONS ─── */
+        .limit-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .limit-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1.25rem 1.5rem;
+            background: var(--white);
+            border: 1px solid var(--gray-100);
+            border-radius: 12px;
+        }
+
+        .limit-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+            background: rgba(217,119,6,0.08);
+        }
+
+        .limit-text h4 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--gray-700);
+            margin-bottom: 0.3rem;
+        }
+
+        .limit-text p {
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            line-height: 1.55;
+        }
+
+        /* ─── GETTING STARTED ─── */
+        .steps-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .step-item {
+            display: flex;
+            gap: 2rem;
+            padding: 2rem 0;
+            border-bottom: 1px solid var(--gray-100);
+            position: relative;
+        }
+
+        .step-item:last-child { border-bottom: none; }
+
+        .step-num {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--navy);
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 0.95rem;
+            flex-shrink: 0;
+            margin-top: 0.15rem;
+        }
+
+        .step-content h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--gray-700);
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.3px;
+        }
+
+        .step-content p {
+            font-size: 0.95rem;
+            color: var(--gray-500);
+            line-height: 1.7;
+        }
+
+        .step-content p strong {
+            color: var(--gray-700);
+        }
+
+        /* ─── CTA ─── */
+        .cta {
+            padding: 5.5rem 0;
+            background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(217,119,6,0.09) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .cta-inner {
+            max-width: 640px;
+            margin: 0 auto;
+            text-align: center;
+            position: relative;
+            z-index: 2;
+        }
+
+        .cta h2 {
+            font-size: clamp(1.75rem, 3vw, 2.5rem);
+            font-weight: 800;
+            color: var(--white);
+            letter-spacing: -1px;
+            line-height: 1.15;
+            margin-bottom: 1rem;
+        }
+
+        .cta p {
+            font-size: 1.05rem;
+            color: rgba(255,255,255,0.65);
+            margin-bottom: 2.5rem;
+            line-height: 1.7;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.9rem 2rem;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 700;
+            font-family: var(--font);
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--amber);
+            color: var(--white);
+        }
+
+        .btn-primary:hover {
+            background: var(--amber-light);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(217,119,6,0.3);
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--white);
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+
+        .btn-outline:hover {
+            border-color: var(--white);
+            transform: translateY(-2px);
+        }
+
+        /* ─── SOURCE ATTRIBUTION ─── */
+        .source-section {
+            background: var(--navy-mid);
+            border-top: 1px solid rgba(255,255,255,0.06);
+            padding: 2.5rem 0;
+        }
+
+        .source-inner {
+            display: flex;
+            align-items: flex-start;
+            gap: 1.5rem;
+        }
+
+        .source-icon {
+            font-size: 1.75rem;
+            flex-shrink: 0;
+            margin-top: 0.1rem;
+        }
+
+        .source-content h4 {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .source-content p {
+            font-size: 0.82rem;
+            color: rgba(255,255,255,0.5);
+            line-height: 1.65;
+            max-width: 760px;
+        }
+
+        .source-content a {
+            color: #93C5FD;
+            text-decoration: none;
+        }
+
+        .source-content a:hover { text-decoration: underline; }
+
+        /* ─── FOOTER ─── */
+        .footer {
+            background: var(--navy);
+            border-top: 1px solid rgba(255,255,255,0.06);
+            padding: 3rem 0 2rem;
+        }
+
+        .footer-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+        }
+
+        .footer-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .footer-brand-logo {
+            width: 180px;
+            height: auto;
+            max-height: 80px;
+            object-fit: contain;
+            opacity: 0.85;
+            filter: drop-shadow(0 1px 3px rgba(79,195,247,0.15));
+        }
+
+        .footer-center {
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.35);
+            text-align: center;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.5);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover { color: var(--white); }
+
+        .footer-social-icon {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .footer-social-icon svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+            fill: currentColor;
+        }
+
+        /* ─── RESPONSIVE ─── */
+        @media (max-width: 900px) {
+            .nav-links { display: none; }
+            .mobile-menu-btn { display: block; min-width: 44px; min-height: 44px; }
+            .mosaic-intro-grid { grid-template-columns: 1fr; }
+            .privilege-cards { grid-template-columns: 1fr 1fr; }
+            .footer-inner { flex-direction: column; text-align: center; gap: 2rem; }
+            .footer-brand { flex-direction: column; align-items: center; text-align: center; }
+        }
+
+        @media (max-width: 768px) {
+            .nav-inner { min-height: 64px; padding: 0 1rem; }
+            .nav-brand-logo { width: 140px; max-height: 56px; }
+            .mobile-nav { top: 64px; }
+            .compare-grid { grid-template-columns: 1fr; }
+            .compare-header.after { border-left: none; border-top: 1px solid var(--gray-100); }
+            .compare-item.after-item { border-left: none; border-top: 1px solid var(--gray-100); }
+            .limit-list { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 600px) {
+            .section { padding: 4rem 0; }
+            .page-hero { padding: 7rem 0 4rem; }
+            .page-hero h1 { font-size: 2.2rem; letter-spacing: -0.5px; }
+            .privilege-cards { grid-template-columns: 1fr; }
+            .cta-buttons { flex-direction: column; align-items: center; }
+            .cta-buttons .btn { width: 100%; max-width: 320px; justify-content: center; }
+            .footer-links { flex-wrap: wrap; justify-content: center; gap: 1rem; }
+            .footer-center { font-size: 0.72rem; }
+            .footer-brand-logo { width: 140px; }
+            .source-inner { flex-direction: column; gap: 0.75rem; }
+        }
+
+        /* ─── SCROLL FADE ─── */
+        .fade-up {
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+        .fade-up.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ─── NAV ─── -->
+    <nav class="nav" id="navbar">
+        <div class="nav-inner">
+            <a href="/" class="nav-brand">
+                <img src="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png" alt="New Tech Aviation flight school logo" class="nav-brand-logo" width="180" height="80" fetchpriority="high">
+            </a>
+            <ul class="nav-links">
+                <li><a href="/#about">About</a></li>
+                <li><a href="/#programs">Programs</a></li>
+                <li><a href="/#fleet">Fleet</a></li>
+                <li><a href="/#instructors">Instructors</a></li>
+                <li><a href="/#location">Location</a></li>
+                <li><a href="/#faq">FAQ</a></li>
+                <li><a href="/mosaic" class="nav-active">MOSAIC</a></li>
+                <li><a href="/app" class="nav-login">Login</a></li>
+                <li><a href="/#contact" class="nav-cta">Get Started</a></li>
+            </ul>
+            <button class="mobile-menu-btn" onclick="toggleMobileNav()" aria-label="Toggle navigation">&#9776;</button>
+        </div>
+    </nav>
+
+    <div class="mobile-nav" id="mobile-nav">
+        <a href="/#about" onclick="closeMobileNav()">About</a>
+        <a href="/#programs" onclick="closeMobileNav()">Programs</a>
+        <a href="/#fleet" onclick="closeMobileNav()">Fleet</a>
+        <a href="/#instructors" onclick="closeMobileNav()">Instructors</a>
+        <a href="/#location" onclick="closeMobileNav()">Location</a>
+        <a href="/#faq" onclick="closeMobileNav()">FAQ</a>
+        <a href="/mosaic" onclick="closeMobileNav()" class="nav-active-mobile">MOSAIC Rule</a>
+        <a href="/app" onclick="closeMobileNav()">Login</a>
+        <a href="/#contact" onclick="closeMobileNav()" style="color:var(--amber-light);font-weight:600;">Get Started →</a>
+    </div>
+
+    <main id="main-content">
+
+    <!-- ─── PAGE HERO ─── -->
+    <section class="page-hero">
+        <div class="container page-hero-inner">
+            <div class="hero-rule-badge fade-up">
+                <span></span>
+                FAA Final Rule &nbsp;·&nbsp; September 2024
+            </div>
+            <h1 class="fade-up">
+                <em>MOSAIC</em> — Modernization of<br>Special Airworthiness Certificates
+            </h1>
+            <p class="page-hero-sub fade-up">
+                The most significant update to Light-Sport Aircraft regulations since 2004.
+                More aircraft. New privileges. Same accessible path to flight.
+            </p>
+            <div class="hero-meta fade-up">
+                <div class="hero-meta-chip">📋 <strong>FAA Docket:</strong>&nbsp; FAA-2022-1355</div>
+                <div class="hero-meta-chip">📅 <strong>Published:</strong>&nbsp; September 6, 2024</div>
+                <div class="hero-meta-chip">📖 <strong>Federal Register:</strong>&nbsp; Vol. 89, No. 173</div>
+                <div class="hero-meta-chip">⚖️ <strong>Regulations Updated:</strong>&nbsp; 14 CFR Parts 1, 21, 43, 61, 91</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── WHAT IS MOSAIC ─── -->
+    <section class="section section-light" id="what-is-mosaic">
+        <div class="container">
+            <div class="section-header left fade-up">
+                <div class="section-label">Overview</div>
+                <h2>What is the MOSAIC Rule?</h2>
+            </div>
+            <div class="mosaic-intro-grid">
+                <div class="mosaic-intro-text fade-up">
+                    <h3>A modernization 20 years in the making</h3>
+                    <p>
+                        The FAA's <strong>Modernization of Special Airworthiness Certificates (MOSAIC)</strong> final rule rewrites the framework governing Light-Sport Aircraft (LSA) and the Sport Pilot certificate. The original LSA category was created in 2004 to lower barriers to flight training — but its prescriptive design standards and strict weight limits quickly became outdated.
+                    </p>
+                    <p>
+                        MOSAIC replaces those prescriptive standards with <strong>performance-based criteria</strong>. Instead of dictating exactly how an aircraft must be built, the new rule defines what an aircraft must be able to do. The result: a dramatically broader pool of eligible aircraft, including many that pilots have been flying for decades.
+                    </p>
+                    <p>
+                        For Sport Pilot certificate holders and students, MOSAIC means access to faster, more capable aircraft — and new operating privileges that were previously out of reach.
+                    </p>
+                </div>
+                <div class="rule-ref-box fade-up">
+                    <h4>Official Rule Reference</h4>
+                    <div class="rule-ref-item">
+                        <span class="rule-ref-label">Full Title</span>
+                        <span class="rule-ref-value">Modernization of Special Airworthiness Certificates (MOSAIC)</span>
+                    </div>
+                    <div class="rule-ref-item">
+                        <span class="rule-ref-label">FAA Docket</span>
+                        <span class="rule-ref-value">FAA-2022-1355</span>
+                    </div>
+                    <div class="rule-ref-item">
+                        <span class="rule-ref-label">Federal Register Citation</span>
+                        <span class="rule-ref-value">89 FR 73292 (September 6, 2024)</span>
+                    </div>
+                    <div class="rule-ref-item">
+                        <span class="rule-ref-label">Regulations Updated</span>
+                        <span class="rule-ref-value">14 CFR Parts 1, 21, 43, 45, 61, 65, 91</span>
+                    </div>
+                    <div class="rule-ref-item">
+                        <span class="rule-ref-label">Predecessor Rule</span>
+                        <span class="rule-ref-value">Original LSA Rule (2004)</span>
+                    </div>
+                    <div class="rule-ref-item">
+                        <span class="rule-ref-label">Primary Source</span>
+                        <span class="rule-ref-value">FAA.gov — Regulations &amp; Policies</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── KEY CHANGES ─── -->
+    <section class="section section-gray" id="key-changes">
+        <div class="container">
+            <div class="section-header fade-up">
+                <div class="section-label">Aircraft Criteria</div>
+                <h2>What Changed — Before &amp; After MOSAIC</h2>
+                <p>MOSAIC rewrites the definition of a Light-Sport Aircraft. Here's what the rule actually changed.</p>
+            </div>
+
+            <div class="compare-grid fade-up">
+                <!-- BEFORE column -->
+                <div class="compare-col">
+                    <div class="compare-header before">
+                        ✕ &nbsp; Before MOSAIC (2004 Rule)
+                    </div>
+                    <div class="compare-item">
+                        <strong>Maximum Gross Takeoff Weight (land)</strong>
+                        <span class="value">1,320 lbs (600 kg)</span>
+                    </div>
+                    <div class="compare-item">
+                        <strong>Maximum Stall Speed (Vso)</strong>
+                        <span class="value">45 knots CAS</span>
+                    </div>
+                    <div class="compare-item">
+                        <strong>Landing Gear</strong>
+                        <span class="value">Fixed only (no retractable)</span>
+                    </div>
+                    <div class="compare-item">
+                        <strong>Propeller</strong>
+                        <span class="value">Fixed-pitch or ground-adjustable only</span>
+                    </div>
+                    <div class="compare-item">
+                        <strong>Design Standards</strong>
+                        <span class="value">Prescriptive — specific design requirements</span>
+                    </div>
+                    <div class="compare-item">
+                        <strong>Night VFR (Sport Pilot)</strong>
+                        <span class="value">Not permitted</span>
+                    </div>
+                    <div class="compare-item">
+                        <strong>Additional Aircraft Categories</strong>
+                        <span class="value">Powered parachute, weight-shift-control only</span>
+                    </div>
+                </div>
+
+                <!-- AFTER column -->
+                <div class="compare-col">
+                    <div class="compare-header after">
+                        ✓ &nbsp; After MOSAIC (2024 Rule)
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Maximum Gross Takeoff Weight (land)</strong>
+                        <span class="value">3,000 lbs (1,361 kg) — single-engine</span>
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Maximum Stall Speed (Vso)</strong>
+                        <span class="value">54 knots CAS</span>
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Landing Gear</strong>
+                        <span class="value">Fixed or retractable permitted</span>
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Propeller</strong>
+                        <span class="value">Fixed, ground-adjustable, or constant-speed permitted</span>
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Design Standards</strong>
+                        <span class="value">Performance-based — focus on capability, not construction</span>
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Night VFR (Sport Pilot)</strong>
+                        <span class="value">Permitted with training and endorsement</span>
+                    </div>
+                    <div class="compare-item after-item">
+                        <strong>Additional Aircraft Categories</strong>
+                        <span class="value">Adds gliders, gyroplanes, and certain powered-lift aircraft</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── SPORT PILOT NEW PRIVILEGES ─── -->
+    <section class="section section-dark" id="new-privileges">
+        <div class="container">
+            <div class="section-header fade-up">
+                <div class="section-label green">New Privileges</div>
+                <h2>What Sport Pilots Can Now Do</h2>
+                <p>MOSAIC directly expands what a Sport Pilot certificate holder is authorized to do — without requiring additional ratings.</p>
+            </div>
+
+            <div class="privilege-cards">
+                <div class="privilege-card fade-up">
+                    <div class="privilege-icon">✈️</div>
+                    <h3>Fly More Aircraft</h3>
+                    <p>Sport Pilots now have access to a dramatically expanded pool of eligible aircraft — including higher-performance designs with retractable gear and constant-speed propellers that previously required at least a Private Pilot certificate.</p>
+                </div>
+
+                <div class="privilege-card fade-up">
+                    <div class="privilege-icon green">🌙</div>
+                    <h3>Night VFR Operations <span class="new-badge">NEW</span></h3>
+                    <p>Under MOSAIC, Sport Pilots may fly at night under VFR conditions after completing the required ground and flight training from an authorized instructor and receiving a logbook endorsement. Night flight was previously prohibited for Sport Pilots.</p>
+                </div>
+
+                <div class="privilege-card fade-up">
+                    <div class="privilege-icon blue">⚖️</div>
+                    <h3>Higher-Weight Aircraft</h3>
+                    <p>The expanded 3,000 lb MGTOW limit opens access to aircraft that were too heavy under the old 1,320 lb rule — including many single-engine aircraft that were previously off-limits for Sport Pilot operations.</p>
+                </div>
+
+                <div class="privilege-card fade-up">
+                    <div class="privilege-icon">🔧</div>
+                    <h3>Modern Equipment</h3>
+                    <p>Aircraft eligible for Sport Pilot operations can now feature retractable landing gear, constant-speed propellers, and advanced avionics — equipment previously associated exclusively with Private Pilot-required aircraft.</p>
+                </div>
+
+                <div class="privilege-card fade-up">
+                    <div class="privilege-icon green">🪂</div>
+                    <h3>More Aircraft Categories</h3>
+                    <p>MOSAIC expands the LSA category to include gliders, gyroplanes, and certain powered-lift aircraft. Sport Pilots with appropriate training and endorsements can operate these additional aircraft types.</p>
+                </div>
+
+                <div class="privilege-card fade-up">
+                    <div class="privilege-icon blue">🏥</div>
+                    <h3>Still No Medical Required</h3>
+                    <p>One of the most valuable Sport Pilot privileges remains unchanged: a valid U.S. driver's license continues to serve as the medical standard. No FAA medical exam required — even with the expanded privileges under MOSAIC.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── LIMITATIONS ─── -->
+    <section class="section section-gray" id="limitations">
+        <div class="container">
+            <div class="section-header fade-up">
+                <div class="section-label">Limitations</div>
+                <h2>What Still Applies to Sport Pilots</h2>
+                <p>MOSAIC expands Sport Pilot privileges significantly — but several important limitations remain in effect.</p>
+            </div>
+
+            <div class="limit-list">
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">⛅</div>
+                    <div class="limit-text">
+                        <h4>VFR Only (No IFR)</h4>
+                        <p>Sport Pilots are authorized for Visual Flight Rules (VFR) operations only. Instrument flight (IFR) requires an Instrument Rating, which cannot be held with a Sport Pilot certificate alone.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">👥</div>
+                    <div class="limit-text">
+                        <h4>Single Passenger Limit</h4>
+                        <p>Sport Pilots may carry no more than one passenger at a time. The aircraft must have no more than two seats. Multi-passenger operations require at least a Private Pilot certificate.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">🚫</div>
+                    <div class="limit-text">
+                        <h4>No Compensation or Hire</h4>
+                        <p>Sport Pilots may not act as pilot in command of an aircraft for compensation or hire. Flying for business or as a commercial operator requires a Commercial Pilot certificate.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">🗺️</div>
+                    <div class="limit-text">
+                        <h4>Class A Airspace Prohibited</h4>
+                        <p>Sport Pilots may not fly in Class A airspace (above 18,000 feet MSL). Additionally, operations in Class B airspace require a specific endorsement from an authorized instructor.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">🌙</div>
+                    <div class="limit-text">
+                        <h4>Night Requires Endorsement</h4>
+                        <p>While MOSAIC now permits night VFR, it is not automatic. Sport Pilots must complete required ground and flight training and hold a current logbook endorsement from an authorized instructor before flying at night.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">📋</div>
+                    <div class="limit-text">
+                        <h4>Driver's License Medical Standard</h4>
+                        <p>The driver's license medical standard is subject to conditions: if a pilot has been denied an FAA medical certificate, they may not exercise Sport Pilot privileges until specific FAA requirements are met. See 14 CFR 61.303.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">🛩️</div>
+                    <div class="limit-text">
+                        <h4>Light-Sport Aircraft Only</h4>
+                        <p>Sport Pilots may only act as PIC of aircraft that meet the Light-Sport Aircraft definition under 14 CFR Part 1 (as updated by MOSAIC). Flying aircraft outside LSA category requires a higher certificate.</p>
+                    </div>
+                </div>
+
+                <div class="limit-item fade-up">
+                    <div class="limit-icon">🌐</div>
+                    <div class="limit-text">
+                        <h4>No International Operations</h4>
+                        <p>Sport Pilot certificates issued under 14 CFR Part 61 are subject to limitations on international operations. Always verify with the relevant foreign aviation authority before any cross-border flight.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── GETTING STARTED ─── -->
+    <section class="section section-light" id="getting-started">
+        <div class="container">
+            <div class="section-header fade-up">
+                <div class="section-label">Sport Pilot Path</div>
+                <h2>What It Takes to Get Your Sport Pilot Certificate</h2>
+                <p>MOSAIC didn't change the Sport Pilot certificate requirements — just what you can do with it. Here's the path from zero experience to Sport Pilot.</p>
+            </div>
+
+            <div class="steps-list">
+                <div class="step-item fade-up">
+                    <div class="step-num">1</div>
+                    <div class="step-content">
+                        <h3>Meet the Basic Requirements</h3>
+                        <p>
+                            You must be at least <strong>16 years old to fly solo</strong> in an airplane (17 to receive the Sport Pilot certificate). You must hold a valid U.S. driver's license — no FAA medical examination is required. If your most recent FAA medical application was denied or revoked, special conditions apply under 14 CFR 61.303.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="step-item fade-up">
+                    <div class="step-num">2</div>
+                    <div class="step-content">
+                        <h3>Pass the FAA Knowledge Test</h3>
+                        <p>
+                            Complete the <strong>Sport Pilot Aeronautical Knowledge Test</strong> at an FAA-approved testing center. The test covers aeronautical knowledge including regulations, airspace, weather, and aircraft performance. A passing score of 70% or better is required. Preparation typically takes 20–40 hours of self-study using FAA-approved materials.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="step-item fade-up">
+                    <div class="step-num">3</div>
+                    <div class="step-content">
+                        <h3>Complete Flight Training</h3>
+                        <p>
+                            Per <strong>14 CFR 61.313</strong>, the minimum aeronautical experience for a Sport Pilot certificate in an airplane includes <strong>20 hours total flight time</strong> — of which at least 15 hours are flight training from an authorized instructor (including specific maneuver and cross-country requirements) and at least 5 hours are solo flight time. New Tech Aviation's Sport Pilot program is designed to meet and exceed these minimums efficiently.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="step-item fade-up">
+                    <div class="step-num">4</div>
+                    <div class="step-content">
+                        <h3>Pass the Practical Test (Checkride)</h3>
+                        <p>
+                            Demonstrate your knowledge and skills to an <strong>FAA Designated Pilot Examiner (DPE)</strong>. The practical test evaluates aeronautical knowledge (oral exam) and flight proficiency (flight exam) against the Sport Pilot Airman Certification Standards (ACS). Your instructor will determine when you're ready and endorse you for the test.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="step-item fade-up">
+                    <div class="step-num">5</div>
+                    <div class="step-content">
+                        <h3>Take Advantage of MOSAIC</h3>
+                        <p>
+                            Once certificated, you can exercise the full privileges of a Sport Pilot under MOSAIC — including access to the expanded LSA category. To add night VFR privileges, complete the required training with a CFI and receive your logbook endorsement. New Tech Aviation offers complete Sport Pilot training and post-certificate endorsements at KPSK.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── CTA ─── -->
+    <section class="cta" id="cta-section">
+        <div class="container">
+            <div class="cta-inner">
+                <h2>Ready to Take Advantage of MOSAIC?</h2>
+                <p>
+                    Start your Sport Pilot training at New Tech Aviation in New River Valley, Virginia. Our CFIs are up to date on MOSAIC and ready to get you in the air — on the fastest, most efficient path to your certificate.
+                </p>
+                <div class="cta-buttons">
+                    <a href="/#contact" class="btn btn-primary">Start Sport Pilot Training →</a>
+                    <a href="/#programs" class="btn btn-outline">View All Programs</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    </main><!-- /#main-content -->
+
+    <!-- ─── SOURCE ATTRIBUTION ─── -->
+    <div class="source-section">
+        <div class="container">
+            <div class="source-inner">
+                <div class="source-icon">📚</div>
+                <div class="source-content">
+                    <h4>Sources &amp; Regulatory References</h4>
+                    <p>
+                        All information on this page is sourced from official FAA publications: the MOSAIC final rule (FAA-2022-1355, 89 FR 73292, September 6, 2024), Title 14 of the Code of Federal Regulations (14 CFR Parts 1, 21, 43, 45, 61, 65, and 91), and the FAA Sport Pilot Airman Certification Standards (ACS). This page is for informational purposes only.
+                        Regulations are subject to change — always verify with current FAA regulations at
+                        <a href="https://www.faa.gov" target="_blank" rel="noopener noreferrer">FAA.gov</a> and the
+                        <a href="https://www.ecfr.gov" target="_blank" rel="noopener noreferrer">eCFR</a> before making operational decisions.
+                        Questions about specific aircraft eligibility under MOSAIC should be directed to the FAA Aircraft Certification Service.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── FOOTER ─── -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png" alt="New Tech Aviation flight school logo" class="footer-brand-logo" loading="lazy" width="180" height="60">
+                    <address style="font-style:normal;font-size:0.8rem;color:rgba(255,255,255,0.4);margin-top:0.5rem;line-height:1.6;">
+                        New River Valley Airport (KPSK)<br>
+                        5391 C.V. Jackson Road<br>
+                        Dublin, VA 24084
+                    </address>
+                </div>
+                <div class="footer-center">
+                    &copy; 2026 New Tech Aviation · Flight School In New River Valley, Virginia · <a href="/mosaic" style="color:rgba(255,255,255,0.4);text-decoration:none;">MOSAIC</a>
+                </div>
+                <div class="footer-links">
+                    <a href="/#about">About</a>
+                    <a href="/#programs">Programs</a>
+                    <a href="/#location">Location</a>
+                    <a href="/#faq">FAQ</a>
+                    <a href="/mosaic">MOSAIC</a>
+                    <a href="/#contact">Contact</a>
+                    <a href="/app">Student Portal</a>
+                    <a href="https://www.instagram.com/newtechaviation?igsh=MTN3NTB1c2h1ZzZnMQ%3D%3D&utm_source=qr" target="_blank" rel="noopener noreferrer" aria-label="New Tech Aviation on Instagram" class="footer-social-icon">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                        Instagram
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+    // ─── Mobile nav toggle ───
+    function toggleMobileNav() {
+        document.getElementById('mobile-nav').classList.toggle('open');
+    }
+    function closeMobileNav() {
+        document.getElementById('mobile-nav').classList.remove('open');
+    }
+
+    // Close mobile nav when clicking outside
+    document.addEventListener('click', function(e) {
+        const nav = document.getElementById('mobile-nav');
+        const btn = document.querySelector('.mobile-menu-btn');
+        if (nav && btn && nav.classList.contains('open') && !nav.contains(e.target) && !btn.contains(e.target)) {
+            closeMobileNav();
+        }
+    });
+
+    // ─── Scroll fade-up animations ───
+    (function() {
+        const els = document.querySelectorAll('.fade-up');
+        if (!window.IntersectionObserver) {
+            els.forEach(el => el.classList.add('visible'));
+            return;
+        }
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+        els.forEach(el => observer.observe(el));
+    })();
+    </script>
+
+</body>
+</html>

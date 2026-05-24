@@ -1,0 +1,7 @@
+# FlightSlate — Polsia Configuration
+
+[[crons]]
+name = "preflight-email-reminder"
+schedule = "0 * * * *"
+command = "node jobs/reminder-email.js"
+description = "Sends 24-hour pre-flight email reminders to students and instructors. Runs every hour, queries bookings in the next 23-25 hours with reminder_sent=false and status=confirmed."

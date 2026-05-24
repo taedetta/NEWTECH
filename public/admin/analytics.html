@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics — FlightSlate Admin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #3b82f6;
+      --accent-hover: #60a5fa;
+      --success: #22c55e;
+      --warning: #eab308;
+      --danger: #ef4444;
+      --chart-bar: #3b82f6;
+      --chart-bar-highlight: #60a5fa;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .header .back-link {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: color 0.15s;
+    }
+
+    .header .back-link:hover { color: var(--accent-hover); }
+
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+
+    .card-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .card-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .card-value.accent { color: var(--accent); }
+    .card-value.warning { color: var(--warning); }
+    .card-value.success { color: var(--success); }
+
+    .card-subtext {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 0.75rem;
+    }
+
+    .chart-section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .chart-container {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 160px;
+      padding: 1rem 0;
+      overflow-x: auto;
+    }
+
+    .chart-bar-wrap {
+      flex: 1;
+      min-width: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      height: 100%;
+    }
+
+    .chart-bar {
+      width: 100%;
+      background: var(--chart-bar);
+      border-radius: 3px 3px 0 0;
+      min-height: 2px;
+      transition: background 0.15s;
+      cursor: pointer;
+    }
+
+    .chart-bar:hover { background: var(--chart-bar-highlight); }
+    .chart-bar.highlight { background: var(--chart-bar-highlight); }
+
+    .chart-bar-label {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      white-space: nowrap;
+    }
+
+    .chart-axis-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .tables-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .tables-row { grid-template-columns: 1fr; }
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+
+    td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+      color: var(--text-secondary);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    tr:hover td { background: rgba(255,255,255,0.03); }
+
+    .path-cell {
+      color: var(--text-primary);
+      font-family: 'Courier New', monospace;
+      font-size: 0.8rem;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .count-cell {
+      text-align: right;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .referrer-cell {
+      color: var(--text-primary);
+    }
+
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
+    .error-msg {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--danger);
+      border-radius: 6px;
+      padding: 1rem;
+      color: var(--danger);
+      font-size: 0.875rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--card-border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 0.5rem;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .updated-at {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Analytics</h1>
+    <a href="/app" class="back-link">&#8592; Back to App</a>
+  </div>
+
+  <div id="error" style="display:none" class="error-msg"></div>
+
+  <!-- Summary Cards -->
+  <div class="summary-cards">
+    <div class="card">
+      <div class="card-label">Today</div>
+      <div class="card-value accent" id="total-today">—</div>
+      <div class="card-subtext">page views</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Last 7 Days</div>
+      <div class="card-value" id="total-7d">—</div>
+      <div class="card-subtext">page views</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Last 30 Days</div>
+      <div class="card-value success" id="total-30d">—</div>
+      <div class="card-subtext">page views</div>
+    </div>
+  </div>
+
+  <!-- Daily Chart -->
+  <div class="chart-section">
+    <div class="section-title">Daily Page Views — Last 30 Days</div>
+    <div id="chart-container" class="chart-container">
+      <div class="loading"><span class="spinner"></span>Loading chart data…</div>
+    </div>
+    <div class="updated-at" id="chart-updated"></div>
+  </div>
+
+  <!-- Tables -->
+  <div class="tables-row">
+    <div class="chart-section">
+      <div class="section-title">Views by Page — Last 30 Days</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Page Path</th>
+            <th style="text-align:right">Views</th>
+          </tr>
+        </thead>
+        <tbody id="views-table">
+          <tr><td colspan="2" style="text-align:center; color: var(--text-muted); padding: 1rem;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="chart-section">
+      <div class="section-title">Top Referrers — Last 30 Days</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th style="text-align:right">Visits</th>
+          </tr>
+        </thead>
+        <tbody id="referrers-table">
+          <tr><td colspan="2" style="text-align:center; color: var(--text-muted); padding: 1rem;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api/analytics';
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function authHeaders() {
+      const token = localStorage.getItem('flightslate_token') || sessionStorage.getItem('flightslate_token');
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    }
+
+    async function fetchJSON(url) {
+      const res = await fetch(url, { headers: authHeaders() });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function formatNumber(n) {
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+      return String(n);
+    }
+
+    function formatDate(isoDate) {
+      const d = new Date(isoDate + 'T00:00:00Z');
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+
+    async function loadData() {
+      try {
+        // Load views + referrers + daily in parallel
+        const [viewsRes, referrersRes, dailyRes] = await Promise.all([
+          fetchJSON(`${API_BASE}/views?days=30`),
+          fetchJSON(`${API_BASE}/referrers?days=30`),
+          fetchJSON(`${API_BASE}/daily?days=30`),
+        ]);
+
+        // Summary cards — derive today's count from daily data (avoids stale 7d total)
+        const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+        const todayEntry = (dailyRes.daily || []).find(d => String(d.date).slice(0, 10) === todayStr);
+        document.getElementById('total-today').textContent = formatNumber(todayEntry ? todayEntry.count : 0);
+        document.getElementById('total-7d').textContent = formatNumber(viewsRes.total_7d);
+        document.getElementById('total-30d').textContent = formatNumber(viewsRes.total_30d);
+
+        // Views table
+        renderTable('views-table', viewsRes.by_path || [], (row) => `
+          <tr>
+            <td class="path-cell" title="${escHtml(row.path)}">${escHtml(row.path)}</td>
+            <td class="count-cell">${formatNumber(row.count)}</td>
+          </tr>
+        `);
+
+        // Referrers table
+        renderTable('referrers-table', referrersRes.referrers || [], (row) => `
+          <tr>
+            <td class="referrer-cell">${escHtml(row.referrer)}</td>
+            <td class="count-cell">${formatNumber(row.count)}</td>
+          </tr>
+        `);
+
+        // Daily chart
+        renderDailyChart(dailyRes.daily || []);
+
+        document.getElementById('chart-updated').textContent =
+          `Updated ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+      } catch (err) {
+        showError('Failed to load analytics data: ' + err.message);
+        console.error('[analytics page] load error:', err);
+      }
+    }
+
+    function renderTable(id, rows, rowFn) {
+      const tbody = document.getElementById(id);
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; color: var(--text-muted); padding: 1rem;">No data yet</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(rowFn).join('');
+    }
+
+    function renderDailyChart(daily) {
+      const container = document.getElementById('chart-container');
+      if (!daily || daily.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted);padding:1rem;">No data available</div>';
+        return;
+      }
+
+      const maxCount = Math.max(...daily.map(d => d.count), 1);
+
+      container.innerHTML = daily.map(d => {
+        const pct = (d.count / maxCount) * 100;
+        const label = formatDate(d.date);
+        return `
+          <div class="chart-bar-wrap">
+            <div class="chart-bar" style="height:${pct.toFixed(1)}%" title="${d.count} views" data-count="${d.count}"></div>
+            <div class="chart-bar-label">${label}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function escHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Initial load
+    loadData();
+
+    // Auto-refresh every 60 seconds
+    setInterval(loadData, 60 * 1000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: newtech-aviation
+    runtime: node
+    plan: free
+    region: virginia
+    buildCommand: npm install && npm run migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: production
+      - key: APP_URL
+        value: https://www.newtechaviation.com
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 3000

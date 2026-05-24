@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Book a Discovery Flight | New Tech Aviation</title>
+  <meta name="description" content="Book a no-obligation 30-minute discovery flight with New Tech Aviation. All experience levels welcome — take the controls with a certified flight instructor by your side.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://www.newtechaviation.com/book-discovery-flight">
+  <meta property="og:title" content="Book a Discovery Flight | New Tech Aviation">
+  <meta property="og:description" content="Book a no-obligation 30-minute discovery flight. All experience levels welcome — take the controls with a certified flight instructor.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.newtechaviation.com/book-discovery-flight">
+  <meta property="og:site_name" content="New Tech Aviation">
+  <meta property="og:image" content="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Book a Discovery Flight | New Tech Aviation">
+  <meta name="twitter:description" content="Book a 30-minute discovery flight at New Tech Aviation. No experience required — take the controls with a certified instructor.">
+  <meta name="twitter:image" content="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png">
+  <link rel="icon" type="image/png" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png">
+
+  <!-- Schema.org structured data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "name": "Discovery Flight",
+    "provider": {
+      "@type": "LocalBusiness",
+      "name": "New Tech Aviation",
+      "url": "https://www.newtechaviation.com"
+    },
+    "description": "30-minute introductory discovery flight with a certified flight instructor. No experience required.",
+    "offers": {
+      "@type": "Offer",
+      "description": "No-obligation discovery flight for all experience levels"
+    }
+  }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1B2A4A;
+      --navy-light: #243660;
+      --amber: #F5A623;
+      --amber-dark: #d9901a;
+      --white: #ffffff;
+      --gray-50: #f8f9fc;
+      --gray-100: #f0f2f7;
+      --gray-300: #d1d5db;
+      --gray-500: #6b7280;
+      --gray-700: #374151;
+      --text: #1a1f2e;
+      --radius: 10px;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--gray-50);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── NAV ── */
+    nav {
+      background: var(--navy);
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .nav-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+    }
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--white);
+      font-weight: 700;
+      font-size: 17px;
+    }
+    .nav-logo img { height: 36px; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-links a {
+      color: rgba(255,255,255,0.75);
+      text-decoration: none;
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-links a:hover { background: rgba(255,255,255,0.1); color: var(--white); }
+    .nav-links .nav-cta {
+      background: var(--amber);
+      color: var(--navy);
+      font-weight: 700;
+    }
+    .nav-links .nav-cta:hover { background: var(--amber-dark); color: var(--navy); }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 60%, #1e3a6b 100%);
+      padding: 72px 24px 80px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '✈';
+      position: absolute;
+      font-size: 320px;
+      opacity: 0.04;
+      top: -40px;
+      right: -60px;
+      transform: rotate(-20deg);
+      user-select: none;
+    }
+    .hero-badge {
+      display: inline-block;
+      background: rgba(245,166,35,0.15);
+      border: 1px solid rgba(245,166,35,0.4);
+      color: var(--amber);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 6px 16px;
+      border-radius: 100px;
+      margin-bottom: 20px;
+    }
+    .hero h1 {
+      color: var(--white);
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 800;
+      line-height: 1.15;
+      max-width: 680px;
+      margin: 0 auto 16px;
+    }
+    .hero h1 span { color: var(--amber); }
+    .hero p {
+      color: rgba(255,255,255,0.75);
+      font-size: 18px;
+      max-width: 520px;
+      margin: 0 auto 32px;
+      line-height: 1.6;
+    }
+    .trust-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+    .trust-badge {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.85);
+      font-size: 13px;
+      padding: 8px 16px;
+      border-radius: 100px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .trust-badge .icon { font-size: 15px; }
+
+    /* ── LAYOUT ── */
+    .page-content {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 40px;
+      align-items: start;
+    }
+    @media (max-width: 768px) {
+      .page-content { grid-template-columns: 1fr; }
+      .sidebar { order: -1; }
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 28px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      margin-bottom: 20px;
+    }
+    .sidebar-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--amber);
+    }
+    .feature-list { list-style: none; }
+    .feature-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--gray-100);
+      font-size: 14px;
+      color: var(--gray-700);
+      line-height: 1.5;
+    }
+    .feature-list li:last-child { border-bottom: none; }
+    .feature-list .icon {
+      font-size: 18px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .faq-item { margin-bottom: 16px; }
+    .faq-item strong {
+      display: block;
+      font-size: 14px;
+      color: var(--navy);
+      margin-bottom: 4px;
+    }
+    .faq-item p {
+      font-size: 13px;
+      color: var(--gray-500);
+      line-height: 1.6;
+    }
+
+    /* ── FORM CARD ── */
+    .form-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 36px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+    }
+    .form-card h2 {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--navy);
+      margin-bottom: 4px;
+    }
+    .form-card .subtitle {
+      color: var(--gray-500);
+      font-size: 14px;
+      margin-bottom: 28px;
+    }
+
+    .form-group { margin-bottom: 18px; }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-700);
+      margin-bottom: 6px;
+    }
+    label .req { color: #e53e3e; margin-left: 2px; }
+    input, select, textarea {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1.5px solid var(--gray-300);
+      border-radius: 7px;
+      font-size: 15px;
+      color: var(--text);
+      background: var(--white);
+      transition: border-color 0.15s, box-shadow 0.15s;
+      outline: none;
+      font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--navy);
+      box-shadow: 0 0 0 3px rgba(27,42,74,0.08);
+    }
+    input.error, select.error, textarea.error {
+      border-color: #e53e3e;
+    }
+    textarea { resize: vertical; min-height: 90px; }
+    select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 480px) { .form-row { grid-template-columns: 1fr; } }
+
+    .field-error {
+      color: #e53e3e;
+      font-size: 12px;
+      margin-top: 4px;
+      display: none;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 15px;
+      background: var(--amber);
+      color: var(--navy);
+      font-weight: 800;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      margin-top: 8px;
+      letter-spacing: 0.01em;
+    }
+    .btn-submit:hover { background: var(--amber-dark); }
+    .btn-submit:active { transform: scale(0.99); }
+    .btn-submit:disabled { opacity: 0.65; cursor: not-allowed; }
+
+    .form-footnote {
+      text-align: center;
+      font-size: 12px;
+      color: var(--gray-500);
+      margin-top: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── SUCCESS STATE ── */
+    .success-state {
+      display: none;
+      text-align: center;
+      padding: 20px 0;
+    }
+    .success-icon {
+      width: 72px;
+      height: 72px;
+      background: linear-gradient(135deg, #F5A623, #f7c06b);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      margin: 0 auto 20px;
+    }
+    .success-state h2 {
+      color: var(--navy);
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+    .success-state p {
+      color: var(--gray-500);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 340px;
+      margin: 0 auto 24px;
+    }
+    .btn-back {
+      display: inline-block;
+      padding: 12px 28px;
+      border: 2px solid var(--navy);
+      border-radius: 8px;
+      color: var(--navy);
+      font-weight: 700;
+      font-size: 14px;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .btn-back:hover { background: var(--navy); color: var(--white); }
+
+    .error-banner {
+      background: #fff5f5;
+      border: 1px solid #fed7d7;
+      color: #c53030;
+      padding: 12px 16px;
+      border-radius: 7px;
+      font-size: 14px;
+      margin-bottom: 18px;
+      display: none;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--navy);
+      color: rgba(255,255,255,0.5);
+      text-align: center;
+      padding: 24px;
+      font-size: 13px;
+    }
+    footer a { color: rgba(255,255,255,0.7); text-decoration: none; }
+    footer a:hover { color: var(--white); }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">
+        <img src="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png" alt="New Tech Aviation">
+        New Tech Aviation
+      </a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/become-a-pilot">Become a Pilot</a>
+        <a href="/blog">Blog</a>
+        <a href="/book-discovery-flight" class="nav-cta">Book a Flight</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-badge">30-Minute Intro Flight</div>
+    <h1>Experience <span>Flying</span><br>for the First Time</h1>
+    <p>Take the controls with a certified instructor by your side. No experience necessary — just curiosity.</p>
+    <div class="trust-badges">
+      <div class="trust-badge"><span class="icon">✅</span> No obligation</div>
+      <div class="trust-badge"><span class="icon">🛩️</span> 30-minute intro flight</div>
+      <div class="trust-badge"><span class="icon">👋</span> All levels welcome</div>
+      <div class="trust-badge"><span class="icon">📞</span> Response within 24 hours</div>
+    </div>
+  </section>
+
+  <!-- Main Content -->
+  <div class="page-content">
+
+    <!-- Form -->
+    <div class="main-col">
+      <div class="form-card">
+
+        <!-- Default form -->
+        <div id="formSection">
+          <h2>Request Your Discovery Flight</h2>
+          <p class="subtitle">Fill out the form below and we'll reach out within 24 hours to confirm your flight.</p>
+
+          <div class="error-banner" id="errorBanner"></div>
+
+          <form id="leadForm" novalidate>
+
+            <div class="form-group">
+              <label for="name">Full Name <span class="req">*</span></label>
+              <input type="text" id="name" name="name" placeholder="Jane Smith" autocomplete="name" required>
+              <div class="field-error" id="nameError">Please enter your full name.</div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="email">Email Address <span class="req">*</span></label>
+                <input type="email" id="email" name="email" placeholder="jane@example.com" autocomplete="email" required>
+                <div class="field-error" id="emailError">Please enter a valid email.</div>
+              </div>
+              <div class="form-group">
+                <label for="phone">Phone Number <span class="req">*</span></label>
+                <input type="tel" id="phone" name="phone" placeholder="(555) 000-0000" autocomplete="tel" required>
+                <div class="field-error" id="phoneError">Please enter your phone number.</div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="preferred_date">Preferred Date / Time</label>
+                <select id="preferred_date" name="preferred_date">
+                  <option value="">No preference</option>
+                  <option value="Weekday morning">Weekday morning</option>
+                  <option value="Weekday afternoon">Weekday afternoon</option>
+                  <option value="Weekend morning">Weekend morning</option>
+                  <option value="Weekend afternoon">Weekend afternoon</option>
+                  <option value="Flexible">I'm flexible</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="experience_level">Your Experience Level</label>
+                <select id="experience_level" name="experience_level">
+                  <option value="">Select…</option>
+                  <option value="No flying experience">No flying experience</option>
+                  <option value="Some flying experience">Some flying experience</option>
+                  <option value="Student pilot">Student pilot</option>
+                  <option value="Licensed pilot seeking additional ratings">Licensed pilot seeking additional ratings</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="message">Message (optional)</label>
+              <textarea id="message" name="message" placeholder="Tell us anything you'd like us to know — questions, scheduling constraints, goals…"></textarea>
+            </div>
+
+            <button type="submit" class="btn-submit" id="submitBtn">Request Your Discovery Flight ✈️</button>
+
+            <p class="form-footnote">
+              No obligation. We'll never share your information. <br>
+              By submitting you agree to be contacted by New Tech Aviation.
+            </p>
+
+          </form>
+        </div>
+
+        <!-- Success state (shown after submit) -->
+        <div class="success-state" id="successSection">
+          <div class="success-icon">✈️</div>
+          <h2>You're on the runway!</h2>
+          <p>Thanks for reaching out. We'll contact you within <strong>24 hours</strong> to schedule your discovery flight. Check your email for a confirmation.</p>
+          <a href="/" class="btn-back">Back to Home</a>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <div class="sidebar-card">
+        <h3>What's Included</h3>
+        <ul class="feature-list">
+          <li>
+            <span class="icon">🛩️</span>
+            <div><strong>30-minute intro flight</strong> — You take the controls (with an instructor beside you)</div>
+          </li>
+          <li>
+            <span class="icon">🎓</span>
+            <div><strong>Certified flight instructor</strong> — FAA-certified, experienced, and patient</div>
+          </li>
+          <li>
+            <span class="icon">📍</span>
+            <div><strong>Local area tour</strong> — See your hometown from the air</div>
+          </li>
+          <li>
+            <span class="icon">📋</span>
+            <div><strong>Q&amp;A session</strong> — Ask everything about getting your pilot certificate</div>
+          </li>
+          <li>
+            <span class="icon">✅</span>
+            <div><strong>Zero obligation</strong> — No pressure to enroll after your flight</div>
+          </li>
+        </ul>
+      </div>
+
+      <div class="sidebar-card">
+        <h3>Common Questions</h3>
+        <div class="faq-item">
+          <strong>Do I need any experience?</strong>
+          <p>None at all. Discovery flights are designed for complete beginners — no prior knowledge required.</p>
+        </div>
+        <div class="faq-item">
+          <strong>Will I actually fly the plane?</strong>
+          <p>Yes! Your instructor will handle takeoff and landing, but you'll fly the aircraft in cruise flight.</p>
+        </div>
+        <div class="faq-item">
+          <strong>How long does it take?</strong>
+          <p>About 30 minutes in the air, plus a pre-flight briefing and debrief — plan for about 1.5 hours total.</p>
+        </div>
+        <div class="faq-item">
+          <strong>What should I wear?</strong>
+          <p>Comfortable clothes and closed-toe shoes. No special gear needed.</p>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <footer>
+    <p>
+      &copy; 2026 New Tech Aviation &nbsp;·&nbsp;
+      <a href="/">Home</a> &nbsp;·&nbsp;
+      <a href="/become-a-pilot">Become a Pilot</a> &nbsp;·&nbsp;
+      <a href="/blog">Blog</a>
+    </p>
+  </footer>
+
+  <script>
+    const form = document.getElementById('leadForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const formSection = document.getElementById('formSection');
+    const successSection = document.getElementById('successSection');
+    const errorBanner = document.getElementById('errorBanner');
+
+    function showError(id, show) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show ? 'block' : 'none';
+    }
+
+    function setFieldError(inputId, errorId, hasError) {
+      const input = document.getElementById(inputId);
+      if (input) input.classList.toggle('error', hasError);
+      showError(errorId, hasError);
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBanner.style.display = 'none';
+
+      const name = document.getElementById('name').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const phone = document.getElementById('phone').value.trim();
+      const preferred_date = document.getElementById('preferred_date').value;
+      const experience_level = document.getElementById('experience_level').value;
+      const message = document.getElementById('message').value.trim();
+
+      let valid = true;
+
+      if (!name) { setFieldError('name', 'nameError', true); valid = false; }
+      else { setFieldError('name', 'nameError', false); }
+
+      const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !emailRx.test(email)) { setFieldError('email', 'emailError', true); valid = false; }
+      else { setFieldError('email', 'emailError', false); }
+
+      if (!phone) { setFieldError('phone', 'phoneError', true); valid = false; }
+      else { setFieldError('phone', 'phoneError', false); }
+
+      if (!valid) return;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Sending…';
+
+      try {
+        const res = await fetch('/api/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, phone, preferred_date, experience_level, message }),
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          formSection.style.display = 'none';
+          successSection.style.display = 'block';
+        } else {
+          errorBanner.textContent = data.error || 'Something went wrong. Please try again.';
+          errorBanner.style.display = 'block';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Request Your Discovery Flight ✈️';
+        }
+      } catch (err) {
+        errorBanner.textContent = 'Network error. Please check your connection and try again.';
+        errorBanner.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Request Your Discovery Flight ✈️';
+      }
+    });
+  </script>
+
+</body>
+</html>

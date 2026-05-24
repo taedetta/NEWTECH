@@ -1,0 +1,595 @@
+'use strict';
+
+// routes/bookings-routes.js — Booking CRUD, conflict detection, availability checks.
+// Owns: GET /, GET /history, POST /, PUT /:id, DELETE /:id, GET /check-availability.
+// Does NOT own: flight completion, Hobbs recording — those stay in bookings-completion.js.
+
+const express = require('express');
+const pool = require('../db/index');
+const { authenticateToken } = require('../middleware/auth');
+const { bookingConfirmationEmail, flightCancelledEmail, sendEmail } = require('../email-templates');
+
+const router = express.Router();
+
+const MAX_BOOKING_DURATION_HOURS = 12; // reject bookings longer than 12 hours
+
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const { start, end, instructor_id, student_id, aircraft_id } = req.query;
+    let query = `
+      SELECT b.*,
+        s.name as student_name, s.email as student_email,
+        i.name as instructor_name, i.email as instructor_email,
+        a.tail_number, a.make_model
+      FROM bookings b
+      LEFT JOIN users s ON b.student_id = s.id
+      LEFT JOIN users i ON b.instructor_id = i.id
+      JOIN aircraft a ON b.aircraft_id = a.id
+      WHERE b.status NOT IN ('cancelled', 'completed')
+    `;
+    const params = [];
+    let paramIdx = 1;
+    if (start) { query += ` AND b.end_time >= $${paramIdx++}`; params.push(start); }
+    if (end) { query += ` AND b.start_time <= $${paramIdx++}`; params.push(end); }
+    if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
+    if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
+    if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
+    if (req.user.role === 'student') { query += ` AND b.student_id = $${paramIdx++}`; params.push(req.user.id); }
+    query += ' ORDER BY b.start_time';
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    const ts = new Date().toISOString();
+    console.error(`[bookings] [${ts}] GET / — user=${req.user?.id} error: ${err.message}`);
+    res.status(500).json({ code: 'FETCH_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  }
+});
+
+router.get('/history', authenticateToken, async (req, res) => {
+  try {
+    const { start, end, instructor_id, student_id, aircraft_id, status } = req.query;
+    let query = `
+      SELECT b.*,
+        s.name as student_name, s.email as student_email,
+        i.name as instructor_name, i.email as instructor_email,
+        a.tail_number, a.make_model,
+        a.hourly_rate as aircraft_hourly_rate,
+        COALESCE(i.instructor_rate, 0) as instructor_hourly_rate,
+        fl.hobbs_delta as actual_hobbs_hours,
+        fl.tach_delta,
+        fl.tach_start as tach_start,
+        fl.tach_end as tach_end,
+        fl.dual_instruction_hours,
+        COALESCE(fl.aircraft_charge_amount, fl.hobbs_delta * a.hourly_rate) as aircraft_charge_amount,
+        COALESCE(fl.instruction_charge_amount, fl.dual_instruction_hours * COALESCE(i.instructor_rate, 0)) as instruction_charge_amount
+      FROM bookings b
+      LEFT JOIN users s ON b.student_id = s.id
+      LEFT JOIN users i ON b.instructor_id = i.id
+      JOIN aircraft a ON b.aircraft_id = a.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      WHERE b.status = $1
+    `;
+    const params = [status || 'completed'];
+    let paramIdx = 2;
+    if (start) { query += ` AND b.end_time >= $${paramIdx++}`; params.push(start); }
+    if (end) { query += ` AND b.start_time <= $${paramIdx++}`; params.push(end); }
+    if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
+    if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
+    if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
+    if (req.user.role === 'student') { query += ` AND b.student_id = $${paramIdx++}`; params.push(req.user.id); }
+    query += ' ORDER BY b.start_time DESC';
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    const ts = new Date().toISOString();
+    console.error(`[bookings] [${ts}] GET /history — user=${req.user?.id} error: ${err.message}`);
+    res.status(500).json({ code: 'FETCH_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  }
+});
+
+// Conflict detection — only checks fields that are non-null
+async function checkConflicts(client, { aircraft_id, instructor_id, student_id, start_time, end_time, excludeBookingId }) {
+  const conflicts = [];
+  if (aircraft_id) {
+    const params = [start_time, end_time, aircraft_id];
+    if (excludeBookingId) params.push(excludeBookingId);
+    const result = await client.query(
+      `SELECT b.id, a.tail_number, b.start_time, b.end_time,
+              COALESCE(s.name, i.name, 'Someone') AS booked_by
+       FROM bookings b JOIN aircraft a ON a.id = b.aircraft_id
+       LEFT JOIN users s ON b.student_id = s.id
+       LEFT JOIN users i ON b.instructor_id = i.id
+       WHERE b.aircraft_id = $3 AND b.status != 'cancelled'
+         AND b.start_time < $2 AND b.end_time > $1
+         ${excludeBookingId ? 'AND b.id != $4' : ''}
+       LIMIT 1`,
+      params
+    );
+    if (result.rows.length > 0) {
+      const r = result.rows[0];
+      conflicts.push({ type: 'aircraft', entity: r.tail_number, start_time: r.start_time, end_time: r.end_time, booked_by: r.booked_by });
+    }
+  }
+  if (instructor_id) {
+    const params = [start_time, end_time, instructor_id];
+    if (excludeBookingId) params.push(excludeBookingId);
+    const result = await client.query(
+      `SELECT b.id, u.name as instructor_name, b.start_time, b.end_time
+       FROM bookings b JOIN users u ON b.instructor_id = u.id
+       WHERE b.instructor_id = $3 AND b.status != 'cancelled'
+         AND b.start_time < $2 AND b.end_time > $1
+         ${excludeBookingId ? 'AND b.id != $4' : ''}
+       LIMIT 1`,
+      params
+    );
+    if (result.rows.length > 0) {
+      const r = result.rows[0];
+      conflicts.push({ type: 'instructor', entity: r.instructor_name, start_time: r.start_time, end_time: r.end_time });
+    }
+  }
+  if (student_id) {
+    const params = [start_time, end_time, student_id];
+    if (excludeBookingId) params.push(excludeBookingId);
+    const result = await client.query(
+      `SELECT b.id, u.name as student_name, b.start_time, b.end_time
+       FROM bookings b JOIN users u ON b.student_id = u.id
+       WHERE b.student_id = $3 AND b.status != 'cancelled'
+         AND b.start_time < $2 AND b.end_time > $1
+         ${excludeBookingId ? 'AND b.id != $4' : ''}
+       LIMIT 1`,
+      params
+    );
+    if (result.rows.length > 0) {
+      const r = result.rows[0];
+      conflicts.push({ type: 'student', entity: r.student_name, start_time: r.start_time, end_time: r.end_time });
+    }
+  }
+  return conflicts;
+}
+
+// Instructor availability check — fail-open if no availability configured
+async function isInstructorAvailable(client, instructorId, startTime, endTime, { localDate, localStart, localEnd } = {}) {
+  let dayOfWeek, startTimeStr, endTimeStr, dateStr;
+  if (localDate && localStart && localEnd) {
+    const d = new Date(localDate + 'T00:00:00Z');
+    dayOfWeek = d.getUTCDay();
+    startTimeStr = localStart.length === 5 ? localStart + ':00' : localStart;
+    endTimeStr = localEnd.length === 5 ? localEnd + ':00' : localEnd;
+    dateStr = localDate;
+  } else {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    dayOfWeek = start.getUTCDay();
+    startTimeStr = start.toISOString().slice(11, 19);
+    endTimeStr = end.toISOString().slice(11, 19);
+    dateStr = start.toISOString().slice(0, 10);
+  }
+  const overrides = await client.query(
+    `SELECT is_available, start_time, end_time, reason FROM instructor_availability_overrides
+     WHERE instructor_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
+    [instructorId, dateStr]
+  );
+  for (const ov of overrides.rows) {
+    if (ov.start_time && ov.end_time) {
+      if (startTimeStr < ov.end_time && endTimeStr > ov.start_time) {
+        if (!ov.is_available) return { available: false, reason: ov.reason || 'Instructor has a time block override' };
+        return { available: true };
+      }
+    } else {
+      if (!ov.is_available) return { available: false, reason: ov.reason || 'Instructor is unavailable on this date' };
+      return { available: true };
+    }
+  }
+  const weekly = await client.query(
+    `SELECT start_time, end_time FROM instructor_availability
+     WHERE instructor_id = $1 AND day_of_week = $2`,
+    [instructorId, dayOfWeek]
+  );
+  const anyConfig = await client.query(
+    `SELECT 1 FROM instructor_availability WHERE instructor_id = $1 LIMIT 1`,
+    [instructorId]
+  );
+  if (anyConfig.rows.length === 0) return { available: true };
+  for (const slot of weekly.rows) {
+    const slotStart = slot.start_time;
+    const slotEnd = slot.end_time;
+    if (startTimeStr >= slotStart && endTimeStr <= slotEnd) return { available: true };
+  }
+  return { available: false, reason: 'Outside instructor scheduled availability hours' };
+}
+
+// Find next available time slots for an instructor
+async function findNextAvailableSlots(client, instructorId, afterTime, durationMinutes, count) {
+  const slots = [];
+  const startDate = new Date(afterTime);
+  for (let dayOffset = 0; dayOffset < 14 && slots.length < count; dayOffset++) {
+    const checkDate = new Date(startDate);
+    checkDate.setUTCDate(checkDate.getUTCDate() + dayOffset);
+    const dayOfWeek = checkDate.getUTCDay();
+    const dateStr = checkDate.toISOString().slice(0, 10);
+    const dayBlock = await client.query(
+      `SELECT 1 FROM instructor_availability_overrides
+       WHERE instructor_id = $1 AND start_date <= $2::date AND end_date >= $2::date
+         AND is_available = false AND start_time IS NULL`,
+      [instructorId, dateStr]
+    );
+    if (dayBlock.rows.length > 0) continue;
+    const windows = await client.query(
+      `SELECT start_time, end_time FROM instructor_availability
+       WHERE instructor_id = $1 AND day_of_week = $2 ORDER BY start_time`,
+      [instructorId, dayOfWeek]
+    );
+    for (const win of windows.rows) {
+      const winStartParts = win.start_time.split(':').map(Number);
+      const winEndParts = win.end_time.split(':').map(Number);
+      const slotStart = new Date(checkDate);
+      slotStart.setUTCHours(winStartParts[0], winStartParts[1], 0, 0);
+      const winEnd = new Date(checkDate);
+      winEnd.setUTCHours(winEndParts[0], winEndParts[1], 0, 0);
+      if (dayOffset === 0 && slotStart <= startDate) {
+        slotStart.setTime(startDate.getTime());
+        const mins = slotStart.getUTCMinutes();
+        if (mins % 30 !== 0) slotStart.setUTCMinutes(mins + (30 - (mins % 30)), 0, 0);
+      }
+      while (slots.length < count) {
+        const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
+        if (slotEnd > winEnd) break;
+        const conflict = await client.query(
+          `SELECT 1 FROM bookings WHERE instructor_id = $1 AND status != 'cancelled'
+           AND start_time < $2 AND end_time > $3 LIMIT 1`,
+          [instructorId, slotEnd.toISOString(), slotStart.toISOString()]
+        );
+        if (conflict.rows.length === 0) {
+          slots.push({
+            start_time: slotStart.toISOString(),
+            end_time: slotEnd.toISOString(),
+            date: dateStr,
+            day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek],
+            local_start: `${String(slotStart.getUTCHours()).padStart(2,'0')}:${String(slotStart.getUTCMinutes()).padStart(2,'0')}`,
+            local_end: `${String(slotEnd.getUTCHours()).padStart(2,'0')}:${String(slotEnd.getUTCMinutes()).padStart(2,'0')}`
+          });
+        }
+        slotStart.setTime(slotStart.getTime() + 30 * 60000);
+      }
+    }
+  }
+  return slots;
+}
+
+router.get('/check-availability', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { instructor_id, date } = req.query;
+    if (!instructor_id || !date) return res.json({ available: true, windows: [] });
+    const iid = parseInt(instructor_id);
+    const dateObj = new Date(date + 'T00:00:00Z');
+    const dayOfWeek = dateObj.getUTCDay();
+    const overrides = await client.query(
+      `SELECT is_available, start_time, end_time, reason FROM instructor_availability_overrides
+       WHERE instructor_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
+      [iid, date]
+    );
+    for (const ov of overrides.rows) {
+      if (!ov.start_time && !ov.end_time && !ov.is_available) {
+        return res.json({ available: false, reason: ov.reason || 'Instructor is unavailable on this date', windows: [] });
+      }
+    }
+    const weekly = await client.query(
+      `SELECT start_time, end_time FROM instructor_availability
+       WHERE instructor_id = $1 AND day_of_week = $2 ORDER BY start_time`,
+      [iid, dayOfWeek]
+    );
+    const anyConfig = await client.query(
+      `SELECT 1 FROM instructor_availability WHERE instructor_id = $1 LIMIT 1`,
+      [iid]
+    );
+    if (anyConfig.rows.length === 0) return res.json({ available: true, windows: [], no_config: true });
+    const windows = weekly.rows.map(w => ({ start: w.start_time.slice(0, 5), end: w.end_time.slice(0, 5) }));
+    const extraWindows = [];
+    const blockedRanges = [];
+    for (const ov of overrides.rows) {
+      if (ov.start_time && ov.end_time) {
+        if (ov.is_available) extraWindows.push({ start: ov.start_time.slice(0, 5), end: ov.end_time.slice(0, 5) });
+        else blockedRanges.push({ start: ov.start_time.slice(0, 5), end: ov.end_time.slice(0, 5), reason: ov.reason });
+      }
+    }
+    const allWindows = [...windows, ...extraWindows];
+    const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dayOfWeek];
+    if (allWindows.length === 0) return res.json({ available: false, reason: `No availability set for ${dayName}`, windows: [] });
+    return res.json({ available: true, windows: allWindows, blocked: blockedRanges, day: dayName });
+  } catch (err) {
+    console.error('Availability check error:', err);
+    return res.json({ available: true, windows: [] });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
+    const sid = student_id ? parseInt(student_id) : null;
+    const iid = instructor_id ? parseInt(instructor_id) : null;
+    if (['student', 'renter'].includes(req.user.role) && sid && sid !== req.user.id) {
+      return res.status(403).json({ error: 'Students and renters can only create bookings for themselves' });
+    }
+    if (!sid && !iid) return res.status(400).json({ error: 'At least one person (student or instructor) is required' });
+    if (!aircraft_id || !start_time || !end_time) return res.status(400).json({ error: 'Aircraft, start time, and end time are required' });
+    const start = new Date(start_time);
+    const end = new Date(end_time);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return res.status(400).json({ error: 'Invalid date format for start or end time' });
+    if (end <= start) return res.status(400).json({ error: 'End time must be after start time' });
+    // Duration cap — reject bookings longer than 12 hours
+    const durationHrs = (end - start) / (1000 * 60 * 60);
+    if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
+    const now = new Date();
+    if (start < now) return res.status(400).json({ error: 'Start time must be in the future' });
+    // Check aircraft downtime window — reject if aircraft is scheduled for maintenance
+    if (aircraft_id) {
+      const bookingDate = start.toISOString().slice(0, 10);
+      const downtimeCheck = await client.query(
+        `SELECT id, reason FROM aircraft_downtime WHERE aircraft_id = $1 AND $2::date BETWEEN start_date AND end_date LIMIT 1`,
+        [aircraft_id, bookingDate]
+      );
+      if (downtimeCheck.rows.length > 0) {
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance on this date', reason: downtimeCheck.rows[0].reason });
+      }
+    }
+    let booking_type = 'dual';
+    if (sid && !iid) booking_type = 'student_solo';
+    else if (!sid && iid) booking_type = 'instructor_solo';
+    const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
+    if (aircraft.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+    if (aircraft.rows[0].status !== 'available') {
+      return res.status(409).json({ error: `Aircraft is currently ${aircraft.rows[0].status}` });
+    }
+    await client.query('BEGIN');
+    const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
+    if (conflicts.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Scheduling conflict', conflicts });
+    }
+    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+      const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
+      const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
+      if (!availCheck.available) {
+        const startDt = new Date(start_time);
+        const durationMinutes = Math.round((new Date(end_time) - startDt) / 60000);
+        const nextSlots = await findNextAvailableSlots(client, iid, start_time, durationMinutes, 3);
+        const instrName = (await client.query('SELECT name FROM users WHERE id=$1', [iid])).rows[0]?.name || 'Instructor';
+        const allInst = await client.query(
+          `SELECT id, name FROM users WHERE is_instructor = true AND id != $1 AND deleted_at IS NULL`, [iid]
+        );
+        const alternatives = [];
+        for (const inst of allInst.rows) {
+          const { available: altAvail } = await isInstructorAvailable(client, inst.id, start_time, end_time, localOpts);
+          if (altAvail) {
+            const conf = await client.query(
+              `SELECT id FROM bookings WHERE instructor_id=$1 AND status!='cancelled' AND start_time<$2 AND end_time>$3 LIMIT 1`,
+              [inst.id, end_time, start_time]
+            );
+            if (conf.rows.length === 0) alternatives.push(inst);
+          }
+        }
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Instructor not available',
+          availability_conflict: true,
+          reason: availCheck.reason,
+          instructor_name: instrName,
+          next_slots: nextSlots,
+          alternative_instructors: alternatives,
+          can_force: ['owner', 'admin'].includes(req.user.role)
+        });
+      }
+    }
+    const result = await client.query(
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+    );
+    await client.query('COMMIT');
+    const booking = await pool.query(
+      `SELECT b.*, s.name as student_name, i.name as instructor_name, a.tail_number, a.make_model
+       FROM bookings b
+       LEFT JOIN users s ON b.student_id = s.id
+       LEFT JOIN users i ON b.instructor_id = i.id
+       JOIN aircraft a ON b.aircraft_id = a.id
+       WHERE b.id = $1`,
+      [result.rows[0].id]
+    );
+    res.status(201).json(booking.rows[0]);
+    const bk = booking.rows[0];
+    const emailParams = { studentName: bk.student_name || null, instructorName: bk.instructor_name || null, aircraftTailNumber: bk.tail_number || null, startTime: bk.start_time, endTime: bk.end_time };
+    const participantIds = [sid, iid].filter(Boolean);
+    if (participantIds.length > 0) {
+      pool.query('SELECT id, name, email FROM users WHERE id = ANY($1)', [participantIds])
+        .then(emailResult => {
+          for (const u of emailResult.rows) {
+            const { subject, html, text } = bookingConfirmationEmail({ ...emailParams, recipientName: u.name, isStudent: u.id === sid });
+            require('../email-templates').sendEmail(u.email, subject, html, text).catch(err => console.error('[booking-email] error:', err.message));
+          }
+        })
+        .catch(err => console.error('[booking-email] lookup error:', err.message));
+    }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    const ts = new Date().toISOString();
+    console.error(`[bookings] [${ts}] POST / — user=${req.user?.id} error: ${err.message}`);
+    res.status(500).json({ code: 'CREATE_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/:id', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, status } = req.body;
+    const bookingId = req.params.id;
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    const b = existing.rows[0];
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const isInstructor = req.user.id === b.instructor_id;
+    const isStudent = req.user.id === b.student_id;
+    if (!isAdmin && !isInstructor && !isStudent) return res.status(403).json({ error: 'Access denied' });
+    if (!isAdmin && (student_id !== undefined || instructor_id !== undefined || start_time !== undefined || end_time !== undefined)) {
+      return res.status(403).json({ error: 'Only admins can reschedule' });
+    }
+    if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    const sid = student_id !== undefined ? (student_id ? parseInt(student_id) : null) : b.student_id;
+    const iid = instructor_id !== undefined ? (instructor_id ? parseInt(instructor_id) : null) : b.instructor_id;
+    const acId = aircraft_id !== undefined ? parseInt(aircraft_id) : b.aircraft_id;
+    const st = start_time || b.start_time;
+    const et = end_time || b.end_time;
+    const stTime = new Date(st);
+    const enTime = new Date(et);
+    if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return res.status(400).json({ error: 'Invalid date format' });
+    if (enTime <= stTime) return res.status(400).json({ error: 'End time must be after start time' });
+    // Duration cap on updates
+    const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
+    if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
+    // Downtime check on updates with changed aircraft or dates
+    if (acId) {
+      const updBookingDate = stTime.toISOString().slice(0, 10);
+      const updDowntime = await client.query(
+        `SELECT id, reason FROM aircraft_downtime WHERE aircraft_id = $1 AND $2::date BETWEEN start_date AND end_date LIMIT 1`,
+        [acId, updBookingDate]
+      );
+      if (updDowntime.rows.length > 0) {
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance on this date', reason: updDowntime.rows[0].reason });
+      }
+    }
+    if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
+      const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: st, end_time: et, excludeBookingId: bookingId });
+      if (conflicts.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Scheduling conflict', conflicts });
+      }
+    }
+    await client.query('BEGIN');
+    // If start_time changed, reset reminder_sent so a new reminder fires for the new time
+    const timeChanged = st !== b.start_time || et !== b.end_time;
+    const result = await client.query(
+      `UPDATE bookings SET student_id = $1, instructor_id = $2, aircraft_id = $3,
+       start_time = $4, end_time = $5, lesson_type = COALESCE($6, lesson_type),
+       notes = COALESCE($7, notes), status = COALESCE($8, status),
+       reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
+       updated_at = NOW()
+       WHERE id = $9 RETURNING *`,
+      [sid, iid, acId, st, et, lesson_type, notes, status, bookingId]
+    );
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    const ts = new Date().toISOString();
+    console.error(`[bookings] [${ts}] PUT /:id — user=${req.user?.id} error: ${err.message}`);
+    res.status(500).json({ code: 'UPDATE_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/:id', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    const b = existing.rows[0];
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const isInstructor = req.user.id === b.instructor_id;
+    const isStudent = req.user.id === b.student_id;
+    if (!isAdmin && !isInstructor && !isStudent) return res.status(403).json({ error: 'Access denied' });
+    if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    const reason = req.body?.reason || null;
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
+      [reason, req.params.id]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true });
+
+    // Send cancellation email to student + instructor (fire-and-forget)
+    sendFlightCancelledEmail(req.params.id, req.user.id, req.user.role, reason);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    const ts = new Date().toISOString();
+    console.error(`[bookings] [${ts}] DELETE /:id — user=${req.user?.id} error: ${err.message}`);
+    res.status(500).json({ code: 'CANCEL_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * Send flight cancelled notification emails to student and instructor.
+ * Called as fire-and-forget after the booking is marked cancelled.
+ */
+async function sendFlightCancelledEmail(bookingId, cancelledById, cancelledByRole, cancellationReason) {
+  try {
+    const result = await pool.query(`
+      SELECT b.*, s.name as student_name, s.email as student_email,
+             i.name as instructor_name, i.email as instructor_email,
+             a.tail_number, a.make_model
+      FROM bookings b
+      LEFT JOIN users s ON b.student_id = s.id
+      LEFT JOIN users i ON b.instructor_id = i.id
+      JOIN aircraft a ON b.aircraft_id = a.id
+      WHERE b.id = $1
+    `, [bookingId]);
+    if (result.rows.length === 0) return;
+    const b = result.rows[0];
+    if (!b.student_email) return;
+
+    const cancelledByName = await pool.query('SELECT name FROM users WHERE id = $1', [cancelledById])
+      .then(r => r.rows[0]?.name || 'Unknown')
+      .catch(() => 'Unknown');
+
+    // Send to student
+    const studentEmail = flightCancelledEmail({
+      recipientName: b.student_name || 'Student',
+      studentName: b.student_name,
+      instructorName: b.instructor_name,
+      tailNumber: b.tail_number,
+      makeModel: b.make_model,
+      flightDate: b.start_time,
+      startTime: b.start_time,
+      endTime: b.end_time,
+      cancelledBy: cancelledByName,
+      cancelledByRole: cancelledByRole,
+      cancellationReason: cancellationReason,
+    });
+    sendEmail(b.student_email, studentEmail.subject, studentEmail.html, studentEmail.text)
+      .catch(e => console.error('[bookings] cancellation student email error:', e.message));
+
+    // Send to instructor if assigned
+    if (b.instructor_id && b.instructor_email) {
+      const instructorEmail = flightCancelledEmail({
+        recipientName: b.instructor_name || 'Instructor',
+        studentName: b.student_name,
+        instructorName: b.instructor_name,
+        tailNumber: b.tail_number,
+        makeModel: b.make_model,
+        flightDate: b.start_time,
+        startTime: b.start_time,
+        endTime: b.end_time,
+        cancelledBy: cancelledByName,
+        cancelledByRole: cancelledByRole,
+        cancellationReason: cancellationReason,
+      });
+      sendEmail(b.instructor_email, instructorEmail.subject, instructorEmail.html, instructorEmail.text)
+        .catch(e => console.error('[bookings] cancellation instructor email error:', e.message));
+    }
+  } catch (err) {
+    console.error('[bookings] sendFlightCancelledEmail error:', err.message);
+  }
+}
+
+module.exports = router;
+module.exports.checkConflicts = checkConflicts;
+module.exports.isInstructorAvailable = isInstructorAvailable;
+module.exports.findNextAvailableSlots = findNextAvailableSlots;
