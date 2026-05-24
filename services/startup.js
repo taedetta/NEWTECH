@@ -89,6 +89,17 @@ async function ensureDatabaseSchema(pool) {
   }
 }
 
+async function ensureSchemaPatches(pool) {
+  try {
+    const patchPath = path.join(__dirname, '..', 'scripts', 'schema-patches.sql');
+    if (!fs.existsSync(patchPath)) return;
+    await pool.query(fs.readFileSync(patchPath, 'utf8'));
+    console.log('[bootstrap] Schema patches applied');
+  } catch (err) {
+    console.error('[bootstrap] Schema patches error:', err.message);
+  }
+}
+
 async function ensureDefaultAdminAccount(pool) {
   const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
   try {
@@ -266,6 +277,7 @@ async function runStartup({ pool, polsiaApiKey, r2BaseUrl }) {
   // Bootstrap schema on fresh databases (e.g. new Render Postgres)
   try {
     await ensureDatabaseSchema(pool);
+    await ensureSchemaPatches(pool);
     await ensureDefaultAdminAccount(pool);
   } catch (err) {
     console.error('[bootstrap] startup error:', err.message);

@@ -52,11 +52,17 @@ function addSourceFilter(sql, params = []) {
   const newParamIdx = newParams.length + 1;
   newParams.push(source);
 
-  let newSql = sql;
-  if (newSql.toUpperCase().includes('WHERE')) {
-    newSql += ` AND source = $${newParamIdx}`;
+  const filterClause = sql.toUpperCase().includes('WHERE')
+    ? ` AND source = $${newParamIdx}`
+    : ` WHERE source = $${newParamIdx}`;
+
+  // Insert filter before ORDER BY / GROUP BY / LIMIT so SQL stays valid
+  const tailMatch = sql.match(/\s(ORDER\s+BY|GROUP\s+BY|LIMIT\s|OFFSET\s|FOR\s+UPDATE)/i);
+  let newSql;
+  if (tailMatch && tailMatch.index != null) {
+    newSql = sql.slice(0, tailMatch.index) + filterClause + sql.slice(tailMatch.index);
   } else {
-    newSql += ` WHERE source = $${newParamIdx}`;
+    newSql = sql + filterClause;
   }
 
   return { sql: newSql, params: newParams };

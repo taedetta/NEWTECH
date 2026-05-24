@@ -6789,7 +6789,7 @@ async function loadDashboard() {
   `;
 
   // Async: fetch at-risk count for owner/admin dashboard card
-  if (!['student','instructor'].includes(currentUser.role)) {
+  if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
     api('/api/at-risk').then(data => {
       const countEl = document.getElementById('at-risk-dash-count');
       if (countEl) countEl.textContent = (data.students || []).length;

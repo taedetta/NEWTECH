@@ -17,7 +17,7 @@ const {
 const router = express.Router();
 
 // GET /api/discrepancies — list all discrepancies (owner/admin only)
-router.get('/', authenticateToken, requireRole(['owner', 'admin']), async (req, res) => {
+router.get('/', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { status } = req.query; // 'pending' | 'resolved' | 'all' (default all)
     const rows = await listDiscrepancies({ status: status || 'all' });
@@ -29,7 +29,7 @@ router.get('/', authenticateToken, requireRole(['owner', 'admin']), async (req, 
 });
 
 // GET /api/discrepancies/count — count pending (for nav badge)
-router.get('/count', authenticateToken, requireRole(['owner', 'admin']), async (req, res) => {
+router.get('/count', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const count = await countPendingDiscrepancies();
     res.json({ count });
@@ -51,7 +51,7 @@ router.get('/check/:bookingId', authenticateToken, async (req, res) => {
 });
 
 // POST /api/discrepancies/:id/resolve — owner/admin resolves a discrepancy
-router.post('/:id/resolve', authenticateToken, requireRole(['owner', 'admin']), async (req, res) => {
+router.post('/:id/resolve', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { resolution_reading, resolution_note } = req.body;
     if (!resolution_reading || !['student', 'instructor'].includes(resolution_reading)) {
@@ -72,7 +72,7 @@ router.post('/:id/resolve', authenticateToken, requireRole(['owner', 'admin']), 
 });
 
 // DELETE /api/discrepancies/:id — delete a discrepancy record (admin/owner only)
-router.delete('/:id', authenticateToken, requireRole(['owner', 'admin']), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     await deleteDiscrepancy(parseInt(req.params.id));
     res.json({ ok: true });

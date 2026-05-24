@@ -125,6 +125,13 @@ JWT_SECRET=${jwt}
   console.log(`Wrote ${ENV_FILE}`);
 }
 
+async function applySchemaPatches(pool) {
+  const patchFile = path.join(__dirname, 'schema-patches.sql');
+  if (!fs.existsSync(patchFile)) return;
+  await pool.query(fs.readFileSync(patchFile, 'utf8'));
+  console.log('Applied schema patches');
+}
+
 async function main() {
   console.log('=== FlightSlate Local Setup ===\n');
   await ensureDatabase();
@@ -132,6 +139,7 @@ async function main() {
   const pool = new Pool({ connectionString: LOCAL_DATABASE_URL });
   try {
     await applySchema(pool);
+    await applySchemaPatches(pool);
     await seedCms(pool);
     await seedOwner(pool);
     await seedSampleAircraft(pool);
