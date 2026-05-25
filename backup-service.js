@@ -397,8 +397,9 @@ async function buildBillingPdf(pool, generatedAt) {
       i.instructor_rate,
       fl.instruction_charge_amount AS instruction_charge,
       (COALESCE(fl.aircraft_charge_amount, 0) + COALESCE(fl.instruction_charge_amount, 0)) AS total_billed,
-      fl.lesson_type
+      COALESCE(b.lesson_type, fl.booking_type) AS lesson_type
     FROM flight_logs fl
+    LEFT JOIN bookings b ON b.id = fl.booking_id
     LEFT JOIN users u ON fl.student_id = u.id
     LEFT JOIN users i ON fl.instructor_id = i.id
     LEFT JOIN aircraft a ON fl.aircraft_id = a.id
