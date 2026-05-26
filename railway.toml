@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npm run migrate"
+buildCommand = "npm install"
 
 [deploy]
 startCommand = "npm start"
