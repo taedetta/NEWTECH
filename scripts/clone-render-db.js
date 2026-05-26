@@ -51,6 +51,13 @@ async function cloneEnums(sourceClient, targetClient) {
   }
 }
 
+async function ensureSequence(sourceClient, targetClient, seqName) {
+  if (!seqName) return;
+  const exists = await targetClient.query(`SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'S' AND c.relname = $1`, [seqName]);
+  if (exists.rows.length) return;
+  await targetClient.query(`CREATE SEQUENCE "${seqName}"`);
+}
+
 async function createTableFromSource(sourceClient, targetClient, table) {
   const ddl = await sourceClient.query(`
     SELECT
@@ -160,7 +167,11 @@ async function copyTable(sourceClient, targetClient, table) {
       const offset = bi * colNames.length;
       return `(${colNames.map((__, ci) => `$${offset + ci + 1}`).join(', ')})`;
     }).join(', ');
-    const values = batch.flatMap((row) => colNames.map((c) => row[c]));
+    const values = batch.flatMap((row) => colNames.map((c) => {
+      const val = row[c];
+      if (val != null && jsonCols.has(c) && typeof val === 'object') return JSON.stringify(val);
+      return val;
+    }));
     await targetClient.query(`INSERT INTO "${table}" (${colList}) VALUES ${placeholders}`, values);
     copied += batch.length;
   }
