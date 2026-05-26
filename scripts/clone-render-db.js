@@ -154,12 +154,14 @@ async function copyTable(sourceClient, targetClient, table) {
     copied += batch.length;
   }
 
-  const seq = await targetClient.query(`SELECT pg_get_serial_sequence($1, 'id') AS seq`, [`public.${table}`]);
-  if (seq.rows[0]?.seq) {
-    await targetClient.query(
-      `SELECT setval($1, COALESCE((SELECT MAX(id) FROM "${table}"), 1), true)`,
-      [seq.rows[0].seq]
-    );
+  if (targetSet.has('id')) {
+    const seq = await targetClient.query(`SELECT pg_get_serial_sequence($1, 'id') AS seq`, [`public.${table}`]);
+    if (seq.rows[0]?.seq) {
+      await targetClient.query(
+        `SELECT setval($1, COALESCE((SELECT MAX(id) FROM "${table}"), 1), true)`,
+        [seq.rows[0].seq]
+      );
+    }
   }
   console.log(`[clone-db] ${table}: ${copied} rows`);
   return copied;
