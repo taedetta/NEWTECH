@@ -170,9 +170,10 @@ async function cloneDatabase(sourceUrl, targetUrl) {
   const sourceClient = await sourcePool.connect();
   const targetClient = await targetPool.connect();
   try {
+    const tables = await cloneSchemaFromSource(sourceClient, targetClient);
+
     await targetClient.query('BEGIN');
     await targetClient.query('SET session_replication_role = replica');
-    const tables = await cloneSchemaFromSource(sourceClient, targetClient);
     console.log(`[clone-db] Copying ${tables.length} tables...`);
     let total = 0;
     for (const table of tables) {
