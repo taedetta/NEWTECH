@@ -80,23 +80,17 @@ async function createTableFromSource(sourceClient, targetClient, table) {
   `, [table]);
   const createSql = ddl.rows[0]?.ddl;
   if (!createSql) throw new Error(`Could not build DDL for ${table}`);
-  await targetClient.query(createSql);
-}
-
-async function cloneSequences(sourceClient, targetClient) {
-  const seqs = await sourceClient.query(`
-    SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'
-  `);
-  for (const row of seqs.rows) {
-    await targetClient.query(`CREATE SEQUENCE IF NOT EXISTS "${row.sequencename}"`);
+  const seqMatches = [...createSql.matchAll(/nextval\('"?([^'"]+)"?'::regclass\)/g)];
+  for (const m of seqMatches) {
+    const seqName = m[1].replace(/^public\./, '');
+    await ensureSequence(sourceClient, targetClient, seqName);
   }
-  console.log(`[clone-db] ${seqs.rows.length} sequences`);
+  await targetClient.query(createSql);
 }
 
 async function cloneSchemaFromSource(sourceClient, targetClient) {
   await resetTargetSchema(targetClient);
   await cloneEnums(sourceClient, targetClient);
-  await cloneSequences(sourceClient, targetClient);
   const tables = await listTables(sourceClient);
   for (const table of tables) {
     try {
@@ -187,6 +181,34 @@ async function copyTable(sourceClient, targetClient, table) {
   }
   console.log(`[clone-db] ${table}: ${copied} rows`);
   return copied;
+}
+
+async function fixAllSequences(client) {
+  const tables = await client.query(`
+    SELECT table_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND column_name = 'id'
+    GROUP BY table_name
+  `);
+  for (const { table_name } of tables.rows) {
+    const seq = await client.query(`SELECT pg_get_serial_sequence($1, 'id') AS seq`, [`public.${table_name}`]);
+    if (!seq.rows[0]?.seq) continue;
+    await client.query(
+      `SELECT setval($1, COALESCE((SELECT MAX(id) FROM "${table_name}"), 1), true)`,
+      [seq.rows[0].seq]
+    ).catch(() => {});
+  }
+}
+
+async function fixCriticalConstraints(client) {
+  const stmts = [
+    'ALTER TABLE users ADD PRIMARY KEY (id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))',
+    'ALTER TABLE bookings ADD PRIMARY KEY (id)',
+    'ALTER TABLE aircraft ADD PRIMARY KEY (id)',
+  ];
+  for (const sql of stmts) {
+    await client.query(sql).catch(() => {});
+  }
 }
 
 async function cloneDatabase(sourceUrl, targetUrl) {

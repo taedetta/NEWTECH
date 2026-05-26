@@ -53,21 +53,17 @@ async function upsertUser(pool, user, hash) {
   }
 
   if (user.perms === 'all') {
+    await pool.query('DELETE FROM user_permissions WHERE user_id = $1', [id]);
     await pool.query(
       `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
-       VALUES ($1, TRUE, TRUE, TRUE, TRUE, TRUE)
-       ON CONFLICT (user_id) DO UPDATE SET
-         can_manage_aircraft = TRUE, can_manage_instructors = TRUE,
-         can_manage_permissions = TRUE, can_manage_students = TRUE, can_edit_website = TRUE`,
+       VALUES ($1, TRUE, TRUE, TRUE, TRUE, TRUE)`,
       [id]
     );
   } else if (user.perms === 'instructor') {
+    await pool.query('DELETE FROM user_permissions WHERE user_id = $1', [id]);
     await pool.query(
       `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
-       VALUES ($1, TRUE, FALSE, FALSE, TRUE, FALSE)
-       ON CONFLICT (user_id) DO UPDATE SET
-         can_manage_aircraft = TRUE, can_manage_instructors = FALSE,
-         can_manage_permissions = FALSE, can_manage_students = TRUE, can_edit_website = FALSE`,
+       VALUES ($1, TRUE, FALSE, FALSE, TRUE, FALSE)`,
       [id]
     );
   }
