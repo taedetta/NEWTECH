@@ -27,11 +27,8 @@ function isoDate(date) {
 
 async function ensureDatabaseSchema(pool) {
   try {
-    const check = await pool.query(`
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'site_content'
-    `);
-    if (check.rows.length > 0) return;
+    const check = await pool.query(`SELECT to_regclass('public.users') AS users_table`);
+    if (check.rows[0]?.users_table) return;
 
     console.log('[bootstrap] Fresh database detected — applying schema...');
     const schemaPath = path.join(__dirname, '..', 'scripts', 'bootstrap-schema.sql');

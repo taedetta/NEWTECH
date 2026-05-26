@@ -595,4 +595,19 @@ router.post('/reset-reminders', authenticateToken, requireRole('owner', 'admin')
   }
 });
 
+// ─── ONE-TIME: Clone DB to external target (e.g. Railway Postgres) ───
+router.post('/clone-database', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  const targetUrl = req.body?.target_url || process.env.TARGET_DATABASE_URL;
+  if (!targetUrl) return res.status(400).json({ error: 'target_url required in body or TARGET_DATABASE_URL env' });
+  try {
+    const { cloneDatabase } = require('../scripts/clone-render-db');
+    console.log('[clone-database] Starting clone to external target...');
+    const result = await cloneDatabase(process.env.DATABASE_URL, targetUrl);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[clone-database] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
