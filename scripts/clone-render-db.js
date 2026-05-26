@@ -121,6 +121,17 @@ async function copyTable(sourceClient, targetClient, table) {
   `, [table]);
   if (cols.rows.length === 0) return 0;
 
+  const colTypes = await sourceClient.query(`
+    SELECT column_name, data_type, udt_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = $1
+  `, [table]);
+  const jsonCols = new Set(
+    colTypes.rows
+      .filter((c) => ['json', 'jsonb'].includes(c.data_type) || ['json', 'jsonb'].includes(c.udt_name))
+      .map((c) => c.column_name)
+  );
+
   const targetCols = await targetClient.query(`
     SELECT column_name
     FROM information_schema.columns
