@@ -92,8 +92,12 @@ async function cloneSchemaFromSource(sourceClient, targetClient) {
   await cloneSequences(sourceClient, targetClient);
   const tables = await listTables(sourceClient);
   for (const table of tables) {
-    await createTableFromSource(sourceClient, targetClient, table);
-    console.log(`[clone-db] schema ${table}`);
+    try {
+      await createTableFromSource(sourceClient, targetClient, table);
+      console.log(`[clone-db] schema ${table}`);
+    } catch (err) {
+      throw new Error(`schema ${table}: ${err.message}`);
+    }
   }
   return tables;
 }
@@ -174,7 +178,11 @@ async function cloneDatabase(sourceUrl, targetUrl) {
     console.log(`[clone-db] Copying ${tables.length} tables...`);
     let total = 0;
     for (const table of tables) {
-      total += await copyTable(sourceClient, targetClient, table);
+      try {
+        total += await copyTable(sourceClient, targetClient, table);
+      } catch (err) {
+        throw new Error(`copy ${table}: ${err.message}`);
+      }
     }
     await targetClient.query('SET session_replication_role = DEFAULT');
     await targetClient.query('COMMIT');
