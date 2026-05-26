@@ -74,20 +74,6 @@ async function createTableFromSource(sourceClient, targetClient, table) {
   const createSql = ddl.rows[0]?.ddl;
   if (!createSql) throw new Error(`Could not build DDL for ${table}`);
   await targetClient.query(createSql);
-
-  const pks = await sourceClient.query(`
-    SELECT a.attname
-    FROM pg_index i
-    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-    JOIN pg_class c ON c.oid = i.indrelid
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND c.relname = $1 AND i.indisprimary
-    ORDER BY array_position(i.indkey::smallint[], a.attnum)
-  `, [table]);
-  if (pks.rows.length > 0) {
-    const pkCols = pks.rows.map((r) => `"${r.attname}"`).join(', ');
-    await targetClient.query(`ALTER TABLE "${table}" ADD PRIMARY KEY (${pkCols})`).catch(() => {});
-  }
 }
 
 async function cloneSequences(sourceClient, targetClient) {
