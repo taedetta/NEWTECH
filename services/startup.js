@@ -142,8 +142,9 @@ async function ensureDefaultAdminAccount(pool) {
   }
 }
 
-async function migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl) {
-  if (!r2BaseUrl || !polsiaApiKey) { console.log('[image-migration] Skipping — R2 env vars not set'); return; }
+async function migrateDataUriImagesToR2Inline(pool) {
+  const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
+  if (!isConfigured()) { console.log('[image-migration] Skipping — R2 env vars not set'); return; }
   try {
     const result = await pool.query("SELECT key, value FROM site_content WHERE key LIKE '%image%' AND value LIKE 'data:%'");
     if (result.rows.length === 0) { console.log('[image-migration] No data-URI images to migrate'); return; }
@@ -158,24 +159,10 @@ async function migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl) {
         const buffer = Buffer.from(base64Data, 'base64');
         const ext = mimeType.split('/')[1] || 'jpg';
         const uniqueName = `cms-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        const bnd = `----FSBoundary${Date.now()}`;
-        const body = Buffer.concat([
-          Buffer.from(`--${bnd}\r\nContent-Disposition: form-data; name="file"; filename="${uniqueName}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
-          buffer,
-          Buffer.from(`\r\n--${bnd}--\r\n`),
-        ]);
-        const uploadRes = await fetch(`${r2BaseUrl}/api/proxy/r2/upload`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${polsiaApiKey}`, 'Content-Type': `multipart/form-data; boundary=${bnd}`, 'Content-Length': String(body.length) },
-          body,
-        });
-        if (uploadRes.ok) {
-          const data = await uploadRes.json();
-          const imageUrl = data.file?.url || data.url || data.publicUrl;
-          if (imageUrl) {
-            await pool.query('UPDATE site_content SET value = $1, updated_at = NOW() WHERE key = $2', [imageUrl, row.key]);
-            console.log(`[image-migration] migrated ${row.key} to ${imageUrl}`);
-          }
+        const imageUrl = await uploadBuffer(buffer, uniqueName, { folder: 'images', contentType: mimeType });
+        if (imageUrl) {
+          await pool.query('UPDATE site_content SET value = $1, updated_at = NOW() WHERE key = $2', [imageUrl, row.key]);
+          console.log(`[image-migration] migrated ${row.key} to ${imageUrl}`);
         }
       } catch (itemErr) { console.error(`[image-migration] ${row.key} error: ${itemErr.message}`); }
     }
@@ -277,8 +264,8 @@ async function rehydrateFileOverrides(pool) {
 /**
  * Run all startup tasks. Call once from server.js after app.listen().
  */
-async function runStartup({ pool, polsiaApiKey, r2BaseUrl }) {
-  // Bootstrap schema on fresh databases (e.g. new Render Postgres)
+async function runStartup({ pool }) {
+  // Bootstrap schema on fresh databases (e.g. new Postgres instance)
   try {
     await ensureDatabaseSchema(pool);
     await ensureSchemaPatches(pool);
@@ -296,7 +283,7 @@ async function runStartup({ pool, polsiaApiKey, r2BaseUrl }) {
     console.error('[file-overrides] startup error:', err.message);
   }
 
-  migrateDataUriImagesToR2Inline(pool, polsiaApiKey, r2BaseUrl).catch(err => console.error('[image-migration] startup error:', err.message));
+  migrateDataUriImagesToR2Inline(pool).catch(err => console.error('[image-migration] startup error:', err.message));
   ensureTrainingPrograms(pool).catch(err => console.error('[training-seed] startup error:', err.message));
   startBackup(pool);
   runStartupVerification(process.env.PORT || 3000).then(({ passed, failed, criticalFailures }) => {

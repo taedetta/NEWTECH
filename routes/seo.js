@@ -133,7 +133,6 @@ router.get('/sitemap.xml', (req, res) => {
 });
 
 router.get('/', async (req, res) => {
-  const slug = process.env.POLSIA_ANALYTICS_SLUG || '';
   const template = getHtmlTemplate();
 
   if (!template) {
@@ -154,7 +153,7 @@ router.get('/', async (req, res) => {
     console.error('CMS data fetch for SSR:', err.message);
   }
 
-  let html = template.replace('__POLSIA_SLUG__', slug);
+  let html = template;
 
   function ssrImageUrl(key, fallback) {
     const val = cmsData[key];

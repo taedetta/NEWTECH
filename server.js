@@ -63,9 +63,10 @@ const discrepanciesRoutes = require('./routes/discrepancies');
 const { router: healthRoutes } = require('./routes/health');
 const systemHealthRoutes = require('./routes/system-health');
 const logoRoutes = require('./routes/logo');
-// backup-service + export scheduler
+// backup-service + export scheduler + preflight reminders
 const { runBackup, startBackupScheduler } = require('./backup-service');
 const { startExportScheduler } = require('./export-service');
+const { startPreflightReminderScheduler } = require('./lib/preflight-reminders');
 global.runBackup = runBackup;
 const { runStartup } = require('./services/startup');
 // startup-verification.js missing — unused in server.js
@@ -94,7 +95,7 @@ app.use('/health', healthRoutes);
 // ── CORS / Response Headers ───────────────────────────────────────────────────
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && (origin.endsWith('.newtechaviation.com') || origin.includes('localhost') || origin.includes('polsia.app'))) {
+  if (origin && (origin.endsWith('.newtechaviation.com') || origin.includes('localhost') || origin.includes('railway.app'))) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -154,12 +155,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
-// ── Logo Generation (admin API, secured by POLSIA_API_KEY) ────────────────────
-const POLSIA_API_KEY = process.env.POLSIA_API_KEY || '';
-const POLSIA_R2_BASE_URL = process.env.POLSIA_R2_BASE_URL || 'https://polsia.com';
-
-// Mounted via logoRoutes at /api/admin/generate-logo (see route mounts below)
-
 // ── Server Listen ───────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   const appEnv = process.env.APP_ENV || 'production';
@@ -167,10 +162,11 @@ app.listen(PORT, async () => {
   console.log(`FlightSlate running on port ${PORT} (${nodeEnv})`);
 
   // Startup tasks — await so file-override rehydration completes before serving
-  await runStartup({ pool, polsiaApiKey: POLSIA_API_KEY, r2BaseUrl: POLSIA_R2_BASE_URL });
+  await runStartup({ pool });
 
   startBackupScheduler(pool);
   startExportScheduler(pool);
+  startPreflightReminderScheduler(pool);
 
   // Auto backup on startup (fires after 10s delay)
   if (process.env.AUTO_BACKUP_ON_START) {

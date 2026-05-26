@@ -592,8 +592,8 @@ Log in to New Tech Aviation to renew or view the endorsement details.
   }
 }
 
-// Schedule daily at app startup (runs every 24h) — only when in-process crons are enabled
-if (process.env.POLSIA_IN_PROCESS_CRONS_ENABLED === 'true') {
+// Schedule daily at app startup (runs every 24h) unless disabled
+if (process.env.DISABLE_IN_PROCESS_CRONS !== 'true') {
   setTimeout(() => {
     sendEndorsementExpiryAlerts();
     setInterval(sendEndorsementExpiryAlerts, 24 * 60 * 60 * 1000);

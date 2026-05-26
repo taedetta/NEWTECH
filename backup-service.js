@@ -15,14 +15,11 @@
 
 const PDFDocument = require('pdfkit');
 const { PassThrough } = require('stream');
-const nodeFetch = require('node-fetch');
-const FormData = require('form-data');
+const { uploadBuffer, isConfigured: isR2Configured } = require('./lib/r2-storage');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
 
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
-const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-const R2_UPLOAD_ENDPOINT = 'https://polsia.com/api/proxy/r2/upload';
 
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
@@ -622,9 +619,10 @@ async function buildFlightLogsPdf(pool, generatedAt) {
       fl.tach_delta,
       fl.dual_instruction_hours,
       fl.booking_type,
-      fl.lesson_type,
+      COALESCE(b.lesson_type, fl.booking_type) AS lesson_type,
       fl.notes
     FROM flight_logs fl
+    LEFT JOIN bookings b ON b.id = fl.booking_id
     LEFT JOIN users u ON fl.student_id = u.id
     LEFT JOIN users i ON fl.instructor_id = i.id
     LEFT JOIN aircraft a ON fl.aircraft_id = a.id
@@ -955,38 +953,11 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
 // ── R2 upload helper ──────────────────────────────────────────────────────────
 
 async function uploadPdfToR2(pdfBuffer, filename) {
-  if (!POLSIA_API_KEY) {
-    console.error('[backup] POLSIA_API_KEY not set — cannot upload to R2');
+  if (!isR2Configured()) {
+    console.error('[backup] R2 not configured — set R2_* env vars');
     return null;
   }
-
-  try {
-    const formData = new FormData();
-    formData.append('file', pdfBuffer, {
-      filename,
-      contentType: 'application/pdf',
-    });
-
-    const resp = await nodeFetch(R2_UPLOAD_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${POLSIA_API_KEY}`,
-        ...formData.getHeaders(),
-      },
-      body: formData,
-    });
-
-    const result = await resp.json();
-    if (!result.success) {
-      console.error(`[backup] R2 upload failed for ${filename}:`, result.error || result);
-      return null;
-    }
-    console.log(`[backup] Uploaded ${filename}: ${result.file.url}`);
-    return result.file.url;
-  } catch (err) {
-    console.error(`[backup] R2 upload error for ${filename}:`, err.message);
-    return null;
-  }
+  return uploadBuffer(pdfBuffer, filename, { folder: 'backups', contentType: 'application/pdf' });
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────────

@@ -2084,11 +2084,11 @@ __CMS_INJECT__
                 <p id="cms-contact-p">Whether you're dreaming of your first flight or ready to add a new rating, we'd love to hear from you. Reach out to schedule a discovery flight or learn more about our programs.</p>
                 <div class="cta-actions">
                     <a href="/book-discovery-flight" class="btn btn-primary">Book a Discovery Flight →</a>
-                    <a id="cms-contact-email-link" href="mailto:flightslate@polsia.app?subject=Interested%20in%20Flight%20Training" class="btn btn-outline">Contact Us</a>
+                    <a id="cms-contact-email-link" href="mailto:aviationnewtech@gmail.com?subject=Interested%20in%20Flight%20Training" class="btn btn-outline">Contact Us</a>
                 </div>
                 <div class="cta-contact">
                     <div class="cta-contact-item">
-                        ✉️ <strong id="cms-contact-email">flightslate@polsia.app</strong>
+                        ✉️ <strong id="cms-contact-email">aviationnewtech@gmail.com</strong>
                     </div>
                     <div class="cta-contact-item" id="cms-contact-phone-wrap" style="display:none">
                         📞 <a id="cms-contact-phone-link" href="tel:" style="color:inherit;text-decoration:none"><strong id="cms-contact-phone"></strong></a>
@@ -2838,23 +2838,6 @@ __CMS_INJECT__
                 btn.style.background = '';
             });
         };
-    })();
-    </script>
-
-    <!-- Polsia Analytics -->
-    <script>
-    (function() {
-        var slug = '__POLSIA_SLUG__';
-        if (!slug || slug === '__POLS' + 'IA_SLUG__') return;
-        var vid = localStorage.getItem('polsia_vid');
-        if (!vid) {
-            vid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-                var r = Math.random() * 16 | 0;
-                return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-            });
-            localStorage.setItem('polsia_vid', vid);
-        }
-        new Image().src = 'https://polsia.com/api/beacon/pixel?s=' + encodeURIComponent(slug) + '&v=' + encodeURIComponent(vid);
     })();
     </script>
 </body>

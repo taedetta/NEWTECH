@@ -34,27 +34,9 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-const ADMIN_NOTIFY_EMAIL = 'new-tech-aviation@polsia.app';
-const APP_URL = process.env.APP_URL || 'https://new-tech-aviation.polsia.app';
+const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || process.env.DATA_BACKUP_EMAIL || 'aviationnewtech@gmail.com';
+const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 const LOGO_URL = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
-const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-
-/** Register a contact with the email proxy so confirmations aren't rate-limited */
-async function registerContact(email, name) {
-  if (!POLSIA_API_KEY) return;
-  try {
-    await fetch('https://polsia.com/api/proxy/email/contacts', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${POLSIA_API_KEY}`,
-      },
-      body: JSON.stringify({ email, name, source: 'contact_form' }),
-    });
-  } catch (_) {
-    // Non-fatal — email still sent
-  }
-}
 
 /** HTML for the admin notification email */
 function adminNotificationHtml(lead) {
@@ -162,9 +144,8 @@ router.post('/', async (req, res) => {
     return res.status(500).json({ error: 'Could not save your request. Please try again.' });
   }
 
-  // Fire-and-forget: register contact, notify admin, confirm to lead
+  // Fire-and-forget: notify admin, confirm to lead
   Promise.allSettled([
-    registerContact(lead.email, lead.name),
     sendEmail(
       ADMIN_NOTIFY_EMAIL,
       `New Discovery Flight Request — ${lead.name}`,

@@ -16,6 +16,7 @@
     "test:pipeline": "node scripts/test-complete-pipeline.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1053.0",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
@@ -29,7 +30,7 @@
     "pdfkit": "^0.15.0",
     "pg": "^8.11.3"
   },
-  "description": "A minimal Express.js template with PostgreSQL connection, designed for Polsia infrastructure provisioning.",
+  "description": "Flight school management platform — Express.js + PostgreSQL + vanilla JS frontend.",
   "keywords": [],
   "author": "",
   "license": "ISC",

@@ -117,9 +117,12 @@ APP_ENV=production
 APP_URL=http://localhost:3000
 JWT_SECRET=${jwt}
 
-# Optional — image uploads (live site uses R2 URLs in CMS already)
-# POLSIA_R2_BASE_URL=
-# POLSIA_API_KEY=
+# Optional — Cloudflare R2 (backups, exports, CMS image uploads)
+# R2_ACCOUNT_ID=
+# R2_ACCESS_KEY_ID=
+# R2_SECRET_ACCESS_KEY=
+# R2_BUCKET=
+# R2_PUBLIC_URL=https://pub-xxx.r2.dev
 `;
   fs.writeFileSync(ENV_FILE, content);
   console.log(`Wrote ${ENV_FILE}`);

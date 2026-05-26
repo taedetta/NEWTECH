@@ -2,12 +2,8 @@
 // Owns: nightly 11 PM CT CSV export — 9 topic-specific CSVs uploaded to R2, emailed as download links
 // Does not own: PDF backup (backup-service.js), auth, booking logic, aircraft management
 
-const nodeFetch = require('node-fetch');
-const FormData = require('form-data');
+const { uploadBuffer, isConfigured: isR2Configured } = require('./lib/r2-storage');
 const { sendEmail } = require('./email-templates');
-
-const POLSIA_API_KEY = process.env.POLSIA_API_KEY;
-const R2_UPLOAD_ENDPOINT = 'https://polsia.com/api/proxy/r2/upload';
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
 
 // ── Timezone helpers ───────────────────────────────────────────────────────────
@@ -312,26 +308,17 @@ async function genStudentProgress(pool) {
 // ── R2 upload ──────────────────────────────────────────────────────────────────
 
 async function uploadCsvToR2(csvBuffer, filename) {
-  if (!POLSIA_API_KEY) { console.error('[export] POLSIA_API_KEY not set'); return null; }
-  try {
-    const formData = new FormData();
-    formData.append('file', csvBuffer, { filename, contentType: 'text/csv' });
-    const resp = await nodeFetch(R2_UPLOAD_ENDPOINT, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${POLSIA_API_KEY}`, ...formData.getHeaders() },
-      body: formData,
-    });
-    const result = await resp.json();
-    if (!result.success) { console.error(`[export] R2 upload failed for ${filename}:`, result); return null; }
-    console.log(`[export] Uploaded ${filename}: ${result.file.url}`);
-    return result.file.url;
-  } catch (err) { console.error(`[export] R2 error for ${filename}:`, err.message); return null; }
+  if (!isR2Configured()) { console.error('[export] R2 not configured — set R2_* env vars'); return null; }
+  return uploadBuffer(csvBuffer, filename, { folder: 'exports', contentType: 'text/csv' });
 }
 
 // ── Email ──────────────────────────────────────────────────────────────────────
 
 async function sendExportEmail(dateLabel, files) {
-  if (!POLSIA_API_KEY) { console.error('[export] POLSIA_API_KEY not set'); return; }
+  if (!process.env.BREVO_API_KEY && !process.env.SMTP_HOST) {
+    console.error('[export] Email not configured — set BREVO_API_KEY or SMTP');
+    return;
+  }
   const subject = `New Tech Aviation — Complete Records Export — ${dateLabel}`;
   const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
 
