@@ -90,9 +90,20 @@ async function createTableFromSource(sourceClient, targetClient, table) {
   }
 }
 
+async function cloneSequences(sourceClient, targetClient) {
+  const seqs = await sourceClient.query(`
+    SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'
+  `);
+  for (const row of seqs.rows) {
+    await targetClient.query(`CREATE SEQUENCE IF NOT EXISTS "${row.sequencename}"`);
+  }
+  console.log(`[clone-db] ${seqs.rows.length} sequences`);
+}
+
 async function cloneSchemaFromSource(sourceClient, targetClient) {
   await resetTargetSchema(targetClient);
   await cloneEnums(sourceClient, targetClient);
+  await cloneSequences(sourceClient, targetClient);
   const tables = await listTables(sourceClient);
   for (const table of tables) {
     await createTableFromSource(sourceClient, targetClient, table);
