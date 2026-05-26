@@ -4,14 +4,28 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 
+function parseDbUrl(url) {
+  const normalized = url.replace(/^postgres(ql)?:\/\//, 'http://');
+  const u = new URL(normalized);
+  return {
+    host: u.hostname,
+    port: Number(u.port || 5432),
+    user: decodeURIComponent(u.username),
+    password: decodeURIComponent(u.password),
+    database: u.pathname.replace(/^\//, '') || 'postgres',
+  };
+}
+
 function makePool(url, label) {
   if (!url) throw new Error(`${label} database URL required`);
   const isLocal = /localhost|127\.0\.0\.1/i.test(url);
+  const isRailway = /\.rlwy\.net|railway\.internal/i.test(url);
+  const cfg = parseDbUrl(url);
   return new Pool({
-    connectionString: url,
-    ssl: isLocal ? false : { rejectUnauthorized: false },
+    ...cfg,
+    ssl: isLocal || isRailway ? false : { rejectUnauthorized: false },
     max: 5,
-    connectionTimeoutMillis: 30000,
+    connectionTimeoutMillis: 60000,
   });
 }
 
