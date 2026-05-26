@@ -596,6 +596,18 @@ router.post('/reset-reminders', authenticateToken, requireRole('owner', 'admin')
 });
 
 // ─── ONE-TIME: Clone DB to external target (e.g. Railway Postgres) ───
+router.get('/debug-schema/:table', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
+      [req.params.table]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/clone-database', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const targetUrl = req.body?.target_url || process.env.TARGET_DATABASE_URL;
   if (!targetUrl) return res.status(400).json({ error: 'target_url required in body or TARGET_DATABASE_URL env' });
