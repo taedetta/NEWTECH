@@ -131,7 +131,18 @@ async function copyTable(sourceClient, targetClient, table) {
   `, [table]);
   if (cols.rows.length === 0) return 0;
 
-  const colNames = cols.rows.map((c) => c.column_name);
+  const targetCols = await targetClient.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = $1
+  `, [table]);
+  const targetSet = new Set(targetCols.rows.map((c) => c.column_name));
+  const colNames = cols.rows.map((c) => c.column_name).filter((c) => targetSet.has(c));
+  const skipped = cols.rows.map((c) => c.column_name).filter((c) => !targetSet.has(c));
+  if (skipped.length) {
+    console.log(`[clone-db] ${table}: skipping columns missing on target: ${skipped.join(', ')}`);
+  }
+  if (colNames.length === 0) return 0;
   const colList = colNames.map((c) => `"${c}"`).join(', ');
   const rows = await sourceClient.query(`SELECT ${colList} FROM "${table}"`);
   if (rows.rows.length === 0) {
