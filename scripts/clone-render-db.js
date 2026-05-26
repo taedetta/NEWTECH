@@ -232,6 +232,8 @@ async function cloneDatabase(sourceUrl, targetUrl) {
     }
     await targetClient.query('SET session_replication_role = DEFAULT');
     await targetClient.query('COMMIT');
+    await fixAllSequences(targetClient);
+    await fixCriticalConstraints(targetClient);
     console.log(`[clone-db] Done — ${total} rows`);
     return { tables: tables.length, rows: total };
   } catch (err) {

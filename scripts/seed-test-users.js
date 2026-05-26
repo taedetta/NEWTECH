@@ -44,10 +44,11 @@ async function upsertUser(pool, user, hash) {
       [hash, user.name, user.role, !!user.is_instructor, id]
     );
   } else {
+    const next = await pool.query('SELECT COALESCE(MAX(id), 0) + 1 AS nid FROM users');
     const ins = await pool.query(
-      `INSERT INTO users (email, name, password_hash, role, is_instructor, approval_status)
-       VALUES ($1, $2, $3, $4, $5, 'approved') RETURNING id`,
-      [user.email.toLowerCase(), user.name, hash, user.role, !!user.is_instructor]
+      `INSERT INTO users (id, email, name, password_hash, role, is_instructor, approval_status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'approved') RETURNING id`,
+      [next.rows[0].nid, user.email.toLowerCase(), user.name, hash, user.role, !!user.is_instructor]
     );
     id = ins.rows[0].id;
   }
@@ -80,10 +81,24 @@ async function ensureSampleAircraft(pool) {
   );
 }
 
+async function ensureUserSequence(pool) {
+  await pool.query(`
+    SELECT setval(
+      pg_get_serial_sequence('users', 'id'),
+      COALESCE((SELECT MAX(id) FROM users), 1)
+    )
+  `).catch(() => {});
+}
+
 async function main() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: /\.rlwy\.net|railway\.internal/i.test(process.env.DATABASE_URL || '') ? false : undefined,
+  });
   const hash = await bcrypt.hash(PASSWORD, 12);
   try {
+    await pool.query(`DELETE FROM users WHERE email LIKE '%@test.local'`);
+    await ensureUserSequence(pool);
     for (const user of TEST_USERS) {
       const id = await upsertUser(pool, user, hash);
       console.log(`Seeded ${user.role}: ${user.email} (id=${id})`);
