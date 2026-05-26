@@ -12,9 +12,12 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
+const dbUrl = process.env.DATABASE_URL || '';
+const isLocal = /localhost|127\.0\.0\.1/i.test(dbUrl);
+const isRailwayInternal = /\.railway\.internal/i.test(dbUrl);
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
+  connectionString: dbUrl,
+  ssl: isLocal || isRailwayInternal ? false : { rejectUnauthorized: false },
   max: 15,
   connectionTimeoutMillis: 20000,
   idleTimeoutMillis: 30000,
