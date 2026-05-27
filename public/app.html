@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <!-- Cache-busting: server injects app-version meta near </head>; client checks on DOMContentLoaded and reloads if version changed -->
   <script>document.addEventListener('DOMContentLoaded',function(){var mv=document.querySelector('meta[name="app-version"]');if(mv){var v=mv.getAttribute('content'),ls=localStorage.getItem('app_version');if(ls&&ls!==v){localStorage.setItem('app_version',v);location.reload(true);}else{localStorage.setItem('app_version',v);}}});</script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -58,8 +58,9 @@
       --radius-xl: 18px;
       --transition: 0.2s ease;
     }
-    body { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--navy); color: var(--white); line-height: 1.6; min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
-    html { overflow-x: hidden; }
+    html { overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--navy); color: var(--white); line-height: 1.6; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+    img, video, svg { max-width: 100%; height: auto; }
     h1,h2,h3,h4,h5 { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.01em; }
     a { color: var(--sky); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -334,7 +335,9 @@
 
     /* ─── MODAL ─── */
     .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 2rem; }
-    .modal { background: var(--dark-blue); border: 1px solid var(--border-light); border-radius: var(--radius-xl); padding: 2rem; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+    .modal { background: var(--dark-blue); border: 1px solid var(--border-light); border-radius: var(--radius-xl); padding: 2rem; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); -webkit-overflow-scrolling: touch; }
+    .modal-md { max-width: 520px; }
+    .modal-lg { max-width: 640px; }
     .modal h3 { font-size: 1.15rem; margin-bottom: 1.25rem; color: var(--white); }
     .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.5rem; }
     .modal-actions .btn { width: auto; }
@@ -1302,6 +1305,140 @@
     .flight-type-checks { display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.35rem; }
     .flight-type-check { display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;color:var(--gray-300);cursor:pointer;background:var(--slate);border-radius:5px;padding:0.22rem 0.55rem; }
     .flight-type-label { font-size:0.75rem;color:var(--gray-400);font-weight:600;text-transform:uppercase;letter-spacing:0.5px; }
+
+    /* ─── RESPONSIVE UTILITIES (all pages, tabs, modals) ─── */
+    .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .lead-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.25rem; padding: 1rem; background: var(--dark-blue-2); border-radius: 8px; border: 1px solid var(--border); }
+    .lead-detail-field-label { font-size: 0.68rem; color: var(--gray-500); text-transform: uppercase; margin-bottom: 0.25rem; }
+    .lead-detail-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .leads-toolbar { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; }
+    .table-scroll-hint { display: none; font-size: 0.72rem; color: var(--gray-500); margin-bottom: 0.5rem; }
+    .scroll-x-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+    .scroll-x-wrap .data-table { min-width: 640px; }
+    #page-leads .scroll-x-wrap .data-table { min-width: 720px; }
+
+    /* Touch-friendly controls everywhere */
+    .btn, .auth-tab, .portal-tab, .maint-tab, .editor-tab-btn, .prog-tab,
+    .mobile-toggle, .auth-modal-close, .modal-close, button, select, input[type="submit"] {
+      touch-action: manipulation;
+    }
+    .btn { min-height: 44px; }
+    .btn-sm { min-height: 36px; }
+
+    /* Auth modal + full-page auth (sign in, register, forgot, reset) */
+    @media (max-width: 768px) {
+      .auth-modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+        padding-bottom: env(safe-area-inset-bottom, 0);
+      }
+      .auth-modal {
+        max-width: 100% !important;
+        width: 100%;
+        border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+        max-height: min(92vh, 92dvh);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .auth-modal-header { padding: 1.25rem 1.25rem 0; }
+      .auth-tabs { margin: 1rem 1rem 0; }
+      .auth-tab { padding: 0.7rem 0.35rem; font-size: 0.76rem; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+      .auth-modal-body { padding: 1.25rem 1.25rem max(1.5rem, env(safe-area-inset-bottom)); }
+      .auth-modal-body h2 { font-size: 1.15rem; }
+      .auth-modal-body .btn { width: 100%; min-height: 48px; }
+      .auth-container { padding: 1rem; padding-top: max(1.5rem, env(safe-area-inset-top)); align-items: flex-start; min-height: 100dvh; }
+      .auth-card { max-width: 100%; padding: 1.75rem 1.25rem; margin-top: 0.5rem; }
+      .auth-card .btn { width: 100%; min-height: 48px; }
+      .form-row-2 { grid-template-columns: 1fr; }
+      .lead-detail-grid { grid-template-columns: 1fr; }
+      .lead-detail-header .btn { width: 100%; }
+      .leads-toolbar { flex-direction: column; align-items: stretch; }
+      .leads-toolbar select, .leads-toolbar .btn { width: 100%; max-width: 100% !important; min-height: 44px; }
+      #page-leads .page-header { flex-direction: column; align-items: stretch; }
+      #page-leads .page-header .btn { width: 100%; justify-content: center; min-height: 44px; }
+      /* Hide crowded lead columns on phones — tap row for full detail */
+      #page-leads .data-table th:nth-child(4),
+      #page-leads .data-table td:nth-child(4),
+      #page-leads .data-table th:nth-child(6),
+      #page-leads .data-table td:nth-child(6),
+      #page-leads .data-table th:nth-child(7),
+      #page-leads .data-table td:nth-child(7) { display: none; }
+      .table-scroll-hint { display: block; }
+      /* All modals: full-width bottom sheet on mobile */
+      .modal-overlay .modal {
+        max-width: 100% !important;
+        width: 100% !important;
+        max-height: min(88vh, 88dvh) !important;
+      }
+      .modal-overlay .modal[style*="width:95%"] { width: 100% !important; }
+      /* Filter / toolbar rows */
+      .page-toolbar, .filter-bar, .logbook-filters, .squawk-filter-bar,
+      .calendar-header, .enroll-form-inline, .rate-input-wrap {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .calendar-header .btn { min-height: 44px; }
+      /* File browser stacks on tablet/phone */
+      .file-browser { grid-template-columns: 1fr !important; }
+      .file-tree { max-height: 160px; border-right: none !important; border-bottom: 1px solid var(--border); }
+      .code-editor-panel { min-height: 280px; }
+      /* Booking form rows */
+      .booking-form-row, .bf-row { flex-direction: column !important; }
+      .booking-form-row .form-group, .bf-row .form-group { width: 100% !important; min-width: unset !important; }
+      /* Wide inline grids in modals */
+      [style*="grid-template-columns: 1fr 1fr"],
+      [style*="grid-template-columns:1fr 1fr"] {
+        grid-template-columns: 1fr !important;
+      }
+      /* Progress / training layouts */
+      .maneuver-grid, .stage-maneuvers { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .at-risk-filters { flex-direction: column; align-items: stretch; }
+      .at-risk-filters select, .at-risk-filters .btn { width: 100%; }
+      /* Dashboard upcoming list */
+      .upcoming-item { flex-wrap: wrap; gap: 0.5rem; }
+      /* Permissions table hint */
+      .people-table-wrap::before {
+        content: 'Swipe sideways to see more →';
+        display: block;
+        font-size: 0.72rem;
+        color: var(--gray-500);
+        margin-bottom: 0.5rem;
+        padding: 0 0.25rem;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .auth-tab { font-size: 0.72rem; padding: 0.65rem 0.25rem; }
+      .auth-modal-logo { height: 38px; }
+      .stat-grid { grid-template-columns: 1fr; }
+      .readiness-grid, .cohort-grid { grid-template-columns: 1fr; }
+      .flog-card-metrics { grid-template-columns: 1fr 1fr; }
+      .portal-tabs { margin-left: -0.25rem; margin-right: -0.25rem; }
+      .maint-tabs { width: 100%; }
+      .editor-tab-btn { font-size: 0.72rem; padding: 0.45rem 0.65rem; }
+      .hours-summary { grid-template-columns: 1fr; }
+      .insp-grid { grid-template-columns: 1fr; }
+      #lead-detail-status { max-width: 100% !important; width: 100%; min-height: 44px; }
+      .data-table th, .data-table td { word-break: break-word; }
+      .data-table td a { word-break: break-all; }
+    }
+
+    /* Tablet landscape / small laptop */
+    @media (min-width: 769px) and (max-width: 1024px) {
+      .sidebar { width: 220px; }
+      .main-content { margin-left: 220px; padding: 1.5rem 1.75rem; }
+      .stat-grid { grid-template-columns: repeat(2, 1fr); }
+      .editor-layout { grid-template-columns: 1fr; }
+      .editor-preview-panel { height: 340px; }
+    }
+
+    /* Prevent iOS input zoom — 16px minimum on touch devices */
+    @media (max-width: 768px) {
+      input, select, textarea, .input-field {
+        font-size: 16px !important;
+      }
+      .form-group input, .form-group select, .form-group textarea { font-size: 16px !important; }
+    }
 
   </style>
 </head>
@@ -3302,7 +3439,7 @@
             <h1>&#128231; Discovery Flight Leads</h1>
             <button class="btn btn-primary btn-sm" onclick="openAddLeadModal()">+ Add Lead</button>
           </div>
-          <div style="display:flex;gap:0.75rem;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap;">
+          <div class="leads-toolbar">
             <select id="leads-status-filter" class="input-field" style="max-width:200px;padding:0.5rem 0.85rem;font-size:0.85rem" onchange="loadLeads()">
               <option value="all">All Leads</option>
               <option value="new">New</option>
@@ -3319,7 +3456,8 @@
             <p>Discovery flight leads will appear here when people submit the form.</p>
           </div>
           <div id="leads-list">
-            <div class="table-card">
+            <p class="table-scroll-hint">Swipe sideways to see all columns, or tap a row for full details.</p>
+            <div class="table-card scroll-x-wrap">
               <table class="data-table">
                 <thead>
                   <tr>
@@ -3347,7 +3485,7 @@
 
   <!-- ─── ADD LEAD MODAL ─── -->
   <div id="add-lead-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeAddLeadModal()">
-    <div class="modal" style="max-width:520px">
+    <div class="modal modal-md">
       <h3>Add Lead Manually</h3>
       <div id="add-lead-error" class="error-msg hidden"></div>
       <form id="add-lead-form" onsubmit="submitAddLead(event)">
@@ -3355,7 +3493,7 @@
           <label>Full Name *</label>
           <input type="text" id="add-lead-name" required placeholder="Jane Smith">
         </div>
-        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div class="form-row-2">
           <div class="form-group">
             <label>Email *</label>
             <input type="email" id="add-lead-email" required placeholder="jane@example.com">
@@ -3365,7 +3503,7 @@
             <input type="tel" id="add-lead-phone" placeholder="(555) 000-0000">
           </div>
         </div>
-        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div class="form-row-2">
           <div class="form-group">
             <label>Program Interest</label>
             <select id="add-lead-program">
@@ -3403,29 +3541,29 @@
 
   <!-- ─── LEAD DETAIL MODAL ─── -->
   <div id="lead-detail-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeLeadDetailModal()">
-    <div class="modal" style="max-width:640px;max-height:90vh;overflow-y:auto">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem">
+    <div class="modal modal-lg">
+      <div class="lead-detail-header">
         <div>
           <h3 id="lead-detail-name" style="margin-bottom:0.35rem"></h3>
           <div id="lead-detail-status-wrap"></div>
         </div>
         <button type="button" class="btn btn-secondary btn-sm" onclick="closeLeadDetailModal()">Close</button>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1.25rem;padding:1rem;background:var(--dark-blue-2);border-radius:8px;border:1px solid var(--border)">
+      <div class="lead-detail-grid">
         <div>
-          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Email</div>
+          <div class="lead-detail-field-label">Email</div>
           <a id="lead-detail-email" href="#" style="color:var(--sky);font-weight:600;word-break:break-all"></a>
         </div>
         <div>
-          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Phone</div>
+          <div class="lead-detail-field-label">Phone</div>
           <a id="lead-detail-phone" href="#" style="color:var(--sky);font-weight:600"></a>
         </div>
         <div>
-          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Program</div>
+          <div class="lead-detail-field-label">Program</div>
           <div id="lead-detail-program" style="color:var(--gray-200)"></div>
         </div>
         <div>
-          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Source</div>
+          <div class="lead-detail-field-label">Source</div>
           <div id="lead-detail-source" style="color:var(--gray-400);font-size:0.85rem"></div>
         </div>
       </div>

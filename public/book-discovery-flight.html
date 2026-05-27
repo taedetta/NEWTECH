@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Book a Discovery Flight | New Tech Aviation</title>
   <meta name="description" content="Book a no-obligation 30-minute discovery flight with New Tech Aviation. All experience levels welcome — take the controls with a certified flight instructor by your side.">
   <meta name="robots" content="index, follow">
@@ -386,11 +386,28 @@
       background: var(--navy);
       color: rgba(255,255,255,0.5);
       text-align: center;
-      padding: 24px;
+      padding: max(24px, env(safe-area-inset-bottom)) 24px;
       font-size: 13px;
     }
     footer a { color: rgba(255,255,255,0.7); text-decoration: none; }
     footer a:hover { color: var(--white); }
+
+    /* ── MOBILE POLISH ── */
+    html { overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+    @media (max-width: 768px) {
+      .page-content { padding: 32px 16px 60px; gap: 24px; }
+      .form-card { padding: 24px 20px; }
+      .form-card h2 { font-size: 1.25rem; }
+      .hero-section { padding: 48px 16px 32px; }
+      .hero-section h1 { font-size: 1.75rem; }
+      input, select, textarea { font-size: 16px !important; }
+      .btn-submit { min-height: 48px; }
+    }
+    @media (max-width: 480px) {
+      .page-content { padding: 24px 12px 48px; }
+      .form-card { padding: 20px 16px; }
+      .sidebar-card { padding: 20px 16px; }
+    }
   </style>
 </head>
 <body>

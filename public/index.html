@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>New Tech Aviation | Flight School In New River Valley, Virginia — Learn to Fly at KPSK</title>
     <link rel="icon" type="image/png" sizes="32x32" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png?v=2">
     <link rel="apple-touch-icon" sizes="180x180" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png?v=2">
@@ -1376,6 +1376,22 @@
         .journey-submit:hover { background: #B45309; transform: translateY(-1px); }
         .journey-form-note { margin-top: 0.75rem; font-size: 0.75rem; color: #475569; text-align: center; }
         @media (max-width: 768px) { .journey-grid { grid-template-columns: 1fr; } .journey-right { order: -1; } .journey-form-row { grid-template-columns: 1fr; } }
+
+        /* Global mobile polish */
+        html { overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+        body { overflow-x: hidden; }
+        img { max-width: 100%; height: auto; }
+        @media (max-width: 768px) {
+            input, select, textarea, .journey-input { font-size: 16px !important; }
+            .journey-input.journey-textarea { min-height: 100px; }
+            .journey-submit { width: 100%; min-height: 48px; }
+            .nav-inner { padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); }
+            .mobile-nav { padding-bottom: env(safe-area-inset-bottom); }
+        }
+        @media (max-width: 480px) {
+            .about-stats { grid-template-columns: 1fr; gap: 1rem; }
+            .about-stats > div { text-align: center; }
+        }
     </style>
     <script type="application/ld+json">
     {

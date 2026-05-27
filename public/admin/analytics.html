@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Analytics — FlightSlate Admin</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -161,7 +161,21 @@
     }
 
     @media (max-width: 768px) {
+      body { padding: 1rem; padding-top: max(1rem, env(safe-area-inset-top)); overflow-x: hidden; }
+      .header { flex-direction: column; align-items: flex-start; gap: 0.75rem; margin-bottom: 1.5rem; }
+      .header h1 { font-size: 1.25rem; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+      .stat-card { padding: 1rem; }
+      .stat-card .stat-value { font-size: 1.35rem; }
       .tables-row { grid-template-columns: 1fr; }
+      .card { padding: 1rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      table { min-width: 280px; }
+      .path-cell { max-width: 140px; }
+      .chart-bars { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    }
+    @media (max-width: 480px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      body { padding: 0.75rem; }
     }
 
     table {
