@@ -69,6 +69,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version VARCHAR(32);
 -- ── Leads: program interest + activity history ──
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS program_interest VARCHAR(100);
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS source_label VARCHAR(100);
+-- Some legacy production databases created this table without a primary key.
+-- The lead_activity FK below needs id to be backed by a unique index.
+CREATE UNIQUE INDEX IF NOT EXISTS discovery_flight_leads_id_unique_idx ON discovery_flight_leads(id);
 
 CREATE TABLE IF NOT EXISTS lead_activity (
   id SERIAL PRIMARY KEY,
@@ -100,6 +103,10 @@ WHERE role = 'instructor'
   AND COALESCE(is_instructor, FALSE) = FALSE;
 
 -- ── Seed default at-risk thresholds if missing ──
+-- Legacy databases may have created school_settings without the primary key
+-- that bootstrap-schema.sql now defines.
+CREATE UNIQUE INDEX IF NOT EXISTS school_settings_key_unique_idx ON school_settings(key);
+
 INSERT INTO school_settings (key, value, updated_at) VALUES
   ('at_risk_low_days', '14', NOW()),
   ('at_risk_medium_days', '21', NOW()),
