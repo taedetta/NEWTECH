@@ -501,6 +501,24 @@
     .msg-compose textarea { flex: 1; resize: vertical; min-height: 44px; }
     @media (max-width: 768px) { .messages-layout { grid-template-columns: 1fr; } }
 
+    /* Staging environment banner */
+    #staging-env-banner {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 99999;
+      background: linear-gradient(90deg, #b45309, #d97706);
+      color: #fff;
+      text-align: center;
+      padding: 0.45rem 1rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    body.staging-env { padding-top: 2rem; }
+    body.staging-env .sidebar { top: 2rem; height: calc(100vh - 2rem); }
+
     @media (max-width: 480px) {
       .main-content { padding: 0.875rem; padding-top: 4rem; }
       .mobile-toggle { top: 0.75rem; left: 0.75rem; }
@@ -1623,6 +1641,8 @@
 
   
   <!-- ─── APP ─── -->
+  <div id="staging-env-banner">⚠ STAGING — test environment only. Changes here do not affect the live site.</div>
+
   <div id="app-screen" class="hidden">
     <button class="mobile-toggle" onclick="toggleSidebar()">&#9776;</button>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -12814,8 +12834,19 @@ async function confirmDeleteGroundSession(id, dateStr) {
 }
 
 // ─── INIT ───
-// (modal HTML injected below in body)
+async function showStagingBannerIfNeeded() {
+  try {
+    const cfg = await fetch('/api/config').then((r) => r.json());
+    if (cfg.isStaging) {
+      const el = document.getElementById('staging-env-banner');
+      if (el) el.style.display = 'block';
+      document.body.classList.add('staging-env');
+    }
+  } catch (_) { /* optional */ }
+}
+
 async function init() {
+  showStagingBannerIfNeeded();
   // If a password-reset token is present in the URL, the checkResetToken()
   // IIFE already called showScreen('reset'). Don't override it.
   if (resetToken) return;
