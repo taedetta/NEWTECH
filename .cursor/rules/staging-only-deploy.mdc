@@ -1,0 +1,35 @@
+---
+description: Deploy only to staging unless user explicitly approves production
+alwaysApply: true
+---
+
+# Staging-only deploy workflow
+
+**Never push, merge, or deploy to production unless the user explicitly says yes to "push to production".**
+
+## Default behavior (always)
+
+1. Make code changes on the **`staging`** branch (or commit there).
+2. **Only** `git push origin staging` — triggers `flightslate-staging` on Railway.
+3. After deploy, tell the user: **"Live on staging: https://flightslate-staging-production.up.railway.app"** and ask: **"Do you want me to push to production?"**
+4. Wait for explicit **yes** before any of:
+   - `git push origin main`
+   - merge `staging` → `main`
+   - production Railway redeploy
+   - production env var changes
+
+## Forbidden without explicit approval
+
+- Pushing to `main`
+- Merging to `main`
+- Redeploying `flightslate-web`
+- Changing production `DATABASE_URL` or production Railway vars
+
+## Staging URLs
+
+- Railway: https://flightslate-staging-production.up.railway.app
+- Custom (when DNS set): https://staging.newtechaviation.com
+
+## Production (do not touch unless approved)
+
+- Branch: `main` → service `flightslate-web` → www.newtechaviation.com

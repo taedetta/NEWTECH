@@ -1163,7 +1163,7 @@ async function runBackup(pool, frequency) {
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 function startBackupScheduler(pool) {
-  const { isStaging } = require('./app-env');
+  const { isStaging } = require('./lib/app-env');
   if (isStaging()) {
     console.log('[backup] Staging — backup scheduler disabled');
     return;

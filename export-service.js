@@ -459,7 +459,7 @@ async function runExport(pool) {
 // ── Scheduler ──────────────────────────────────────────────────────────────────
 
 function startExportScheduler(pool) {
-  const { isStaging } = require('./app-env');
+  const { isStaging } = require('./lib/app-env');
   if (isStaging()) {
     console.log('[export] Staging — nightly export scheduler disabled');
     return;
