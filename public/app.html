@@ -7614,8 +7614,10 @@ async function loadDashboard() {
   tbody.innerHTML = upcoming.map((b, i) => {
     const start = new Date(b.start_time);
     const end = new Date(b.end_time);
+    const startDateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const endDateStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const dateStr = startDateStr === endDateStr ? startDateStr : `${startDateStr} – ${endDateStr}`;
     const timeStr = `${formatTime(start)} - ${formatTime(end)}`;
-    const dateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     const typeClass = getTypeClass(b.lesson_type);
     const soloLabel = b.booking_type === 'student_solo' ? '<span style="font-size:0.7rem;color:var(--amber)"> ✈solo</span>' :
                       b.booking_type === 'instructor_solo' ? '<span style="font-size:0.7rem;color:var(--amber)"> ✈solo</span>' : '';
@@ -8015,6 +8017,33 @@ async function submitManualEntry() {
 }
 
 // ─── CALENDAR ───
+function localDayBounds(year, month, day) {
+  return {
+    start: new Date(year, month, day, 0, 0, 0, 0),
+    end: new Date(year, month, day + 1, 0, 0, 0, 0),
+  };
+}
+
+/** True if booking overlaps a local calendar day (supports multi-day spans). */
+function bookingOverlapsLocalDay(booking, year, month, day) {
+  const start = new Date(booking.start_time);
+  const end = new Date(booking.end_time);
+  const { start: dayStart, end: dayEnd } = localDayBounds(year, month, day);
+  return start < dayEnd && end > dayStart;
+}
+
+function bookingDayTimeLabel(booking, year, month, day) {
+  const start = new Date(booking.start_time);
+  const end = new Date(booking.end_time);
+  const { start: dayStart, end: dayEnd } = localDayBounds(year, month, day);
+  const isFirstDay = start >= dayStart && start < dayEnd;
+  const isLastDay = end > dayStart && end <= dayEnd;
+  if (isFirstDay && isLastDay) return formatTime(start);
+  if (isFirstDay) return `${formatTime(start)} →`;
+  if (isLastDay) return `→ ${formatTime(end)}`;
+  return 'All day';
+}
+
 function loadCalendar() {
   const year = calendarDate.getFullYear();
   const month = calendarDate.getMonth();
@@ -8049,14 +8078,11 @@ function renderCalendar(year, month, startOffset, daysInMonth, bookings) {
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(year, month, day);
     const isToday = date.toDateString() === today.toDateString();
-    const dayBookings = bookings.filter(b => {
-      const bd = new Date(b.start_time);
-      return bd.getFullYear() === year && bd.getMonth() === month && bd.getDate() === day;
-    });
+    const dayBookings = bookings.filter(b => bookingOverlapsLocalDay(b, year, month, day));
 
     const eventsHtml = dayBookings.slice(0, 3).map(b => {
       const cls = b.status === 'completed' ? 'default' : getEventClass(b.lesson_type);
-      const time = formatTime(new Date(b.start_time));
+      const time = bookingDayTimeLabel(b, year, month, day);
       const prefix = b.status === 'completed' ? '✓ ' : (b.booking_type === 'student_solo' || b.booking_type === 'instructor_solo' ? '✈ ' : '');
       const style = b.status === 'completed' ? 'background:rgba(34,197,94,0.15);color:var(--green);' :
                     (b.booking_type === 'student_solo' || b.booking_type === 'instructor_solo') ? 'background:rgba(245,158,11,0.15);color:var(--amber);' : '';
@@ -8108,10 +8134,7 @@ function openDayDetail(year, month, day) {
   const title = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   document.getElementById('day-modal-title').textContent = title;
 
-  const dayBookings = allBookings.filter(b => {
-    const bd = new Date(b.start_time);
-    return bd.getFullYear() === year && bd.getMonth() === month && bd.getDate() === day;
-  });
+  const dayBookings = allBookings.filter(b => bookingOverlapsLocalDay(b, year, month, day));
   console.log('[FlightSlate v2026.05.05] dayBookings:', dayBookings.map(b => ({ id: b.id, status: b.status })));
 
   const list = document.getElementById('day-bookings-list');
