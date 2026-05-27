@@ -127,6 +127,44 @@ async function updateLeadStatus(id, status, userId) {
   return lead;
 }
 
+async function recordLeadFollowUp(id, userId) {
+  const lead = await getLeadById(id);
+  if (!lead) return null;
+  const result = await queryWithSourceFilter(
+    `UPDATE discovery_flight_leads
+     SET follow_up_count = COALESCE(follow_up_count, 0) + 1, last_follow_up_at = NOW(), updated_at = NOW()
+     WHERE id = $1 RETURNING *`,
+    [id]
+  );
+  await logLeadActivity(null, {
+    leadId: id,
+    userId,
+    activityType: 'follow_up',
+    body: 'Follow-up email sent',
+  });
+  return result.rows[0];
+}
+
+async function markLeadConverted(id, userId, convertedUserId) {
+  const existing = await getLeadById(id);
+  if (!existing) return null;
+  const result = await queryWithSourceFilter(
+    `UPDATE discovery_flight_leads
+     SET status = 'converted', converted_user_id = $1, updated_at = NOW()
+     WHERE id = $2 RETURNING *`,
+    [convertedUserId || null, id]
+  );
+  await logLeadActivity(null, {
+    leadId: id,
+    userId,
+    activityType: 'converted',
+    oldStatus: existing.status,
+    newStatus: 'converted',
+    body: convertedUserId ? `Linked to user #${convertedUserId}` : 'Marked converted',
+  });
+  return result.rows[0];
+}
+
 module.exports = {
   createLead,
   createManualLead,
@@ -136,4 +174,6 @@ module.exports = {
   addLeadNote,
   updateLeadStatus,
   logLeadActivity,
+  recordLeadFollowUp,
+  markLeadConverted,
 };

@@ -197,3 +197,84 @@ INSERT INTO school_settings (key, value, updated_at) VALUES
   ('min_lead_time_hours', '0', NOW()),
   ('min_cancel_notice_hours', '0', NOW())
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+
+-- ── Multi-location bases ──
+CREATE TABLE IF NOT EXISTS locations (
+  id SERIAL PRIMARY KEY,
+  code VARCHAR(10) NOT NULL UNIQUE,
+  name VARCHAR(255) NOT NULL,
+  timezone VARCHAR(64) DEFAULT 'America/New_York',
+  weather_station VARCHAR(10),
+  is_default BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO locations (code, name, weather_station, is_default)
+VALUES ('KPSK', 'New River Valley (Dublin, VA)', 'KPSK', true)
+ON CONFLICT (code) DO NOTHING;
+ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(id);
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(id);
+UPDATE aircraft SET location_id = (SELECT id FROM locations WHERE is_default = true LIMIT 1)
+WHERE location_id IS NULL;
+
+-- ── Student document vault ──
+CREATE TABLE IF NOT EXISTS student_documents (
+  id SERIAL PRIMARY KEY,
+  student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  doc_type VARCHAR(50) NOT NULL,
+  file_url TEXT,
+  file_name VARCHAR(255),
+  expiry_date DATE,
+  notes TEXT,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS student_documents_student_id_idx ON student_documents(student_id);
+
+-- ── In-app messaging ──
+CREATE TABLE IF NOT EXISTS message_threads (
+  id SERIAL PRIMARY KEY,
+  student_id INTEGER NOT NULL REFERENCES users(id),
+  instructor_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(student_id, instructor_id)
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id SERIAL PRIMARY KEY,
+  thread_id INTEGER NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(id),
+  body TEXT NOT NULL,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS messages_thread_id_idx ON messages(thread_id);
+
+-- ── Web push + in-app notification log ──
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_user_id_idx ON push_subscriptions(user_id);
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title VARCHAR(255) NOT NULL,
+  body TEXT,
+  link VARCHAR(512),
+  notification_type VARCHAR(50),
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS user_notifications_user_id_idx ON user_notifications(user_id);
+
+-- ── Lead conversion tracking ──
+ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS converted_user_id INTEGER REFERENCES users(id);
+ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS last_follow_up_at TIMESTAMPTZ;
+ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS follow_up_count INTEGER DEFAULT 0;

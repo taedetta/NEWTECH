@@ -6,7 +6,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { createLead, createManualLead, listLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus } = require('../db/leads');
+const { createLead, createManualLead, listLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus, recordLeadFollowUp, markLeadConverted } = require('../db/leads');
 const { sendEmail } = require('../email-templates');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
@@ -248,6 +248,60 @@ router.patch('/:id/status', authenticateToken, requireRole('owner', 'admin'), as
   } catch (err) {
     console.error('[leads] status update error:', err.message);
     return res.status(500).json({ error: 'Could not update status.' });
+  }
+});
+
+// POST /api/leads/:id/follow-up — send follow-up email
+router.post('/:id/follow-up', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const lead = await getLeadById(id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+
+    const registerUrl = `${APP_URL}/app`;
+    const html = leadConfirmationHtml(lead.name).replace(
+      'within <strong>24 hours</strong>',
+      'soon — we wanted to follow up on your discovery flight interest'
+    );
+    await sendEmail(
+      lead.email,
+      'Still interested in learning to fly? — New Tech Aviation',
+      html,
+      `Hi ${lead.name},\n\nWe wanted to follow up on your discovery flight interest. Register at ${registerUrl} or reply to this email.\n\nNew Tech Aviation`
+    );
+    const updated = await recordLeadFollowUp(id, req.user.id);
+    const activity = await getLeadActivity(id);
+    return res.json({ lead: updated, activity });
+  } catch (err) {
+    console.error('[leads] follow-up error:', err.message);
+    return res.status(500).json({ error: 'Could not send follow-up.' });
+  }
+});
+
+// POST /api/leads/:id/convert — mark converted + link user if exists
+router.post('/:id/convert', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const lead = await getLeadById(id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+
+    const pool = require('../db/index');
+    const userMatch = await pool.query(
+      'SELECT id, name FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
+      [lead.email]
+    );
+    const convertedUserId = userMatch.rows[0]?.id || null;
+    const updated = await markLeadConverted(id, req.user.id, convertedUserId);
+    const activity = await getLeadActivity(id);
+    return res.json({
+      lead: updated,
+      activity,
+      user: userMatch.rows[0] || null,
+      needs_account: !convertedUserId,
+    });
+  } catch (err) {
+    console.error('[leads] convert error:', err.message);
+    return res.status(500).json({ error: 'Could not convert lead.' });
   }
 });
 

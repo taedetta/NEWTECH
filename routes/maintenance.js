@@ -61,6 +61,13 @@ router.post('/squawks', authenticateToken, async (req, res) => {
         for (const user of usersResult.rows) {
           sendEmail(user.email, tpl.subject, tpl.html, tpl.text).catch(() => {});
         }
+        if (severity === 'grounding') {
+          const { notifyAircraftGrounded } = require('../lib/app-notifications');
+          notifyAircraftGrounded({
+            tailNumber: ac ? ac.tail_number : `Aircraft #${aircraft_id}`,
+            reason: description,
+          }).catch(() => {});
+        }
       } catch (emailErr) { console.error('Grounding squawk email error:', emailErr.message); }
     }
     res.status(201).json(squawk);

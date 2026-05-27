@@ -28,7 +28,8 @@
     "nodemailer": "^8.0.8",
     "openai": "^4.77.0",
     "pdfkit": "^0.15.0",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "web-push": "^3.6.7"
   },
   "description": "Flight school management platform — Express.js + PostgreSQL + vanilla JS frontend.",
   "keywords": [],

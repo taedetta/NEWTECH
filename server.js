@@ -55,6 +55,11 @@ const adminRoutes       = require('./routes/admin');
 const weatherRoutes     = require('./routes/weather');
 const blogRoutes        = require('./routes/blog');
 const leadsRoutes       = require('./routes/leads');
+const messagesRoutes    = require('./routes/messages');
+const documentsRoutes   = require('./routes/documents');
+const locationsRoutes   = require('./routes/locations');
+const pushRoutes        = require('./routes/push');
+const utilizationRoutes = require('./routes/instructor-utilization');
 const atRiskRoutes      = require('./routes/at-risk');
 const approvalsRoutes   = require('./routes/approvals');
 const downtimeRoutes    = require('./routes/downtime');
@@ -67,6 +72,8 @@ const logoRoutes = require('./routes/logo');
 const { runBackup, startBackupScheduler } = require('./backup-service');
 const { startExportScheduler } = require('./export-service');
 const { startPreflightReminderScheduler } = require('./lib/preflight-reminders');
+const { startInstructorBriefingScheduler } = require('./lib/instructor-briefing');
+const { ensureVapidKeys } = require('./lib/vapid-setup');
 global.runBackup = runBackup;
 const { runStartup } = require('./services/startup');
 // startup-verification.js missing — unused in server.js
@@ -135,6 +142,11 @@ app.use('/api', adminRoutes);                  // /api/instructor-availability/*
 app.use('/api/weather', weatherRoutes);
 app.use('/blog', blogRoutes);
 app.use('/api/leads', leadsRoutes);
+app.use('/api/messages', messagesRoutes);
+app.use('/api/documents', documentsRoutes);
+app.use('/api/locations', locationsRoutes);
+app.use('/api/push', pushRoutes);
+app.use('/api/instructor-utilization', utilizationRoutes);
 app.use('/api/at-risk', atRiskRoutes);
 app.use('/api/approvals', approvalsRoutes);
 app.use('/api/downtime', downtimeRoutes);
@@ -166,10 +178,12 @@ app.listen(PORT, async () => {
 
   // Startup tasks — await so file-override rehydration completes before serving
   await runStartup({ pool });
+  await ensureVapidKeys();
 
   startBackupScheduler(pool);
   startExportScheduler(pool);
   startPreflightReminderScheduler(pool);
+  startInstructorBriefingScheduler(pool);
 
   // Auto backup on startup (fires after 10s delay)
   if (process.env.AUTO_BACKUP_ON_START) {

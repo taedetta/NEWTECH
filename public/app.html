@@ -488,6 +488,18 @@
     #pwa-install-banner .pwa-banner-text strong { color: var(--white); display: block; margin-bottom: 0.2rem; font-size: 0.92rem; }
     #pwa-install-banner .pwa-banner-actions { display: flex; flex-direction: column; gap: 0.4rem; flex-shrink: 0; }
     #pwa-install-banner .pwa-banner-dismiss { background: transparent; border: none; color: var(--gray-500); font-size: 0.75rem; cursor: pointer; padding: 0.2rem; }
+    .messages-layout { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; max-width: 960px; min-height: 360px; }
+    .messages-sidebar { background: var(--slate); border: 1px solid var(--border); border-radius: 12px; overflow-y: auto; max-height: 420px; }
+    .msg-thread-item { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .msg-thread-item:hover { background: var(--sky-faint); }
+    .messages-main { background: var(--slate); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; min-height: 360px; }
+    .msg-chat-msgs { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; margin: 0.75rem 0; max-height: 280px; }
+    .msg-bubble { max-width: 85%; padding: 0.55rem 0.75rem; border-radius: 10px; background: var(--dark-blue); font-size: 0.88rem; }
+    .msg-bubble.mine { align-self: flex-end; background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.25); }
+    .msg-bubble-meta { font-size: 0.65rem; color: var(--gray-500); margin-bottom: 0.2rem; }
+    .msg-compose { display: flex; gap: 0.5rem; align-items: flex-end; }
+    .msg-compose textarea { flex: 1; resize: vertical; min-height: 44px; }
+    @media (max-width: 768px) { .messages-layout { grid-template-columns: 1fr; } }
 
     @media (max-width: 480px) {
       .main-content { padding: 0.875rem; padding-top: 4rem; }
@@ -1629,6 +1641,8 @@
           <a onclick="navigate('flight-log')" data-page="flight-log" id="nav-flight-log"><span class="nav-icon">&#128203;</span> Flight Log</a>
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <a onclick="navigate('phone-app')" data-page="phone-app" id="nav-phone-app"><span class="nav-icon">&#128241;</span> Phone App</a>
+          <a onclick="navigate('messages')" data-page="messages" id="nav-messages"><span class="nav-icon">&#128172;</span> Messages</a>
+          <a onclick="navigate('documents')" data-page="documents" id="nav-documents"><span class="nav-icon">&#128193;</span> Documents</a>
           <div class="nav-divider"></div>
           <div class="nav-section-label">Management</div>
           <a onclick="navigate('approvals')" data-page="approvals" id="nav-approvals" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128100;</span> Pending Approvals <span id="approvals-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
@@ -1640,6 +1654,7 @@
           <a onclick="navigate('at-risk')" data-page="at-risk" id="nav-at-risk" class="hidden"><span class="nav-icon">&#9888;</span> At-Risk</a>
           <a onclick="navigate('leads')" data-page="leads" id="nav-leads" class="hidden"><span class="nav-icon">&#128231;</span> Leads</a>
           <a onclick="navigate('instructor-hours')" data-page="instructor-hours" id="nav-instructor-hours" class="hidden"><span class="nav-icon">&#9997;</span> Instructor Hours</a>
+          <a onclick="navigate('cfi-utilization')" data-page="cfi-utilization" id="nav-cfi-utilization" class="hidden"><span class="nav-icon">&#128202;</span> CFI Stats</a>
           <a onclick="navigate('hours-audit')" data-page="hours-audit" id="nav-hours-audit" style="display:none"><span class="nav-icon">&#128221;</span> Hours Audit</a>
           <a onclick="navigate('website-editor')" data-page="website-editor" id="nav-website-editor" class="hidden"><span class="nav-icon">&#127760;</span> Website Editor</a>
           <a onclick="navigate('programs')" data-page="programs" id="nav-programs" class="hidden"><span class="nav-icon">&#128203;</span> Programs</a>
@@ -3311,6 +3326,19 @@
           <p style="margin-bottom: 2rem; color: #aaa;">Manage platform-wide settings and data.</p>
 
           <div style="background: #1a2a3a; border: 1px solid rgba(56,189,248,0.25); border-radius: 12px; padding: 1.5rem; max-width: 600px; margin-bottom: 1.5rem;">
+            <h2 style="color: #38BDF8; font-size: 1.1rem; margin-bottom: 0.5rem;">&#127757; Locations / Bases</h2>
+            <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 1rem;">Manage airport bases for fleet and weather. Default location is used for new aircraft.</p>
+            <div id="locations-admin-list" style="margin-bottom:1rem"></div>
+            <form onsubmit="addLocation(event)" style="display:grid;gap:0.5rem">
+              <input id="loc-code" class="input-field" placeholder="ICAO code (e.g. KPSK)" required maxlength="10">
+              <input id="loc-name" class="input-field" placeholder="Location name" required>
+              <input id="loc-wx" class="input-field" placeholder="Weather station (optional)">
+              <label style="font-size:0.82rem;color:#94A3B8"><input type="checkbox" id="loc-default"> Set as default base</label>
+              <button type="submit" class="btn btn-primary btn-sm" style="width:fit-content">Add Location</button>
+            </form>
+          </div>
+
+          <div style="background: #1a2a3a; border: 1px solid rgba(56,189,248,0.25); border-radius: 12px; padding: 1.5rem; max-width: 600px; margin-bottom: 1.5rem;">
             <h2 style="color: #38BDF8; font-size: 1.1rem; margin-bottom: 0.5rem;">&#128230; Data Backup</h2>
             <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 1rem; line-height: 1.5;">
               Email a complete ZIP backup of all operational data (9 organized CSV files) to <strong style="color:#e0e0e0">aviationnewtech@gmail.com</strong>. Runs automatically before any reset.
@@ -3514,7 +3542,73 @@
           <div class="page-header">
             <h1>&#128241; Phone App</h1>
           </div>
+          <div id="phone-app-push-section" class="pwa-device-card highlight-card" style="max-width:720px;margin-bottom:1.25rem">
+            <h2 style="font-size:1.05rem;color:var(--white);margin-bottom:0.35rem">&#128276; Push Notifications</h2>
+            <p id="push-status-text" class="pwa-sub">Enable push to get booking confirmations, cancellations, and maintenance alerts on your phone — even when the app is closed (installed home screen app).</p>
+            <p class="pwa-note">iPhone: install to home screen first (Safari), then enable push here. Android: install app, then tap Enable.</p>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
+              <button type="button" id="push-enable-btn" class="btn btn-primary btn-sm" onclick="enablePushNotifications()">Enable Push Notifications</button>
+              <button type="button" id="push-disable-btn" class="btn btn-secondary btn-sm hidden" onclick="disablePushNotifications()">Disable</button>
+            </div>
+          </div>
           <div id="phone-app-content" class="phone-app-wrap"></div>
+        </div>
+
+        <!-- ─── MESSAGES ─── -->
+        <div id="page-messages" class="page hidden">
+          <div class="page-header"><h1>&#128172; Messages</h1></div>
+          <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:1rem;max-width:720px">Instructors and students can message each other. Owners and admins can read all conversations.</p>
+          <div class="messages-layout">
+            <div id="messages-thread-list" class="messages-sidebar"></div>
+            <div id="messages-chat" class="messages-main"></div>
+          </div>
+          <div class="pwa-device-card" style="max-width:720px;margin-top:1rem" id="msg-new-form-wrap">
+            <h2 style="font-size:0.95rem;color:var(--white);margin-bottom:0.75rem">Start a conversation</h2>
+            <form onsubmit="startNewMessageThread(event)">
+              <div class="form-row-2">
+                <div class="form-group"><label>Student</label><select id="msg-new-student" class="input-field"></select></div>
+                <div class="form-group"><label>Instructor</label><select id="msg-new-instructor" class="input-field"></select></div>
+              </div>
+              <div class="form-group"><label>Message</label><textarea id="msg-new-body" class="input-field" rows="2" required></textarea></div>
+              <button type="submit" class="btn btn-primary btn-sm">Send</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- ─── DOCUMENTS ─── -->
+        <div id="page-documents" class="page hidden">
+          <div class="page-header"><h1>&#128193; Documents</h1></div>
+          <div id="documents-staff-bar" class="hidden" style="margin-bottom:1rem;max-width:400px">
+            <label style="font-size:0.82rem;color:var(--gray-400)">Student</label>
+            <select id="docs-student-select" class="input-field" onchange="loadDocumentsPage()"></select>
+          </div>
+          <form id="doc-upload-form" onsubmit="submitStudentDocument(event)" style="max-width:520px;margin-bottom:1.5rem" class="pwa-device-card">
+            <h2 style="font-size:0.95rem;color:var(--white);margin-bottom:0.75rem">Upload document</h2>
+            <div class="form-group"><label>Type</label>
+              <select id="doc-type-select" class="input-field">
+                <option value="medical">Medical Certificate</option>
+                <option value="student_pilot_cert">Student Pilot Certificate</option>
+                <option value="id">Government ID</option>
+                <option value="tsa">TSA / Citizenship</option>
+                <option value="insurance">Insurance</option>
+                <option value="renter_agreement">Renter Agreement</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-row-2">
+              <div class="form-group"><label>Expiry (optional)</label><input type="date" id="doc-expiry-input" class="input-field"></div>
+              <div class="form-group"><label>File (optional)</label><input type="file" id="doc-file-input" accept=".pdf,.jpg,.jpeg,.png,.webp"></div>
+            </div>
+            <div class="form-group"><label>Notes</label><input type="text" id="doc-notes-input" class="input-field" placeholder="Class, cert number, etc."></div>
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+          </form>
+          <div id="documents-content"></div>
+        </div>
+
+        <!-- ─── CFI UTILIZATION ─── -->
+        <div id="page-cfi-utilization" class="page hidden">
+          <div class="page-header"><h1>&#128202; CFI Utilization</h1></div>
+          <div id="cfi-util-content"></div>
         </div>
 
       </main>
@@ -3618,6 +3712,8 @@
           <option value="no_show">No Show</option>
           <option value="converted">Converted</option>
         </select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="sendLeadFollowUp(activeLeadId)">Send Follow-up</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="convertLead(activeLeadId)">Mark Converted</button>
       </div>
       <div style="margin-bottom:1rem">
         <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.5rem">History</div>
@@ -5024,7 +5120,7 @@ async function enterApp() {
 
   // ── Maintenance role: show ONLY 5 tabs, hide everything else ──
   if (currentUser.role === 'maintenance') {
-    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app']);
+    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages', 'documents']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -5058,7 +5154,7 @@ async function enterApp() {
 
   // ── Renter role: limited nav (Dashboard, Schedule, Fleet, My Portal, Flight Log, History, Billing) ──
   if (currentUser.role === 'renter') {
-    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing', 'phone-app']);
+    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing', 'phone-app', 'messages', 'documents']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -5092,7 +5188,7 @@ async function enterApp() {
   });
   document.querySelectorAll('.nav-section-label, .nav-divider').forEach(el => { el.style.display = ''; });
   ['nav-portal', 'nav-approvals', 'nav-discrepancies', 'nav-at-risk', 'nav-leads', 'nav-instructor-hours',
-    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt']
+    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt', 'nav-cfi-utilization']
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
@@ -5185,6 +5281,16 @@ async function enterApp() {
   // Availability: visible to instructors, admins, owners — NOT students
   const navAvail = document.getElementById('nav-availability');
   if (navAvail) navAvail.classList.toggle('hidden', currentUser.role === 'student');
+
+  // CFI Utilization: owner, admin, instructor
+  const navCfiUtil = document.getElementById('nav-cfi-utilization');
+  if (navCfiUtil) navCfiUtil.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
+
+  // Messages & documents: all authenticated users except maintenance-only
+  const navMsg = document.getElementById('nav-messages');
+  const navDocs = document.getElementById('nav-documents');
+  if (navMsg) navMsg.classList.toggle('hidden', currentUser.role === 'maintenance');
+  if (navDocs) navDocs.classList.toggle('hidden', currentUser.role === 'maintenance');
 
   // Admin Settings: owner and admin only
   try {
@@ -5431,6 +5537,7 @@ function loadPhoneAppPage() {
   </div>`;
 
   el.innerHTML = html;
+  if (typeof checkPushStatus === 'function') checkPushStatus();
 }
 
 // ─── TRAINING PROGRAMS ADMIN ─────────────────────────────
@@ -5903,7 +6010,19 @@ function navigate(page) {
   else if (page === 'availability') loadAvailabilityPage();
   else if (page === 'leads') loadLeads();
   else if (page === 'phone-app') loadPhoneAppPage();
+  else if (page === 'messages') loadMessagesPage();
+  else if (page === 'documents') {
+    const bar = document.getElementById('documents-staff-bar');
+    const sel = document.getElementById('docs-student-select');
+    if (bar && sel && featuresCanStaff && featuresCanStaff()) {
+      bar.classList.remove('hidden');
+      sel.innerHTML = allUsers.filter(u => u.role === 'student').map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
+    } else if (bar) bar.classList.add('hidden');
+    loadDocumentsPage();
+  }
+  else if (page === 'cfi-utilization') loadCfiUtilizationPage();
   // admin-settings has no async data to load — static page
+  else if (page === 'admin-settings') loadLocationsAdmin();
 }
 
 // ─── DIGITAL ENDORSEMENTS ────────────────────────────────
@@ -7468,9 +7587,9 @@ async function loadDashboard() {
   if (actualHeader) actualHeader.classList.remove('hidden');
   if (actualTableCard) actualTableCard.classList.remove('hidden');
 
-  // Fetch KPSK weather — non-blocking, fails gracefully
+  // Fetch weather for default station — non-blocking, fails gracefully
   let wxData = null;
-  try { wxData = await api('/api/weather'); } catch {}
+  try { wxData = await api('/api/weather?station=KPSK'); } catch {}
 
   tbody.innerHTML = upcoming.map((b, i) => {
     const start = new Date(b.start_time);
@@ -9810,6 +9929,7 @@ async function loadPeople(filter, skipReload) {
     thead.innerHTML = '<tr>' +
       '<th class="people-sticky">User</th><th class="people-sticky-2">Role</th>' +
       '<th>Phone</th>' +
+      '<th>Students</th>' +
       '<th>Rate/hr</th>' +
       '<th class="perm-col-header" style="text-align:center">Aircraft</th>' +
       '<th class="perm-col-header" style="text-align:center">Instructors</th>' +
@@ -9862,10 +9982,15 @@ async function loadPeople(filter, skipReload) {
         rateCell = '<span style="color:var(--gray-500)">—</span>';
       }
 
+      var studentCount = (['instructor', 'admin', 'owner'].includes(u.role) || u.is_instructor)
+        ? '<span style="font-weight:600;color:' + ((u.assigned_students || 0) > 0 ? 'var(--sky)' : 'var(--gray-500)') + '">' + (u.assigned_students || 0) + '</span>'
+        : '<span style="color:var(--gray-500)">—</span>';
+
       return '<tr>' +
         '<td class="people-sticky"><div style="font-weight:600">' + escHtml(u.name) + (isSelf ? ' <span style="color:var(--gray-500);font-weight:400;font-size:0.8rem">(you)</span>' : '') + '</div><div style="font-size:0.8rem;color:var(--gray-500)">' + escHtml(u.email) + '</div></td>' +
         '<td class="people-sticky-2" style="white-space:nowrap"><span class="tag ' + roleClass + '">' + roleLabel + '</span>' + editRoleBtn + '</td>' +
         '<td style="color:var(--gray-300);font-size:0.875rem">' + (u.phone_number ? escHtml(u.phone_number) : '<span style="color:var(--gray-500)">—</span>') + '</td>' +
+        '<td style="text-align:center">' + studentCount + '</td>' +
         '<td>' + rateCell + '</td>' +
         '<td style="text-align:center">' + (note || makeToggle('can_manage_aircraft', u.can_manage_aircraft)) + '</td>' +
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_manage_instructors', u.can_manage_instructors)) + '</td>' +
@@ -9880,7 +10005,7 @@ async function loadPeople(filter, skipReload) {
     }).join('');
   } else {
     // Basic view
-    thead.innerHTML = '<tr><th class="people-sticky">Name</th><th class="people-sticky-2">Email</th><th>Phone</th><th>Role</th><th>Joined</th><th></th></tr>';
+    thead.innerHTML = '<tr><th class="people-sticky">Name</th><th class="people-sticky-2">Email</th><th>Phone</th><th>Role</th><th>Students</th><th>Joined</th><th></th></tr>';
     tbody.innerHTML = users.map(function(u) {
       var isDualRole = u.role === 'admin' && u.has_instructor_availability;
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
@@ -9892,6 +10017,7 @@ async function loadPeople(filter, skipReload) {
         '<td class="people-sticky-2" style="color:var(--gray-300)">' + escHtml(u.email) + '</td>' +
         '<td style="color:var(--gray-300);font-size:0.875rem">' + (u.phone_number ? escHtml(u.phone_number) : '<span style="color:var(--gray-500)">—</span>') + '</td>' +
         '<td><span class="tag ' + roleClass + '">' + roleLabel + '</span></td>' +
+        '<td style="text-align:center">' + ((['instructor','admin','owner'].includes(u.role) || u.is_instructor) ? (u.assigned_students || 0) : '—') + '</td>' +
         '<td style="color:var(--gray-500)">' + new Date(u.created_at).toLocaleDateString() + '</td>' +
         '<td>' + (canEditAvailBasic ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escHtml(u.name).replace(/'/g, "\\'") + '\')">Availability</button>' : '') + '</td>' +
         '</tr>';
@@ -12079,6 +12205,16 @@ async function viewStudentReadiness(studentId, studentName) {
         ${recsHtml}
       </div>`;
     }).join('<hr style="border-color:var(--border);margin:1rem 0">');
+    _readinessPrintData = { studentName, programs: data.programs };
+    if (!document.getElementById('readiness-print-btn')) {
+      const btn = document.createElement('button');
+      btn.id = 'readiness-print-btn';
+      btn.className = 'btn btn-secondary btn-sm';
+      btn.style.cssText = 'margin-top:1rem;width:100%';
+      btn.textContent = 'Print / Save as PDF';
+      btn.onclick = printCheckrideReadiness;
+      bodyEl.appendChild(btn);
+    }
   } catch (err) {
     console.error('viewStudentReadiness error:', err);
     const msg = err && err.error ? err.error : (err && err.message ? err.message : 'Failed to load readiness data');
@@ -16879,6 +17015,8 @@ function renderLeadActivity(items) {
     manual: 'Added manually',
     note: 'Note',
     status_change: 'Status changed',
+    follow_up: 'Follow-up email',
+    converted: 'Converted',
   };
   el.innerHTML = items.slice().reverse().map(a => {
     const when = a.created_at ? new Date(a.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
@@ -18795,5 +18933,6 @@ init();
   </div>
 </div>
 
+<script src="/js/app-features.js"></script>
 </body>
 </html>

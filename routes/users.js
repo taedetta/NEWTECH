@@ -29,6 +29,9 @@ router.get('/', authenticateToken, async (req, res) => {
     let query = `
       SELECT u.id, u.email, u.name, u.role, u.is_instructor, u.created_at,
         u.total_hobbs_hours, u.total_tach_hours, u.instructor_rate, u.phone_number,
+        u.medical_certificate_expiry, u.medical_certificate_class,
+        (SELECT COUNT(DISTINCT st.student_id)::int FROM student_training st
+         WHERE st.instructor_id = u.id AND st.status = 'active') AS assigned_students,
         COALESCE(ip.can_manage_aircraft, false) as can_manage_aircraft,
         COALESCE(ip.can_manage_instructors, false) as can_manage_instructors,
         COALESCE(ip.can_manage_permissions, false) as can_manage_permissions,
