@@ -127,8 +127,22 @@ async function getManeuverProgress(studentId, enrollmentId) {
 
   return result.rows.map(r => ({
     ...r,
+    status: normalizeManeuverStatus(r.status),
     lesson_tasks: Array.isArray(r.lesson_tasks) ? r.lesson_tasks : (r.lesson_tasks ? r.lesson_tasks : []),
   }));
+}
+
+function normalizeManeuverStatus(dbStatus) {
+  const map = {
+    in_progress: 'introduced',
+    needs_review: 'practiced',
+    proficient: 'proficient',
+    completed: 'completed',
+    not_started: 'not_started',
+    introduced: 'introduced',
+    practiced: 'practiced',
+  };
+  return map[dbStatus] || dbStatus;
 }
 
 /**
@@ -164,7 +178,7 @@ async function upsertManeuverProgress(studentId, maneuverId, status) {
      RETURNING *`,
     [studentId, maneuverId, dbStatus, profDate]
   );
-  return result.rows[0];
+  return { ...result.rows[0], status: normalizeManeuverStatus(result.rows[0].status) };
 }
 
 /**

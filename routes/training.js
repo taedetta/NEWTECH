@@ -502,8 +502,9 @@ router.put('/maneuver-progress', authenticateToken, async (req, res) => {
     if (!student_id || !maneuver_id || !status) {
       return res.status(400).json({ error: 'student_id, maneuver_id, and status are required' });
     }
-    // Only instructors, admins, owners can update maneuver progress
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Only instructors can update maneuver progress' });
+    const canUpdate = ['owner', 'admin', 'instructor'].includes(req.user.role)
+      || (req.user.is_instructor && req.user.role !== 'student');
+    if (!canUpdate) return res.status(403).json({ error: 'Only instructors can update maneuver progress' });
     const result = await trainingDb.upsertManeuverProgress(student_id, maneuver_id, status);
     res.json(result);
   } catch (err) {

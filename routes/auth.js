@@ -10,6 +10,7 @@ const { checkPasswordResetRateLimit } = require('../middleware/rate-limiter');
 const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingApprovalEmail, ADMIN_NOTIFICATION_EMAILS } = require('../email-templates');
 const { getAppUrl } = require('../lib/app-url');
 const { TERMS_VERSION } = require('../lib/terms');
+const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
@@ -74,7 +75,7 @@ router.post('/register', async (req, res) => {
     if (existingDeleted.rows.length > 0) {
       const oldUser = existingDeleted.rows[0];
       const passwordHash = await bcrypt.hash(password, 12);
-      const formattedPhone = `(${phoneDigits.slice(0,3)}) ${phoneDigits.slice(3,6)}-${phoneDigits.slice(6)}`;
+      await purgeUserPersonalData(pool, oldUser.id);
       await pool.query(
         `UPDATE users SET deleted_at = NULL, password_hash = $1, name = $2, phone_number = $3,
          role = $4, approval_status = 'pending',
@@ -107,7 +108,10 @@ router.post('/register', async (req, res) => {
     notifySignupPending({ name: user.name, email: user.email, role: user.role });
   } catch (err) {
     console.error('Register error:', err);
-    res.status(500).json({ error: 'Registration failed' });
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+    res.status(500).json({ error: err.message?.includes('terms_') ? 'Account setup incomplete — contact support' : 'Registration failed. Please try again or contact support.' });
   }
 });
 

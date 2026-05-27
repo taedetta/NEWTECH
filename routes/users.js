@@ -3,6 +3,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../db/index');
+const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const { inviteEmail, sendEmail } = require('../email-templates');
 const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
@@ -146,6 +147,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
         [targetId]
       );
     }
+    await purgeUserPersonalData(pool, targetId);
     await pool.query(
       `UPDATE users SET deleted_at = NOW(), password_hash = NULL, updated_at = NOW() WHERE id = $1`,
       [targetId]

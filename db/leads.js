@@ -6,12 +6,16 @@ const pool = require('./index');
 const { buildSourceParam, queryWithSourceFilter } = require('./source-wrapper');
 
 async function logLeadActivity(client, { leadId, userId, activityType, body, oldStatus, newStatus }) {
-  const db = client || pool;
-  await db.query(
-    `INSERT INTO lead_activity (lead_id, user_id, activity_type, body, old_status, new_status)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [leadId, userId || null, activityType, body || null, oldStatus || null, newStatus || null]
-  );
+  try {
+    const db = client || pool;
+    await db.query(
+      `INSERT INTO lead_activity (lead_id, user_id, activity_type, body, old_status, new_status)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [leadId, userId || null, activityType, body || null, oldStatus || null, newStatus || null]
+    );
+  } catch (err) {
+    console.error('[leads] activity log skipped:', err.message);
+  }
 }
 
 async function createLead({ name, email, phone, preferred_date, experience_level, message, program_interest, source_label }) {
@@ -38,16 +42,29 @@ async function createLead({ name, email, phone, preferred_date, experience_level
 
 async function createManualLead({ name, email, phone, preferred_date, experience_level, message, program_interest, status }, userId) {
   const { source } = buildSourceParam();
-  const result = await pool.query(
-    `INSERT INTO discovery_flight_leads
-       (name, email, phone, preferred_date, experience_level, message, program_interest, source_label, status, created_at, updated_at, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8, NOW(), NOW(), $9)
-     RETURNING *`,
-    [
-      name, email, phone, preferred_date || null, experience_level || null,
-      message || null, program_interest || null, status || 'new', source,
-    ]
-  );
+  const baseParams = [
+    name, email, phone, preferred_date || null, experience_level || null,
+    message || null, program_interest || null, status || 'new', source,
+  ];
+  let result;
+  try {
+    result = await pool.query(
+      `INSERT INTO discovery_flight_leads
+         (name, email, phone, preferred_date, experience_level, message, program_interest, source_label, status, created_at, updated_at, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8, NOW(), NOW(), $9)
+       RETURNING *`,
+      baseParams
+    );
+  } catch (err) {
+    if (!/program_interest|source_label|source/i.test(err.message)) throw err;
+    result = await pool.query(
+      `INSERT INTO discovery_flight_leads
+         (name, email, phone, preferred_date, experience_level, message, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+       RETURNING *`,
+      [name, email, phone, preferred_date || null, experience_level || null, message || null, status || 'new']
+    );
+  }
   const lead = result.rows[0];
   await logLeadActivity(null, {
     leadId: lead.id,

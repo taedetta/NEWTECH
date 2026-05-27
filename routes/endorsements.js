@@ -201,10 +201,10 @@ router.get('/', authenticateToken, async (req, res) => {
     const { student_id, status } = req.query;
     let query = `
       SELECT e.*,
-             s.name AS student_name_user,
+             COALESCE(s.name, e.student_name, 'Former student') AS student_name_user,
              i.name AS instructor_name_user
       FROM endorsements e
-      JOIN users s ON s.id = e.student_id AND s.deleted_at IS NULL
+      LEFT JOIN users s ON s.id = e.student_id
       JOIN users i ON i.id = e.instructor_id
       WHERE 1=1
     `;

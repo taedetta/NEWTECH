@@ -114,8 +114,17 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const b = bResult.rows[0];
     if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
     const isAdmin = ['owner', 'admin'].includes(verifiedRole);
-    // Allow admin/owner, the assigned instructor, or the student on this booking
-    if (!isAdmin && req.user.id !== b.instructor_id && req.user.id !== b.student_id) return res.status(403).json({ error: 'Only the instructor, admin, or the student on this booking can complete a flight' });
+    if (!isAdmin) {
+      if (b.instructor_id) {
+        if (req.user.id !== b.instructor_id) {
+          return res.status(403).json({
+            error: 'Only the assigned instructor (or admin) can complete this flight and enter Hobbs/Tach hours.',
+          });
+        }
+      } else if (req.user.id !== b.student_id && req.user.id !== b.instructor_id) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {

@@ -29,6 +29,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     .hidden { display: none !important; }
+    #app-screen.app-booting { visibility: hidden !important; pointer-events: none; }
     :root {
       --navy: #080E1A;
       --dark-blue: #0D1525;
@@ -442,7 +443,7 @@
         .flog-card-type.solo { background: rgba(245,158,11,0.1); color: var(--amber); }
         .flog-card-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0.35rem; margin-bottom: 0.5rem; }
         .flog-card-metric { text-align: center; padding: 0.4rem 0.25rem; background: var(--dark-blue); border-radius: 6px; border: 1px solid var(--border); }
-        .flog-card-metric-lbl { font-size: 0.6rem; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.15rem; }
+        .flog-card-metric-lbl { font-size: 0.55rem; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 0.15rem; white-space: normal; line-height: 1.25; min-height: 2.2em; }
         .flog-card-metric-val { font-family: 'Space Grotesk'; font-size: 0.88rem; font-weight: 600; color: var(--gray-200); }
         .flog-card-metric-val.highlight { color: var(--sky); }
         .flog-card-people { display: flex; gap: 0.5rem; font-size: 0.75rem; color: var(--gray-400); flex-wrap: wrap; }
@@ -3595,6 +3596,17 @@
     </div>
   </div>
 
+  <!-- ─── BOOKING ALERT MODAL ─── -->
+  <div id="booking-alert-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeBookingAlertModal()">
+    <div class="modal" style="max-width:440px;text-align:center">
+      <div style="font-size:2rem;margin-bottom:0.75rem">⚠️</div>
+      <h3 id="booking-alert-title" style="margin-bottom:0.75rem"></h3>
+      <p id="booking-alert-message" style="color:var(--gray-300);font-size:0.9rem;line-height:1.55;margin-bottom:1rem"></p>
+      <div id="booking-alert-extra" class="hidden" style="margin-bottom:1rem;text-align:left"></div>
+      <button type="button" class="btn btn-primary" style="width:100%;min-height:48px" onclick="closeBookingAlertModal()">OK, Got It</button>
+    </div>
+  </div>
+
   <!-- ─── BOOKING MODAL ─── -->
   <div id="booking-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeBookingModal()">
     <div class="modal">
@@ -4756,6 +4768,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     });
     token = data.token;
     localStorage.setItem('fs_token', token);
+    clearAppState();
+    document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
     // Fetch full user including permissions from DB
     const meData = await api('/api/auth/me');
     currentUser = meData.user;
@@ -4896,11 +4910,23 @@ function logout() {
   clearAppState();
   localStorage.removeItem('fs_token');
   syncSidebarAuth(false);
+  const appEl = document.getElementById('app-screen');
+  if (appEl) appEl.classList.add('hidden', 'app-booting');
+  document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+  showScreen('login');
   openAuthModal('signin');
 }
 
 // ─── APP INIT ───
 async function enterApp() {
+  const appEl = document.getElementById('app-screen');
+  if (appEl) appEl.classList.add('app-booting');
+  // Hide all nav items until role-specific visibility is applied (prevents role-switch flash)
+  document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
+    el.classList.add('hidden');
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   showScreen('app');
 
   // Refresh user data from server (gets fresh role + permissions)
@@ -4916,6 +4942,7 @@ async function enterApp() {
   } catch (meErr) {
     token = null;
     localStorage.removeItem('fs_token');
+    if (appEl) appEl.classList.remove('app-booting');
     openAuthModal('signin');
     const errEl = document.getElementById('login-error');
     if (errEl) {
@@ -4971,6 +4998,7 @@ async function enterApp() {
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
     navigate('tracking');
+    if (appEl) appEl.classList.remove('app-booting');
     return;
   }
   // ── End maintenance role ──
@@ -4998,6 +5026,7 @@ async function enterApp() {
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
     navigate('portal');
+    if (appEl) appEl.classList.remove('app-booting');
     return;
   }
   // ── End renter role ──
@@ -5142,6 +5171,7 @@ async function enterApp() {
   }
   // Students land on their portal; everyone else lands on dashboard
   navigate(currentUser.role === 'student' ? 'portal' : 'dashboard');
+  if (appEl) appEl.classList.remove('app-booting');
   startAppPolling();
 }
 
@@ -7768,8 +7798,11 @@ function openDayDetail(year, month, day) {
 
       let actionBtns = '';
       if (b.status === 'confirmed') {
-        // Always show Complete Flight button on confirmed bookings (server validates permissions)
-        actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;margin-right:0.4rem;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600;" onclick="closeDayModal();openCompleteModal(${b.id})">✓ Complete Flight</button>`;
+        if (canUserCompleteBooking(b)) {
+          actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;margin-right:0.4rem;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600;" onclick="closeDayModal();openCompleteModal(${b.id})">✓ Complete Flight</button>`;
+        } else if (b.instructor_id && ['student', 'renter'].includes(currentUser.role) && b.student_id === currentUser.id) {
+          actionBtns += `<span style="display:block;margin-top:0.5rem;font-size:0.75rem;color:var(--gray-500)">Your instructor will log hours after this flight</span>`;
+        }
         if (canAct) {
           actionBtns += `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem;margin-right:0.4rem" onclick="openEditBookingModal(${b.id})">Edit</button>`;
           actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();openCancelModal(${b.id})">✗ Cancel Flight</button>`;
@@ -8296,6 +8329,10 @@ async function refreshBookingPreflight() {
     el.classList.remove('hidden');
     el.style.background = data.errors?.length ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)';
     el.style.border = data.errors?.length ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)';
+    const availErr = (data.errors || []).find(e => /not available/i.test(e));
+    if (availErr) {
+      showBookingAlertModal('Instructor not available', availErr.replace(/^[^:]+:\s*/, '') || availErr, '<p style="font-size:0.82rem;color:var(--gray-400)">Choose a different time, another instructor, or contact the school to adjust availability.</p>');
+    }
   } catch { el.classList.add('hidden'); }
 }
 
@@ -8575,10 +8612,14 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
       if (err.can_force) {
         html += `<div style="margin-top:0.5rem;"><button class="btn btn-sm btn-secondary" onclick="forceBookingSubmit()" style="width:auto;font-size:0.78rem;">Override — Book Anyway</button></div>`;
       }
-      // Show availability conflicts near submit button too
       bottomConflictEl.innerHTML = html;
       bottomConflictEl.classList.remove('hidden');
       bottomConflictEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      showBookingAlertModal(
+        `${err.instructor_name || 'Instructor'} is not available`,
+        err.reason || 'This instructor is not scheduled to be available during the time you selected.',
+        html
+      );
     } else if (err.error && (err.error.includes('maintenance') || err.error.includes('Maintenance'))) {
       // Specific handling for aircraft maintenance errors — include reason
       const reasonText = err.reason ? ` Reason: ${escHtml(err.reason)}` : '';
@@ -8699,6 +8740,15 @@ let pfwFlightDate = null;
 
 function openPostFlightWizard(bookingId, bookingDataOverride) {
   const b = bookingDataOverride || allBookings.find(bk => bk.id === bookingId);
+  if (b && !canUserCompleteBooking(b)) {
+    showBookingAlertModal(
+      'Cannot complete this flight',
+      b.instructor_id && ['student', 'renter'].includes(currentUser.role)
+        ? 'Flights with an instructor must be completed by the instructor, who will enter Hobbs and Tach hours. The flight will appear in your history once logged.'
+        : ( 'You do not have permission to complete this booking.' )
+    );
+    return;
+  }
   pfwAircraftId = b ? b.aircraft_id : null;
 
   document.getElementById('pfw-booking-id').value = bookingId;
@@ -11009,6 +11059,10 @@ function toggleLessonDetail(detailId) {
 
 async function setLessonComplete(studentId, enrollmentId, maneuverId, markComplete, btn) {
   if (btn.disabled) return;
+  if (!studentId || !maneuverId) {
+    showToast('Missing student or lesson data — reload and try again', 'error');
+    return;
+  }
   btn.disabled = true;
   try {
     await api('/api/training/maneuver-progress', {
@@ -11048,10 +11102,32 @@ async function setLessonComplete(studentId, enrollmentId, maneuverId, markComple
       }
     }
   } catch (err) {
-    alert('Failed to save: ' + (err.error || 'Unknown error'));
+    showToast(err.error || 'Failed to save progress', 'error');
   } finally {
     btn.disabled = false;
   }
+}
+
+function canUserCompleteBooking(b) {
+  if (!b || b.status !== 'confirmed' || !currentUser) return false;
+  if (['owner', 'admin'].includes(currentUser.role)) return true;
+  if (b.instructor_id) return currentUser.id === b.instructor_id;
+  return currentUser.id === b.student_id || currentUser.id === b.instructor_id;
+}
+
+function showBookingAlertModal(title, message, extraHtml) {
+  const modal = document.getElementById('booking-alert-modal');
+  if (!modal) { alert(title + '\n\n' + message); return; }
+  document.getElementById('booking-alert-title').textContent = title;
+  document.getElementById('booking-alert-message').textContent = message;
+  const extra = document.getElementById('booking-alert-extra');
+  if (extraHtml) { extra.innerHTML = extraHtml; extra.classList.remove('hidden'); }
+  else { extra.innerHTML = ''; extra.classList.add('hidden'); }
+  modal.classList.remove('hidden');
+}
+
+function closeBookingAlertModal() {
+  document.getElementById('booking-alert-modal')?.classList.add('hidden');
 }
 
 function renderEnrollmentCard(e, debriefs, isOwnView, maneuverProgress) {
@@ -11221,7 +11297,7 @@ async function setManeuverStatus(studentId, enrollmentId, maneuverId, status, bt
     }
   } catch (err) {
     btn.disabled = false;
-    alert('Failed to save: ' + (err.error || 'Unknown error'));
+    showToast(err.error || 'Failed to update maneuver status', 'error');
   }
 }
 
@@ -12508,20 +12584,20 @@ async function loadFlightLog() {
   </div>
   <div class="flog-card-metrics">
     <div class="flog-card-metric">
-      <div class="flog-card-metric-lbl">Hobbs Δ</div>
-      <div class="flog-card-metric-val highlight">${fmtDelta(l.hobbs_delta)}</div>
-    </div>
-    <div class="flog-card-metric">
-      <div class="flog-card-metric-lbl">Tach Δ</div>
-      <div class="flog-card-metric-val highlight">${fmtDelta(l.tach_delta)}</div>
-    </div>
-    <div class="flog-card-metric">
-      <div class="flog-card-metric-lbl">Hobbs S</div>
+      <div class="flog-card-metric-lbl">Hobbs Start</div>
       <div class="flog-card-metric-val">${fmtVal(l.hobbs_start)}</div>
     </div>
     <div class="flog-card-metric">
-      <div class="flog-card-metric-lbl">Hobbs E</div>
-      <div class="flog-card-metric-val">${fmtVal(l.hobbs_end)}</div>
+      <div class="flog-card-metric-lbl">Hobbs End</div>
+      <div class="flog-card-metric-val highlight">${fmtVal(l.hobbs_end)}</div>
+    </div>
+    <div class="flog-card-metric">
+      <div class="flog-card-metric-lbl">Tach Start</div>
+      <div class="flog-card-metric-val">${fmtVal(l.tach_start)}</div>
+    </div>
+    <div class="flog-card-metric">
+      <div class="flog-card-metric-lbl">Tach End</div>
+      <div class="flog-card-metric-val highlight">${fmtVal(l.tach_end)}</div>
     </div>
   </div>
   ${peopleParts.length ? `<div class="flog-card-people">${peopleParts.join('')}</div>` : ''}
