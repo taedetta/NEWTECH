@@ -155,25 +155,91 @@ function urlBase64ToUint8Array(base64String) {
   return arr;
 }
 
+async function ensurePushServiceWorker() {
+  if (!('serviceWorker' in navigator)) throw new Error('Service workers not supported in this browser');
+  var reg = await navigator.serviceWorker.getRegistration('/');
+  if (!reg) {
+    reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  }
+  return navigator.serviceWorker.ready;
+}
+
 async function enablePushNotifications() {
-  if (!('Notification' in window)) { showToast('Not supported', 'error'); return; }
-  if (await Notification.requestPermission() !== 'granted') { showToast('Permission denied', 'error'); return; }
-  var keyData = await api('/api/push/vapid-public-key');
-  var reg = await navigator.serviceWorker.ready;
-  var sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(keyData.publicKey) });
-  await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
-  updatePushStatusUI(true);
-  showToast('Push notifications enabled', 'success');
+  try {
+    if (!window.isSecureContext) {
+      showToast('Push requires a secure (HTTPS) connection', 'error');
+      return;
+    }
+    if (!('PushManager' in window) || !('Notification' in window)) {
+      showToast('Push notifications are not supported in this browser', 'error');
+      return;
+    }
+
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    if (isIOS && !standalone) {
+      showToast('Add the app to your home screen first, then enable push from the installed app', 'error');
+      return;
+    }
+
+    // Request permission immediately while the click gesture is still active
+    var perm = Notification.permission;
+    if (perm === 'default') {
+      perm = await Notification.requestPermission();
+    }
+    if (perm !== 'granted') {
+      showToast(
+        perm === 'denied'
+          ? 'Notifications blocked — enable them in your browser settings for this site'
+          : 'Notification permission was not granted',
+        'error'
+      );
+      return;
+    }
+
+    var reg = await ensurePushServiceWorker();
+
+    var existing = await reg.pushManager.getSubscription();
+    if (existing) {
+      await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: existing.toJSON() }) });
+      updatePushStatusUI(true);
+      showToast('Push notifications enabled', 'success');
+      return;
+    }
+
+    var keyData = await api('/api/push/vapid-public-key');
+    if (!keyData.publicKey) {
+      showToast('Push notifications are not configured on the server', 'error');
+      return;
+    }
+
+    var sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(keyData.publicKey),
+    });
+    await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+    updatePushStatusUI(true);
+    showToast('Push notifications enabled', 'success');
+  } catch (err) {
+    console.error('[push] enable failed:', err);
+    showToast(err.error || err.message || 'Failed to enable push notifications', 'error');
+  }
 }
 
 async function disablePushNotifications() {
-  var reg = await navigator.serviceWorker.ready;
-  var sub = await reg.pushManager.getSubscription();
-  if (sub) {
-    await api('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) });
-    await sub.unsubscribe();
+  try {
+    var reg = await ensurePushServiceWorker();
+    var sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await api('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) });
+      await sub.unsubscribe();
+    }
+    updatePushStatusUI(false);
+  } catch (err) {
+    console.error('[push] disable failed:', err);
+    showToast(err.error || err.message || 'Failed to disable push', 'error');
   }
-  updatePushStatusUI(false);
 }
 
 function updatePushStatusUI(on) {
@@ -187,7 +253,10 @@ function updatePushStatusUI(on) {
 
 async function checkPushStatus() {
   try {
-    var reg = await navigator.serviceWorker.ready;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    var reg = await navigator.serviceWorker.getRegistration('/');
+    if (!reg) return;
+    reg = await navigator.serviceWorker.ready;
     updatePushStatusUI(!!(await reg.pushManager.getSubscription()));
   } catch (_) {}
 }

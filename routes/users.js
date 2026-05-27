@@ -165,16 +165,23 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 // PATCH /api/users/:id/role — owner/admin: change a user's role
 router.patch('/:id/role', authenticateToken, async (req, res) => {
   try {
-    if (!['owner', 'admin'].includes(req.user.role)) {
+    const requester = await pool.query(
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [req.user.id]
+    );
+    if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
       return res.status(403).json({ error: 'Only owners and admins can change user roles' });
     }
-    const targetId = parseInt(req.params.id);
+    const targetId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(targetId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
     if (targetId === req.user.id) {
       return res.status(403).json({ error: 'You cannot change your own role' });
     }
     const { role } = req.body;
     const validRoles = ['student', 'instructor', 'admin', 'renter', 'owner', 'maintenance'];
-    if (!validRoles.includes(role)) {
+    if (!role || !validRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
     }
     const targetResult = await pool.query(
@@ -182,20 +189,25 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const target = targetResult.rows[0];
+    if (target.role === role) {
+      return res.json({ ok: true, id: targetId, role, unchanged: true });
+    }
     // Protect last owner
     if (target.role === 'owner' && role !== 'owner') {
       const ownerCount = await pool.query(
         "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
       );
-      if (parseInt(ownerCount.rows[0].count) <= 1) {
+      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
         return res.status(403).json({ error: 'Cannot change the last owner\'s role' });
       }
     }
     await pool.query(
-      'UPDATE users SET role = $1, is_instructor = CASE WHEN $1 = \'instructor\' THEN TRUE ELSE is_instructor END, updated_at = NOW() WHERE id = $2',
+      `UPDATE users SET role = $1,
+        is_instructor = CASE WHEN $1 = 'instructor' THEN TRUE ELSE is_instructor END,
+        updated_at = NOW()
+       WHERE id = $2`,
       [role, targetId]
     );
-    // Audit log — non-fatal on failure
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
       ['change_role', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, from: target.role, to: role })]
@@ -212,10 +224,17 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
 // regardless of their role (student can be CFI, owner can be non-instructor, etc.)
 router.patch('/:id/instructor-status', authenticateToken, async (req, res) => {
   try {
-    if (!['owner', 'admin'].includes(req.user.role)) {
+    const requester = await pool.query(
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [req.user.id]
+    );
+    if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
       return res.status(403).json({ error: 'Only owners and admins can change instructor status' });
     }
-    const targetId = parseInt(req.params.id);
+    const targetId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(targetId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
     if (targetId === req.user.id) {
       return res.status(403).json({ error: 'You cannot change your own instructor status' });
     }

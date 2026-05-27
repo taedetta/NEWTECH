@@ -4258,7 +4258,7 @@
       <input type="hidden" id="role-change-current-instructor">
       <div class="form-group">
         <label>New Role</label>
-        <select id="role-change-select" class="input-field">
+        <select id="role-change-select" class="input-field" onchange="onRoleChangeSelect()">
           <option value="student">Student Pilot</option>
           <option value="instructor">Instructor (CFI)</option>
           <option value="admin">Admin</option>
@@ -5140,7 +5140,7 @@ async function enterApp() {
 
   // ── Maintenance role: show ONLY 5 tabs, hide everything else ──
   if (currentUser.role === 'maintenance') {
-    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages', 'documents']);
+    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -5174,7 +5174,7 @@ async function enterApp() {
 
   // ── Renter role: limited nav (Dashboard, Schedule, Fleet, My Portal, Flight Log, History, Billing) ──
   if (currentUser.role === 'renter') {
-    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing', 'phone-app', 'messages', 'documents']);
+    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing', 'phone-app', 'messages']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -5208,7 +5208,7 @@ async function enterApp() {
   });
   document.querySelectorAll('.nav-section-label, .nav-divider').forEach(el => { el.style.display = ''; });
   ['nav-portal', 'nav-approvals', 'nav-discrepancies', 'nav-at-risk', 'nav-leads', 'nav-instructor-hours',
-    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt', 'nav-cfi-utilization']
+    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt', 'nav-cfi-utilization', 'nav-documents']
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
@@ -5306,11 +5306,12 @@ async function enterApp() {
   const navCfiUtil = document.getElementById('nav-cfi-utilization');
   if (navCfiUtil) navCfiUtil.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
 
-  // Messages & documents: all authenticated users except maintenance-only
+  // Messages: all authenticated users except maintenance-only
   const navMsg = document.getElementById('nav-messages');
   const navDocs = document.getElementById('nav-documents');
   if (navMsg) navMsg.classList.toggle('hidden', currentUser.role === 'maintenance');
-  if (navDocs) navDocs.classList.toggle('hidden', currentUser.role === 'maintenance');
+  // Documents: staff only — students/renters upload via admin/instructor, not self-service
+  if (navDocs) navDocs.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
 
   // Admin Settings: owner and admin only
   try {
@@ -6032,6 +6033,16 @@ function navigate(page) {
   else if (page === 'phone-app') loadPhoneAppPage();
   else if (page === 'messages') loadMessagesPage();
   else if (page === 'documents') {
+    if (!['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+      showToast('Documents are managed by your instructor or admin', 'info');
+      page = 'dashboard';
+      document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+      document.getElementById('page-dashboard').classList.remove('hidden');
+      document.querySelectorAll('.sidebar-nav a').forEach(a => a.classList.toggle('active', a.dataset.page === 'dashboard'));
+      currentPage = 'dashboard';
+      loadDashboard();
+      return;
+    }
     const bar = document.getElementById('documents-staff-bar');
     const sel = document.getElementById('docs-student-select');
     if (bar && sel && featuresCanStaff && featuresCanStaff()) {
@@ -10210,7 +10221,8 @@ function openRoleChangeModal(userId, userName, currentRole, isInstructor) {
   document.getElementById('role-change-current-instructor').value = isInstructor ? 'true' : 'false';
   document.getElementById('role-change-is-instructor').checked = !!isInstructor;
   document.getElementById('role-change-instructor-note').classList.add('hidden');
-  document.getElementById('role-change-error').classList.add('hidden');
+  document.getElementById('role-change-error').classList.remove('visible');
+  document.getElementById('role-change-error').textContent = '';
   const btn = document.getElementById('role-change-save-btn');
   btn.disabled = false;
   btn.textContent = 'Save Changes';
@@ -10221,14 +10233,29 @@ function closeRoleChangeModal() {
   document.getElementById('role-change-modal').classList.add('hidden');
 }
 
+function onRoleChangeSelect() {
+  const role = document.getElementById('role-change-select').value;
+  const cb = document.getElementById('role-change-is-instructor');
+  if (role === 'instructor') {
+    cb.checked = true;
+    document.getElementById('role-change-instructor-note').classList.add('hidden');
+  }
+}
+
 async function saveRoleChange() {
-  const userId = parseInt(document.getElementById('role-change-user-id').value);
+  const userId = parseInt(document.getElementById('role-change-user-id').value, 10);
   const newRole = document.getElementById('role-change-select').value;
   const isInstructor = document.getElementById('role-change-is-instructor').checked;
   const wasInstructor = document.getElementById('role-change-current-instructor').value === 'true';
   const errEl = document.getElementById('role-change-error');
   const btn = document.getElementById('role-change-save-btn');
-  errEl.classList.add('hidden');
+  if (!userId || !newRole) {
+    errEl.textContent = 'Invalid user or role selection';
+    errEl.classList.add('visible');
+    return;
+  }
+  errEl.classList.remove('visible');
+  errEl.textContent = '';
   btn.disabled = true;
   btn.textContent = 'Saving...';
   try {
@@ -10236,20 +10263,21 @@ async function saveRoleChange() {
       method: 'PATCH',
       body: JSON.stringify({ role: newRole })
     });
-    // Also save instructor status if it changed
-    if (isInstructor !== wasInstructor) {
+    if (isInstructor !== wasInstructor || (newRole === 'instructor' && !wasInstructor)) {
       await api('/api/users/' + userId + '/instructor-status', {
         method: 'PATCH',
-        body: JSON.stringify({ is_instructor: isInstructor })
+        body: JSON.stringify({ is_instructor: newRole === 'instructor' ? true : isInstructor })
       });
     }
     closeRoleChangeModal();
     await loadUsers();
     loadPeople(currentPeopleFilter);
-    showToast('User updated successfully', 'success');
+    showToast('Role updated successfully', 'success');
   } catch (err) {
-    errEl.textContent = err.error || 'Failed to save changes';
-    errEl.classList.remove('hidden');
+    const msg = err.error || err.message || 'Failed to save changes';
+    errEl.textContent = msg;
+    errEl.classList.add('visible');
+    showToast(msg, 'error');
     btn.disabled = false;
     btn.textContent = 'Save Changes';
   }

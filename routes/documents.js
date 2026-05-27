@@ -7,22 +7,13 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-function canAccessStudentDocs(req, studentId) {
-  if (['owner', 'admin'].includes(req.user.role)) return true;
-  if (req.user.role === 'instructor') return true;
-  return req.user.id === studentId;
-}
-
-router.get('/types', authenticateToken, (req, res) => {
+router.get('/types', authenticateToken, requireRole('owner', 'admin', 'instructor'), (req, res) => {
   res.json({ types: documentsDb.DOC_TYPES });
 });
 
-router.get('/student/:studentId', authenticateToken, async (req, res) => {
+router.get('/student/:studentId', authenticateToken, requireRole('owner', 'admin', 'instructor'), async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
-    if (!canAccessStudentDocs(req, studentId)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
     const documents = await documentsDb.listDocuments(studentId);
     res.json({ documents });
   } catch (err) {
@@ -31,12 +22,9 @@ router.get('/student/:studentId', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/student/:studentId', authenticateToken, async (req, res) => {
+router.post('/student/:studentId', authenticateToken, requireRole('owner', 'admin', 'instructor'), async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
-    if (!canAccessStudentDocs(req, studentId)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
     const { doc_type, file_data, file_name, expiry_date, notes, medical_class } = req.body;
     if (!doc_type || !documentsDb.DOC_TYPES.includes(doc_type)) {
       return res.status(400).json({ error: 'Valid doc_type is required' });
