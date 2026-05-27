@@ -5310,8 +5310,12 @@ async function enterApp() {
   const navMsg = document.getElementById('nav-messages');
   const navDocs = document.getElementById('nav-documents');
   if (navMsg) navMsg.classList.toggle('hidden', currentUser.role === 'maintenance');
-  // Documents: staff only — students/renters upload via admin/instructor, not self-service
-  if (navDocs) navDocs.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
+  // Documents: staff only — students/renters cannot upload documents
+  if (navDocs) {
+    const canSeeDocs = ['owner', 'admin', 'instructor'].includes(currentUser.role);
+    navDocs.classList.toggle('hidden', !canSeeDocs);
+    navDocs.style.display = canSeeDocs ? '' : 'none';
+  }
 
   // Admin Settings: owner and admin only
   try {
