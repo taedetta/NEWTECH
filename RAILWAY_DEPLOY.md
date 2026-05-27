@@ -4,9 +4,10 @@ No Polsia dependencies — email via Brevo, files via Cloudflare R2, database on
 
 ## 1. Create the Railway service
 
-1. Log into [Railway](https://railway.com) and create a project.
-2. **New → GitHub Repo** → select `taedetta/NEWTECH`, branch `main`.
-3. Railway detects Node and uses `railway.toml` (build + start + health check).
+1. Log into [Railway](https://railway.com) and open project **cooperative-joy**.
+2. Production web service is **`flightslate-web`** — this is the only service that should be connected to GitHub (`taedetta/NEWTECH`, branch `main`).
+3. Do **not** connect a second duplicate service to the same repo (e.g. an old `NEWTECH` service without `DATABASE_URL` will show failed builds).
+4. Railway detects Node and uses `railway.toml` (build + start + health check).
 
 ## 2. Environment variables
 
