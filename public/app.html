@@ -1662,7 +1662,7 @@
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <a onclick="navigate('phone-app')" data-page="phone-app" id="nav-phone-app"><span class="nav-icon">&#128241;</span> Phone App</a>
           <a onclick="navigate('messages')" data-page="messages" id="nav-messages"><span class="nav-icon">&#128172;</span> Messages</a>
-          <a onclick="navigate('documents')" data-page="documents" id="nav-documents"><span class="nav-icon">&#128193;</span> Documents</a>
+          <!-- Documents nav injected by syncDocumentsNav() for owner/admin/instructor only -->
           <div class="nav-divider"></div>
           <div class="nav-section-label">Management</div>
           <a onclick="navigate('approvals')" data-page="approvals" id="nav-approvals" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128100;</span> Pending Approvals <span id="approvals-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
@@ -5086,6 +5086,32 @@ function logout() {
 }
 
 // ─── APP INIT ───
+function canSeeDocumentsNav() {
+  return currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
+}
+
+/** Documents tab is staff-only — remove from DOM for students/renters (not just hidden). */
+function syncDocumentsNav() {
+  const existing = document.getElementById('nav-documents');
+  if (!canSeeDocumentsNav()) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) {
+    existing.classList.remove('hidden');
+    existing.style.display = '';
+    return;
+  }
+  const anchor = document.getElementById('nav-messages');
+  if (!anchor || !anchor.parentNode) return;
+  const link = document.createElement('a');
+  link.id = 'nav-documents';
+  link.dataset.page = 'documents';
+  link.onclick = function() { navigate('documents'); };
+  link.innerHTML = '<span class="nav-icon">&#128193;</span> Documents';
+  anchor.insertAdjacentElement('afterend', link);
+}
+
 async function enterApp() {
   const appEl = document.getElementById('app-screen');
   if (appEl) appEl.classList.add('app-booting');
@@ -5165,6 +5191,7 @@ async function enterApp() {
     currentUser = freshData.user;
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
+    syncDocumentsNav();
     navigate('tracking');
     if (appEl) appEl.classList.remove('app-booting');
     initPWA();
@@ -5194,6 +5221,7 @@ async function enterApp() {
     currentUser = freshData.user;
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
+    syncDocumentsNav();
     navigate('portal');
     if (appEl) appEl.classList.remove('app-booting');
     initPWA();
@@ -5208,7 +5236,7 @@ async function enterApp() {
   });
   document.querySelectorAll('.nav-section-label, .nav-divider').forEach(el => { el.style.display = ''; });
   ['nav-portal', 'nav-approvals', 'nav-discrepancies', 'nav-at-risk', 'nav-leads', 'nav-instructor-hours',
-    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt', 'nav-cfi-utilization', 'nav-documents']
+    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt', 'nav-cfi-utilization']
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
@@ -5308,14 +5336,8 @@ async function enterApp() {
 
   // Messages: all authenticated users except maintenance-only
   const navMsg = document.getElementById('nav-messages');
-  const navDocs = document.getElementById('nav-documents');
   if (navMsg) navMsg.classList.toggle('hidden', currentUser.role === 'maintenance');
-  // Documents: staff only — students/renters cannot upload documents
-  if (navDocs) {
-    const canSeeDocs = ['owner', 'admin', 'instructor'].includes(currentUser.role);
-    navDocs.classList.toggle('hidden', !canSeeDocs);
-    navDocs.style.display = canSeeDocs ? '' : 'none';
-  }
+  syncDocumentsNav();
 
   // Admin Settings: owner and admin only
   try {
@@ -5368,6 +5390,7 @@ async function enterApp() {
     // Error logged to console only — no debug UI
   }
   // Students land on their portal; everyone else lands on dashboard
+  syncDocumentsNav();
   document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
     el.style.display = el.classList.contains('hidden') ? 'none' : '';
   });

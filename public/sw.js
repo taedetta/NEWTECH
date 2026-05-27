@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'nta-portal-v2';
+const CACHE = 'nta-portal-v3';
 const OFFLINE_API_CACHE = 'nta-offline-api-v1';
 
 const OFFLINE_URLS = [
@@ -77,6 +77,14 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname.startsWith('/api/')) return;
+
+  // Always fetch /app HTML from network so nav/role changes deploy immediately
+  if (url.pathname === '/app' || url.pathname === '/app/') {
+    event.respondWith(
+      fetch(request).catch(() => caches.match(request))
+    );
+    return;
+  }
 
   event.respondWith(
     fetch(request)
