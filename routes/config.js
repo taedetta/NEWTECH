@@ -10,10 +10,12 @@ const router = express.Router();
  */
 router.get('/', (req, res) => {
   const appEnv = process.env.APP_ENV || 'production';
+  const staging = appEnv === 'staging';
   res.json({
     appEnv,
-    isStaging: appEnv === 'staging',
-    isProduction: appEnv !== 'staging',
+    isStaging: staging,
+    isProduction: !staging,
+    sideEffectsDisabled: staging,
     appUrl: process.env.APP_URL || '',
     version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || null,
   });

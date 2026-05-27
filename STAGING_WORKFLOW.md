@@ -62,6 +62,26 @@ That deploys **`flightslate-web`** (live site only).
 
 ---
 
+## Data isolation (staging cannot affect production)
+
+Staging is isolated at **four layers**:
+
+| Layer | How |
+|-------|-----|
+| **Database** | Separate Postgres (`flightslate-staging-db`). All writes stay in staging only. |
+| **Deploy** | `staging` branch → `flightslate-staging` only. Production deploys from `main` only. |
+| **Emails** | Staging never emails real users — messages go to `STAGING_EMAIL_SINK` (admin) with `[STAGING]` prefix. |
+| **Background jobs** | Backups, CSV exports, pre-flight reminders, instructor briefings, and device push are **disabled** on staging. |
+| **File uploads (R2)** | Staging uploads use a `staging/` prefix so they don't overwrite production files. |
+
+Refresh staging data from production (optional):
+
+```bash
+RAILWAY_API_TOKEN=... node scripts/clone-prod-to-staging.js
+```
+
+---
+
 ## One-time Railway setup
 
 Run once (requires `RAILWAY_API_TOKEN`):

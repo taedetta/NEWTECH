@@ -176,7 +176,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
 app.listen(PORT, async () => {
   const appEnv = process.env.APP_ENV || 'production';
   const nodeEnv = process.env.NODE_ENV || 'development';
-  console.log(`FlightSlate running on port ${PORT} (${nodeEnv})`);
+  console.log(`FlightSlate running on port ${PORT} (${nodeEnv}, APP_ENV=${appEnv})`);
+  if (appEnv === 'staging') {
+    console.log('[staging] Isolated DB · emails redirected · crons off · R2 uploads prefixed staging/');
+  }
 
   // Startup tasks — await so file-override rehydration completes before serving
   await runStartup({ pool });

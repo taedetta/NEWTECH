@@ -459,6 +459,12 @@ async function runExport(pool) {
 // ── Scheduler ──────────────────────────────────────────────────────────────────
 
 function startExportScheduler(pool) {
+  const { isStaging } = require('./app-env');
+  if (isStaging()) {
+    console.log('[export] Staging — nightly export scheduler disabled');
+    return;
+  }
+
   console.log('[export] Nightly CSV export scheduled at 11:00 PM CT');
   const lastRun = { nightly: null };
 

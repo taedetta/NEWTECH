@@ -1163,6 +1163,12 @@ async function runBackup(pool, frequency) {
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 function startBackupScheduler(pool) {
+  const { isStaging } = require('./app-env');
+  if (isStaging()) {
+    console.log('[backup] Staging — backup scheduler disabled');
+    return;
+  }
+
   console.log('[backup] Scheduler started. Daily 2:00 CT · Weekly Sun 3:00 CT · Monthly 1st 3:30 CT · Yearly Jan 1 4:00 CT');
 
   const lastRun = { daily: null, weekly: null, monthly: null, yearly: null };
