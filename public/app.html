@@ -22,6 +22,12 @@
   <meta name="twitter:description" content="Access your student portal to schedule flights, track progress, and manage training.">
   <link rel="icon" type="image/png" sizes="32x32" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png?v=2">
   <link rel="apple-touch-icon" sizes="180x180" href="https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png?v=2">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#080E1A">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="NTA Portal">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -460,6 +466,28 @@
         .flog-empty-card { text-align: center; padding: 2rem 1rem; color: var(--gray-500); font-size: 0.88rem; }
       }
     }
+
+    /* Phone App / PWA install page */
+    .phone-app-wrap { max-width: 720px; padding: 0 0 2rem; }
+    .pwa-installed-banner { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.35); border-radius: 12px; padding: 1rem 1.15rem; margin-bottom: 1.25rem; color: var(--green); font-size: 0.9rem; }
+    .pwa-device-card { background: var(--slate); border: 1px solid var(--border); border-radius: 14px; padding: 1.25rem 1.35rem; margin-bottom: 1.25rem; }
+    .pwa-device-card.highlight-card { border-color: rgba(56,189,248,0.45); box-shadow: 0 0 0 1px rgba(56,189,248,0.08); }
+    .pwa-device-card h2 { font-size: 1.05rem; margin-bottom: 0.35rem; color: var(--white); display: flex; align-items: center; gap: 0.5rem; }
+    .pwa-device-card .pwa-sub { font-size: 0.82rem; color: var(--gray-400); margin-bottom: 1rem; }
+    .pwa-steps { list-style: none; counter-reset: pwa-step; margin: 0; padding: 0; }
+    .pwa-steps li { counter-increment: pwa-step; position: relative; padding: 0.65rem 0 0.65rem 2.5rem; border-bottom: 1px solid var(--border); font-size: 0.88rem; color: var(--gray-200); line-height: 1.45; }
+    .pwa-steps li:last-child { border-bottom: none; }
+    .pwa-steps li::before { content: counter(pwa-step); position: absolute; left: 0; top: 0.6rem; width: 1.65rem; height: 1.65rem; border-radius: 50%; background: var(--sky-faint); border: 1px solid rgba(56,189,248,0.35); color: var(--sky); font-size: 0.78rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+    .pwa-install-btn { margin-top: 0.85rem; width: 100%; max-width: 320px; }
+    .pwa-install-btn.hidden-btn { display: none; }
+    .pwa-note { font-size: 0.78rem; color: var(--gray-500); margin-top: 0.75rem; line-height: 1.45; }
+    .pwa-share-icon { display: inline-block; background: var(--sky); color: #0f172a; font-weight: 700; font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 4px; vertical-align: middle; }
+    #pwa-install-banner { position: fixed; bottom: 0; left: 0; right: 0; z-index: 9000; padding: 0.85rem 1rem calc(0.85rem + env(safe-area-inset-bottom, 0px)); background: linear-gradient(180deg, transparent, rgba(8,14,26,0.92) 25%); pointer-events: none; }
+    #pwa-install-banner .pwa-banner-inner { pointer-events: auto; max-width: 520px; margin: 0 auto; background: var(--slate); border: 1px solid rgba(56,189,248,0.35); border-radius: 14px; padding: 1rem 1.1rem; display: flex; gap: 0.85rem; align-items: flex-start; box-shadow: 0 8px 32px rgba(0,0,0,0.45); }
+    #pwa-install-banner .pwa-banner-text { flex: 1; font-size: 0.85rem; color: var(--gray-200); line-height: 1.4; }
+    #pwa-install-banner .pwa-banner-text strong { color: var(--white); display: block; margin-bottom: 0.2rem; font-size: 0.92rem; }
+    #pwa-install-banner .pwa-banner-actions { display: flex; flex-direction: column; gap: 0.4rem; flex-shrink: 0; }
+    #pwa-install-banner .pwa-banner-dismiss { background: transparent; border: none; color: var(--gray-500); font-size: 0.75rem; cursor: pointer; padding: 0.2rem; }
 
     @media (max-width: 480px) {
       .main-content { padding: 0.875rem; padding-top: 4rem; }
@@ -1600,6 +1628,7 @@
           <a onclick="openOpsBilling()" data-page="billing" id="nav-billing"><span class="nav-icon">&#128176;</span> Billing</a>
           <a onclick="navigate('flight-log')" data-page="flight-log" id="nav-flight-log"><span class="nav-icon">&#128203;</span> Flight Log</a>
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
+          <a onclick="navigate('phone-app')" data-page="phone-app" id="nav-phone-app"><span class="nav-icon">&#128241;</span> Phone App</a>
           <div class="nav-divider"></div>
           <div class="nav-section-label">Management</div>
           <a onclick="navigate('approvals')" data-page="approvals" id="nav-approvals" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128100;</span> Pending Approvals <span id="approvals-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
@@ -3480,6 +3509,14 @@
           </div>
         </div>
 
+        <!-- ─── PHONE APP (PWA install) ─── -->
+        <div id="page-phone-app" class="page hidden">
+          <div class="page-header">
+            <h1>&#128241; Phone App</h1>
+          </div>
+          <div id="phone-app-content" class="phone-app-wrap"></div>
+        </div>
+
       </main>
     </div>
   </div>
@@ -3593,6 +3630,21 @@
         </div>
         <button type="submit" class="btn btn-primary btn-sm">Add to History</button>
       </form>
+    </div>
+  </div>
+
+  <!-- ─── PWA INSTALL BANNER ─── -->
+  <div id="pwa-install-banner" class="hidden">
+    <div class="pwa-banner-inner">
+      <div class="pwa-banner-text">
+        <strong id="pwa-banner-title">Install New Tech Aviation</strong>
+        <span id="pwa-banner-msg">Add the portal to your home screen for quick access.</span>
+      </div>
+      <div class="pwa-banner-actions">
+        <button type="button" id="pwa-banner-install-btn" class="btn btn-primary btn-sm" onclick="promptPWAInstall()">Install</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="navigate('phone-app'); dismissPWABanner()">How To</button>
+        <button type="button" class="pwa-banner-dismiss" onclick="dismissPWABanner()">Not now</button>
+      </div>
     </div>
   </div>
 
@@ -4972,7 +5024,7 @@ async function enterApp() {
 
   // ── Maintenance role: show ONLY 5 tabs, hide everything else ──
   if (currentUser.role === 'maintenance') {
-    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking']);
+    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -4999,13 +5051,14 @@ async function enterApp() {
     syncSidebarAuth(true);
     navigate('tracking');
     if (appEl) appEl.classList.remove('app-booting');
+    initPWA();
     return;
   }
   // ── End maintenance role ──
 
   // ── Renter role: limited nav (Dashboard, Schedule, Fleet, My Portal, Flight Log, History, Billing) ──
   if (currentUser.role === 'renter') {
-    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing']);
+    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing', 'phone-app']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -5027,9 +5080,23 @@ async function enterApp() {
     syncSidebarAuth(true);
     navigate('portal');
     if (appEl) appEl.classList.remove('app-booting');
+    initPWA();
     return;
   }
   // ── End renter role ──
+
+  // Restore nav from boot-time hide, then apply role rules below
+  document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
+    el.classList.remove('hidden');
+    el.style.display = '';
+  });
+  document.querySelectorAll('.nav-section-label, .nav-divider').forEach(el => { el.style.display = ''; });
+  ['nav-portal', 'nav-approvals', 'nav-discrepancies', 'nav-at-risk', 'nav-leads', 'nav-instructor-hours',
+    'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt']
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
+    });
 
   // Show approvals nav for owner/admin/instructor
   const navApprovals = document.getElementById('nav-approvals');
@@ -5170,8 +5237,12 @@ async function enterApp() {
     // Error logged to console only — no debug UI
   }
   // Students land on their portal; everyone else lands on dashboard
+  document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
+    el.style.display = el.classList.contains('hidden') ? 'none' : '';
+  });
   navigate(currentUser.role === 'student' ? 'portal' : 'dashboard');
   if (appEl) appEl.classList.remove('app-booting');
+  initPWA();
   startAppPolling();
 }
 
@@ -5208,6 +5279,158 @@ function showToast(msg, type) {
   toast.style.opacity = '1';
   clearTimeout(_toastTimeout);
   _toastTimeout = setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+}
+
+// ─── PWA / Phone App ─────────────────────────────────────
+let deferredPWAInstallPrompt = null;
+
+function isStandalonePWA() {
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
+
+function detectMobilePlatform() {
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPod/i.test(ua)) return 'iphone';
+  if (/iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ipad';
+  if (/Android/i.test(ua)) return 'android';
+  return 'other';
+}
+
+function initPWA() {
+  if (window._pwaInitialized) return;
+  window._pwaInitialized = true;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(err => {
+      console.warn('[pwa] service worker registration failed:', err.message);
+    });
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPWAInstallPrompt = e;
+    updatePWAInstallUI();
+    maybeShowPWABanner();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredPWAInstallPrompt = null;
+    localStorage.setItem('pwa_installed', '1');
+    dismissPWABanner();
+    if (currentPage === 'phone-app') loadPhoneAppPage();
+    showToast('App installed — open from your home screen', 'success');
+  });
+
+  updatePWAInstallUI();
+  if (!isStandalonePWA()) setTimeout(maybeShowPWABanner, 2500);
+}
+
+async function promptPWAInstall() {
+  if (!deferredPWAInstallPrompt) {
+    navigate('phone-app');
+    return false;
+  }
+  deferredPWAInstallPrompt.prompt();
+  const { outcome } = await deferredPWAInstallPrompt.userChoice;
+  if (outcome === 'accepted') {
+    deferredPWAInstallPrompt = null;
+    dismissPWABanner();
+    updatePWAInstallUI();
+  }
+  return outcome === 'accepted';
+}
+
+function dismissPWABanner() {
+  const b = document.getElementById('pwa-install-banner');
+  if (b) b.classList.add('hidden');
+  localStorage.setItem('pwa_banner_dismissed', String(Date.now()));
+}
+
+function maybeShowPWABanner() {
+  if (isStandalonePWA()) return;
+  if (localStorage.getItem('pwa_installed')) return;
+  const dismissed = parseInt(localStorage.getItem('pwa_banner_dismissed') || '0', 10);
+  if (dismissed && Date.now() - dismissed < 7 * 86400000) return;
+  const platform = detectMobilePlatform();
+  const banner = document.getElementById('pwa-install-banner');
+  const title = document.getElementById('pwa-banner-title');
+  const msg = document.getElementById('pwa-banner-msg');
+  const installBtn = document.getElementById('pwa-banner-install-btn');
+  if (!banner) return;
+  if (platform === 'android' && deferredPWAInstallPrompt) {
+    if (title) title.textContent = 'Install New Tech Aviation';
+    if (msg) msg.textContent = 'Add the portal to your home screen for quick, app-like access.';
+    if (installBtn) installBtn.classList.remove('hidden');
+    banner.classList.remove('hidden');
+  } else if (platform === 'iphone' || platform === 'ipad') {
+    if (title) title.textContent = 'Add to Home Screen';
+    if (msg) msg.textContent = 'Install this portal on your iPhone for full-screen access — tap How To for steps.';
+    if (installBtn) installBtn.classList.add('hidden');
+    banner.classList.remove('hidden');
+  }
+}
+
+function updatePWAInstallUI() {
+  const androidBtn = document.getElementById('pwa-android-install-btn');
+  const androidWait = document.getElementById('pwa-android-wait-msg');
+  const canInstall = !!deferredPWAInstallPrompt && !isStandalonePWA();
+  if (androidBtn) {
+    androidBtn.classList.toggle('hidden-btn', !canInstall);
+    androidBtn.disabled = !canInstall;
+  }
+  if (androidWait) androidWait.classList.toggle('hidden', canInstall || isStandalonePWA());
+}
+
+function loadPhoneAppPage() {
+  const el = document.getElementById('phone-app-content');
+  if (!el) return;
+  const platform = detectMobilePlatform();
+  const installed = isStandalonePWA();
+  const canInstallAndroid = !!deferredPWAInstallPrompt && !installed;
+  const highlightIphone = platform === 'iphone' || platform === 'ipad';
+  const highlightAndroid = platform === 'android';
+
+  let html = '';
+  if (installed) {
+    html += '<div class="pwa-installed-banner">&#10003; You\'re using the installed app from your home screen.</div>';
+  }
+
+  html += `<div class="pwa-device-card ${highlightIphone ? 'highlight-card' : ''}">
+    <h2>&#63743; iPhone &amp; iPad</h2>
+    <p class="pwa-sub">Apple doesn't allow automatic install prompts — follow these steps to add the portal to your home screen.</p>
+    <ol class="pwa-steps">
+      <li>Open this page in <strong>Safari</strong> (Chrome on iPhone won't offer Add to Home Screen the same way).</li>
+      <li>Tap the <span class="pwa-share-icon">Share</span> button at the bottom of Safari (square with arrow pointing up).</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+      <li>Tap <strong>Add</strong> in the top-right corner.</li>
+      <li>Open <strong>NTA Portal</strong> from your home screen — it runs full-screen like a native app.</li>
+    </ol>
+    <p class="pwa-note">On iPad, the Share button is in the top toolbar. If you don't see Add to Home Screen, scroll the share sheet or tap Edit Actions to enable it.</p>
+  </div>`;
+
+  html += `<div class="pwa-device-card ${highlightAndroid ? 'highlight-card' : ''}">
+    <h2>&#129302; Android</h2>
+    <p class="pwa-sub">Install the portal as an app on your home screen — one tap when the button below is available.</p>
+    <button type="button" id="pwa-android-install-btn" class="btn btn-primary pwa-install-btn${canInstallAndroid ? '' : ' hidden-btn'}" onclick="promptPWAInstall()">Install App</button>
+    <p id="pwa-android-wait-msg" class="pwa-note${canInstallAndroid || installed ? ' hidden' : ''}">If the install button isn't showing yet, use Chrome and try again in a few seconds — or tap the menu (&#8942;) in the top-right and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</p>
+    <ol class="pwa-steps" style="margin-top:1rem">
+      <li>Use <strong>Google Chrome</strong> to open the portal.</li>
+      <li>Tap <strong>Install App</strong> above, or open Chrome's menu (&#8942;) → <strong>Install app</strong> / <strong>Add to Home screen</strong>.</li>
+      <li>Confirm when prompted — the icon appears on your home screen.</li>
+      <li>Launch <strong>NTA Portal</strong> anytime without opening the browser first.</li>
+    </ol>
+  </div>`;
+
+  html += `<div class="pwa-device-card">
+    <h2>&#128187; Desktop</h2>
+    <p class="pwa-sub">You can also install this portal in Chrome or Edge on a computer.</p>
+    <ol class="pwa-steps">
+      <li>Look for the install icon in the address bar (monitor with arrow), or open the browser menu.</li>
+      <li>Choose <strong>Install New Tech Aviation</strong> or <strong>Apps → Install this site as an app</strong>.</li>
+    </ol>
+  </div>`;
+
+  el.innerHTML = html;
 }
 
 // ─── TRAINING PROGRAMS ADMIN ─────────────────────────────
@@ -5679,6 +5902,7 @@ function navigate(page) {
   else if (page === 'portal') loadStudentPortal();
   else if (page === 'availability') loadAvailabilityPage();
   else if (page === 'leads') loadLeads();
+  else if (page === 'phone-app') loadPhoneAppPage();
   // admin-settings has no async data to load — static page
 }
 
