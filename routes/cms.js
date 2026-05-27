@@ -161,8 +161,8 @@ router.put('/project-files', authenticateToken, requirePermission('can_edit_webs
     // Write to filesystem (immediate effect on live app)
     fs.writeFileSync(fullPath, content, 'utf8');
 
-    // Persist to database so the change survives Render redeploys.
-    // Render's filesystem is ephemeral — without this, editor changes
+    // Persist to database so the change survives Railway redeploys.
+    // Railway's filesystem is ephemeral — without this, editor changes
     // are lost every time the app rebuilds from GitHub.
     try {
       await saveFileOverride(filePath, content, req.user?.id);
@@ -234,7 +234,7 @@ router.get('/download-source', authenticateToken, requirePermission('can_edit_we
 
 // ─── FILE OVERRIDE MANAGEMENT ──────────────────────────────────────
 // Endpoints for viewing/syncing editor changes that are persisted to DB
-// so they survive Render's ephemeral filesystem rebuilds.
+// so they survive Railway's ephemeral filesystem rebuilds.
 
 router.get('/file-overrides', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {

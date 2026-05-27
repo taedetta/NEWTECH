@@ -1370,6 +1370,8 @@
         .journey-input { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1.5px solid #1E293B; font-size: 0.875rem; font-family: 'Inter', sans-serif; color: #E2E8F0; background: #0F1D2F; transition: border-color 0.2s, box-shadow 0.2s; outline: none; }
         .journey-input:focus { border-color: #D97706; box-shadow: 0 0 0 3px rgba(217,119,6,0.1); }
         .journey-input::placeholder { color: #475569; }
+        .journey-input.journey-textarea { min-height: 80px; resize: vertical; }
+        select.journey-input { cursor: pointer; }
         .journey-submit { width: 100%; background: #D97706; color: #fff; border: none; padding: 12px; border-radius: 8px; font-size: 0.9rem; font-weight: 700; font-family: 'Inter', sans-serif; cursor: pointer; transition: background 0.2s, transform 0.15s; }
         .journey-submit:hover { background: #B45309; transform: translateY(-1px); }
         .journey-form-note { margin-top: 0.75rem; font-size: 0.75rem; color: #475569; text-align: center; }
@@ -1705,7 +1707,21 @@ __CMS_INJECT__
                             <input type="email" name="email" placeholder="Email address" class="journey-input" required>
                         </div>
                         <div class="journey-form-row full">
-                            <input type="tel" name="phone" placeholder="Phone (optional)" class="journey-input">
+                            <input type="tel" name="phone" placeholder="Phone number" class="journey-input" required>
+                        </div>
+                        <div class="journey-form-row full">
+                            <select name="programInterest" class="journey-input">
+                                <option value="">Program interested in (optional)</option>
+                                <option value="Discovery Flight">Discovery Flight</option>
+                                <option value="Sport Pilot">Sport Pilot</option>
+                                <option value="Private Pilot (PPL)">Private Pilot (PPL)</option>
+                                <option value="Instrument Rating (IFR)">Instrument Rating (IFR)</option>
+                                <option value="Commercial Pilot">Commercial Pilot</option>
+                                <option value="Not sure yet">Not sure yet</option>
+                            </select>
+                        </div>
+                        <div class="journey-form-row full">
+                            <textarea name="message" placeholder="Tell us what you're looking for (optional)" class="journey-input journey-textarea" rows="3"></textarea>
                         </div>
                         <button type="submit" class="journey-submit">Send Me Info — No Commitment</button>
                         <p class="journey-form-note">We'll reply within 1 business day.</p>
@@ -2124,6 +2140,8 @@ __CMS_INJECT__
                     <a href="#location">Location</a>
                     <a href="#faq">FAQ</a>
                     <a href="/mosaic">MOSAIC</a>
+                    <a href="/terms-of-service">Terms</a>
+                    <a href="/privacy-policy">Privacy</a>
                     <a href="#contact">Contact</a>
                     <a href="/app">Student Portal</a>
                     <a href="https://www.instagram.com/newtechaviation?igsh=MTN3NTB1c2h1ZzZnMQ%3D%3D&utm_source=qr" target="_blank" rel="noopener noreferrer" aria-label="New Tech Aviation on Instagram" class="footer-social-icon">
@@ -2806,8 +2824,16 @@ __CMS_INJECT__
                 firstName: form.elements.firstName.value,
                 lastName: form.elements.lastName.value,
                 email: form.elements.email.value,
-                phone: form.elements.phone ? form.elements.phone.value : ''
+                phone: form.elements.phone ? form.elements.phone.value : '',
+                programInterest: form.elements.programInterest ? form.elements.programInterest.value : '',
+                message: form.elements.message ? form.elements.message.value.trim() : ''
             };
+
+            if (!data.phone || !data.phone.trim()) {
+                btn.textContent = 'Phone required';
+                btn.disabled = false;
+                return;
+            }
 
             btn.textContent = 'Sending…';
             btn.disabled = true;
@@ -2818,8 +2844,10 @@ __CMS_INJECT__
                 body: JSON.stringify({
                     name: data.firstName + ' ' + data.lastName,
                     email: data.email,
-                    phone: data.phone,
+                    phone: data.phone.trim(),
                     experience: 'beginner',
+                    program_interest: data.programInterest || null,
+                    message: data.message || null,
                     source: 'index-journey-cta'
                 })
             })

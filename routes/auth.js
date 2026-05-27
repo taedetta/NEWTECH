@@ -9,6 +9,7 @@ const { authenticateToken, getUserPermissions } = require('../middleware/auth');
 const { checkPasswordResetRateLimit } = require('../middleware/rate-limiter');
 const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingApprovalEmail, ADMIN_NOTIFICATION_EMAILS } = require('../email-templates');
 const { getAppUrl } = require('../lib/app-url');
+const { TERMS_VERSION } = require('../lib/terms');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
@@ -38,10 +39,14 @@ router.use((req, res, next) => {
 
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name, role, phone } = req.body;
+    const { email, password, name, role, phone, acceptedTerms, termsVersion } = req.body;
     if (!email || !password || !name) {
       return res.status(400).json({ error: 'Email, password, and name are required' });
     }
+    if (!acceptedTerms) {
+      return res.status(400).json({ error: 'You must agree to the Terms of Service to create an account' });
+    }
+    const acceptedVersion = termsVersion || TERMS_VERSION;
     // Phone required for all roles
     if (!phone || !phone.trim()) {
       return res.status(400).json({ error: 'Phone number is required' });
@@ -74,8 +79,9 @@ router.post('/register', async (req, res) => {
         `UPDATE users SET deleted_at = NULL, password_hash = $1, name = $2, phone_number = $3,
          role = $4, approval_status = 'pending',
          is_instructor = CASE WHEN $4 = 'instructor' THEN TRUE ELSE FALSE END,
+         terms_accepted_at = NOW(), terms_version = $6,
          updated_at = NOW() WHERE id = $5`,
-        [passwordHash, name, formattedPhone, userRole, oldUser.id]
+        [passwordHash, name, formattedPhone, userRole, oldUser.id, acceptedVersion]
       );
       res.json({
         user: { id: oldUser.id, email: oldUser.email, name, role: userRole, approval_status: 'pending' },
@@ -88,10 +94,10 @@ router.post('/register', async (req, res) => {
     }
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (email, name, password_hash, role, phone_number, approval_status, is_instructor)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-       RETURNING id, email, name, role, phone_number, approval_status`,
-      [email.toLowerCase(), name, passwordHash, userRole, formattedPhone, userRole === 'instructor']
+      `INSERT INTO users (email, name, password_hash, role, phone_number, approval_status, is_instructor, terms_accepted_at, terms_version)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7)
+       RETURNING id, email, name, role, phone_number, approval_status, terms_accepted_at, terms_version`,
+      [email.toLowerCase(), name, passwordHash, userRole, formattedPhone, userRole === 'instructor', acceptedVersion]
     );
     const user = result.rows[0];
     // New users land on pending-approval screen — no token issued, no app access
@@ -113,6 +119,14 @@ router.get('/login', (req, res) => {
 // Diagnostic endpoint — unique response to verify route reaches Express
 router.get('/diagnostic', (req, res) => {
   res.json({ express: true, timestamp: new Date().toISOString(), path: '/api/auth/diagnostic' });
+});
+
+router.get('/terms-info', (req, res) => {
+  res.json({
+    version: TERMS_VERSION,
+    termsUrl: '/terms-of-service',
+    privacyUrl: '/privacy-policy',
+  });
 });
 
 // Test GET route — for debugging route registration

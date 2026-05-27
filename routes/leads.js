@@ -6,7 +6,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { createLead, listLeads, updateLeadStatus } = require('../db/leads');
+const { createLead, createManualLead, listLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus } = require('../db/leads');
 const { sendEmail } = require('../email-templates');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
@@ -59,6 +59,7 @@ function adminNotificationHtml(lead) {
             <tr style="border-bottom:1px solid #eee;"><td style="color:#888;">Email</td><td><a href="mailto:${esc(lead.email)}" style="color:#F5A623;">${esc(lead.email)}</a></td></tr>
             <tr style="border-bottom:1px solid #eee;"><td style="color:#888;">Phone</td><td><a href="tel:${esc(lead.phone)}" style="color:#F5A623;">${esc(lead.phone)}</a></td></tr>
             <tr style="border-bottom:1px solid #eee;"><td style="color:#888;">Experience</td><td>${esc(lead.experience_level)}</td></tr>
+            <tr style="border-bottom:1px solid #eee;"><td style="color:#888;">Program</td><td>${esc(lead.program_interest)}</td></tr>
             <tr style="border-bottom:1px solid #eee;"><td style="color:#888;">Preferred Date</td><td>${esc(lead.preferred_date)}</td></tr>
             <tr><td style="color:#888;vertical-align:top;padding-top:12px;">Message</td><td style="padding-top:12px;">${esc(lead.message)}</td></tr>
           </table>
@@ -123,7 +124,7 @@ router.post('/', async (req, res) => {
     return res.status(429).json({ error: 'Too many requests. Please try again later.' });
   }
 
-  const { name, email, phone, preferred_date, experience_level, message } = req.body;
+  const { name, email, phone, preferred_date, experience_level, message, program_interest, source, experience } = req.body;
 
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Valid email is required.' });
@@ -136,8 +137,10 @@ router.post('/', async (req, res) => {
       email: email.trim().toLowerCase(),
       phone: phone.trim(),
       preferred_date: preferred_date || null,
-      experience_level: experience_level || null,
+      experience_level: experience_level || experience || null,
       message: message ? message.trim() : null,
+      program_interest: program_interest ? program_interest.trim() : null,
+      source_label: source || null,
     });
   } catch (err) {
     console.error('[leads] DB insert error:', err.message);
@@ -150,7 +153,7 @@ router.post('/', async (req, res) => {
       ADMIN_NOTIFY_EMAIL,
       `New Discovery Flight Request — ${lead.name}`,
       adminNotificationHtml(lead),
-      `New discovery flight lead:\nName: ${lead.name}\nEmail: ${lead.email}\nPhone: ${lead.phone}\nExperience: ${lead.experience_level || '—'}\nPreferred: ${lead.preferred_date || '—'}\nMessage: ${lead.message || '—'}`
+      `New discovery flight lead:\nName: ${lead.name}\nEmail: ${lead.email}\nPhone: ${lead.phone}\nProgram: ${lead.program_interest || '—'}\nExperience: ${lead.experience_level || '—'}\nPreferred: ${lead.preferred_date || '—'}\nMessage: ${lead.message || '—'}`
     ),
     sendEmail(
       lead.email,
@@ -161,6 +164,30 @@ router.post('/', async (req, res) => {
   ]);
 
   return res.json({ success: true, lead_id: lead.id });
+});
+
+// POST /api/leads/manual — admin/owner manual entry
+router.post('/manual', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  const { name, email, phone, preferred_date, experience_level, message, program_interest, status, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+  if (!email || !email.trim()) return res.status(400).json({ error: 'Email is required.' });
+
+  try {
+    const lead = await createManualLead({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone?.trim() || null,
+      preferred_date: preferred_date || null,
+      experience_level: experience_level || null,
+      message: (message || notes)?.trim() || null,
+      program_interest: program_interest?.trim() || null,
+      status: status || 'new',
+    }, req.user.id);
+    return res.status(201).json({ lead });
+  } catch (err) {
+    console.error('[leads] manual create error:', err.message);
+    return res.status(500).json({ error: 'Could not create lead.' });
+  }
 });
 
 // GET /api/leads — admin/owner only
@@ -174,6 +201,37 @@ router.get('/', authenticateToken, requireRole('owner', 'admin'), async (req, re
   }
 });
 
+// GET /api/leads/:id — single lead with activity history
+router.get('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const lead = await getLeadById(id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    const activity = await getLeadActivity(id);
+    return res.json({ lead, activity });
+  } catch (err) {
+    console.error('[leads] get error:', err.message);
+    return res.status(500).json({ error: 'Could not load lead.' });
+  }
+});
+
+// POST /api/leads/:id/notes — add note to lead history
+router.post('/:id/notes', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  const { note } = req.body;
+  if (!note || !note.trim()) return res.status(400).json({ error: 'Note is required.' });
+  try {
+    const id = Number(req.params.id);
+    const lead = await getLeadById(id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    await addLeadNote(id, req.user.id, note.trim());
+    const activity = await getLeadActivity(id);
+    return res.json({ ok: true, activity });
+  } catch (err) {
+    console.error('[leads] note error:', err.message);
+    return res.status(500).json({ error: 'Could not save note.' });
+  }
+});
+
 // PATCH /api/leads/:id/status — admin/owner only
 router.patch('/:id/status', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const { id } = req.params;
@@ -183,9 +241,10 @@ router.patch('/:id/status', authenticateToken, requireRole('owner', 'admin'), as
     return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
   }
   try {
-    const lead = await updateLeadStatus(Number(id), status);
+    const lead = await updateLeadStatus(Number(id), status, req.user.id);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
-    return res.json({ lead });
+    const activity = await getLeadActivity(Number(id));
+    return res.json({ lead, activity });
   } catch (err) {
     console.error('[leads] status update error:', err.message);
     return res.status(500).json({ error: 'Could not update status.' });

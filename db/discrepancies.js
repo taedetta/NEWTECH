@@ -10,6 +10,14 @@ const { sendEmail } = require('../email-templates');
 const DISCREPANCY_THRESHOLD = 0.1; // hours — flag if delta exceeds this
 const OWNER_EMAIL = 'blankthe97@gmail.com';
 
+async function ensureHobbsUniqueIndex(client) {
+  const db = client || pool;
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS flight_hobbs_readings_booking_role_unique
+    ON flight_hobbs_readings(booking_id, role)
+  `);
+}
+
 function readingDelta(row) {
   if (row.hobbs_delta != null && row.hobbs_delta !== '') return parseFloat(row.hobbs_delta);
   const start = parseFloat(row.hobbs_start);
@@ -27,6 +35,7 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await ensureHobbsUniqueIndex(client);
 
     const hobbsDelta = hobbsEnd - hobbsStart;
 

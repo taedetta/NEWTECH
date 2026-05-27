@@ -92,14 +92,12 @@ async function main() {
     R2_SECRET_ACCESS_KEY: renderVars.R2_SECRET_ACCESS_KEY,
     R2_BUCKET: renderVars.R2_BUCKET,
     R2_PUBLIC_URL: renderVars.R2_PUBLIC_URL || 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev',
-    POLSIA_API_KEY: undefined,
-    POLSIA_R2_BASE_URL: undefined,
   };
 
   Object.keys(vars).forEach((k) => vars[k] === undefined && delete vars[k]);
 
-  if (!vars.DATABASE_URL) throw new Error('DATABASE_URL missing — pass via RAILWAY_VARS_JSON from Render');
-  if (!vars.JWT_SECRET) throw new Error('JWT_SECRET missing — pass via RAILWAY_VARS_JSON from Render');
+  if (!vars.DATABASE_URL) throw new Error('DATABASE_URL missing — pass via RAILWAY_VARS_JSON');
+  if (!vars.JWT_SECRET) throw new Error('JWT_SECRET missing — pass via RAILWAY_VARS_JSON');
 
   console.log('Connecting GitHub repo...');
   try {

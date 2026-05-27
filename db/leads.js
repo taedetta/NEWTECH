@@ -1,33 +1,63 @@
 /**
  * db/leads.js — Discovery flight lead persistence.
- * Owns: discovery_flight_leads table reads and writes (with source isolation).
- * Does NOT own: email notification, rate limiting, request validation.
  */
 
 const pool = require('./index');
-const { buildSourceParam, addSourceFilter, queryWithSourceFilter } = require('./source-wrapper');
+const { buildSourceParam, queryWithSourceFilter } = require('./source-wrapper');
 
-/**
- * Insert a new discovery flight lead (auto-tagged with APP_ENV source).
- * @param {{ name, email, phone, preferred_date, experience_level, message }} lead
- * @returns {Promise<Object>} inserted row
- */
-async function createLead({ name, email, phone, preferred_date, experience_level, message }) {
+async function logLeadActivity(client, { leadId, userId, activityType, body, oldStatus, newStatus }) {
+  const db = client || pool;
+  await db.query(
+    `INSERT INTO lead_activity (lead_id, user_id, activity_type, body, old_status, new_status)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [leadId, userId || null, activityType, body || null, oldStatus || null, newStatus || null]
+  );
+}
+
+async function createLead({ name, email, phone, preferred_date, experience_level, message, program_interest, source_label }) {
   const { source } = buildSourceParam();
   const result = await pool.query(
     `INSERT INTO discovery_flight_leads
-       (name, email, phone, preferred_date, experience_level, message, status, created_at, updated_at, source)
-     VALUES ($1, $2, $3, $4, $5, $6, 'new', NOW(), NOW(), $7)
+       (name, email, phone, preferred_date, experience_level, message, program_interest, source_label, status, created_at, updated_at, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', NOW(), NOW(), $9)
      RETURNING *`,
-    [name, email, phone, preferred_date || null, experience_level || null, message || null, source]
+    [
+      name, email, phone, preferred_date || null, experience_level || null,
+      message || null, program_interest || null, source_label || null, source,
+    ]
   );
-  return result.rows[0];
+  const lead = result.rows[0];
+  await logLeadActivity(null, {
+    leadId: lead.id,
+    userId: null,
+    activityType: 'created',
+    body: source_label ? `Submitted via ${source_label}` : 'Lead submitted',
+  });
+  return lead;
 }
 
-/**
- * List all leads ordered by newest first (filtered by APP_ENV source).
- * @returns {Promise<Object[]>}
- */
+async function createManualLead({ name, email, phone, preferred_date, experience_level, message, program_interest, status }, userId) {
+  const { source } = buildSourceParam();
+  const result = await pool.query(
+    `INSERT INTO discovery_flight_leads
+       (name, email, phone, preferred_date, experience_level, message, program_interest, source_label, status, created_at, updated_at, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8, NOW(), NOW(), $9)
+     RETURNING *`,
+    [
+      name, email, phone, preferred_date || null, experience_level || null,
+      message || null, program_interest || null, status || 'new', source,
+    ]
+  );
+  const lead = result.rows[0];
+  await logLeadActivity(null, {
+    leadId: lead.id,
+    userId,
+    activityType: 'manual',
+    body: message || 'Lead added manually',
+  });
+  return lead;
+}
+
 async function listLeads() {
   const result = await queryWithSourceFilter(
     `SELECT * FROM discovery_flight_leads ORDER BY created_at DESC`
@@ -35,18 +65,58 @@ async function listLeads() {
   return result.rows;
 }
 
-/**
- * Update a lead's status (filtered by APP_ENV source).
- * @param {number} id
- * @param {string} status
- * @returns {Promise<Object>}
- */
-async function updateLeadStatus(id, status) {
+async function getLeadById(id) {
   const result = await queryWithSourceFilter(
-    `UPDATE discovery_flight_leads SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-    [status, id]
+    `SELECT * FROM discovery_flight_leads WHERE id = $1`,
+    [id]
   );
   return result.rows[0];
 }
 
-module.exports = { createLead, listLeads, updateLeadStatus };
+async function getLeadActivity(leadId) {
+  const result = await pool.query(
+    `SELECT la.*, u.name AS user_name
+     FROM lead_activity la
+     LEFT JOIN users u ON u.id = la.user_id
+     WHERE la.lead_id = $1
+     ORDER BY la.created_at ASC`,
+    [leadId]
+  );
+  return result.rows;
+}
+
+async function addLeadNote(leadId, userId, note) {
+  await logLeadActivity(null, { leadId, userId, activityType: 'note', body: note });
+  await pool.query(`UPDATE discovery_flight_leads SET updated_at = NOW() WHERE id = $1`, [leadId]);
+}
+
+async function updateLeadStatus(id, status, userId) {
+  const existing = await getLeadById(id);
+  if (!existing) return null;
+  const result = await queryWithSourceFilter(
+    `UPDATE discovery_flight_leads SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+    [status, id]
+  );
+  const lead = result.rows[0];
+  if (lead && existing.status !== status) {
+    await logLeadActivity(null, {
+      leadId: id,
+      userId,
+      activityType: 'status_change',
+      oldStatus: existing.status,
+      newStatus: status,
+    });
+  }
+  return lead;
+}
+
+module.exports = {
+  createLead,
+  createManualLead,
+  listLeads,
+  getLeadById,
+  getLeadActivity,
+  addLeadNote,
+  updateLeadStatus,
+  logLeadActivity,
+};

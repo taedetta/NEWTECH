@@ -11,7 +11,7 @@ const { chromium } = require('playwright');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
-  : 'http://localhost:3000';
+  : 'https://www.newtechaviation.com';
 
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 

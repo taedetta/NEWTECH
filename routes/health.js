@@ -1,6 +1,6 @@
 /**
  * Health check routes — /health and /health/deep.
- * /health: lightweight, no DB, for Render deploy checks.
+ * /health: lightweight, no DB, for Railway deploy checks.
  * /health/deep: full stack check (DB + critical tables + routes), returns 503 if degraded.
  */
 

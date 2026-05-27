@@ -1373,6 +1373,12 @@
                 <option value="maintenance">Maintenance Technician</option>
               </select>
             </div>
+            <div class="form-group" style="margin-top:0.75rem;">
+              <label style="display:flex;align-items:flex-start;gap:0.5rem;font-weight:400;cursor:pointer;line-height:1.45;">
+                <input type="checkbox" id="register-terms" required style="margin-top:0.2rem;width:auto;">
+                <span>I agree to the <a href="/terms-of-service" target="_blank" rel="noopener">Terms of Service</a> and <a href="/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a>. I understand this website and scheduling software are <strong>supplemental tools only</strong> — not a substitute for official weather, airworthiness checks, or compliance with FAR/AIM and FAA requirements.</span>
+              </label>
+            </div>
             <button type="submit" class="btn btn-primary">Create Account</button>
           </form>
           <div class="auth-switch">Already have an account? <a onclick="switchAuthTab('signin')">Sign in</a></div>
@@ -3294,6 +3300,7 @@
         <div id="page-leads" class="page hidden">
           <div class="page-header">
             <h1>&#128231; Discovery Flight Leads</h1>
+            <button class="btn btn-primary btn-sm" onclick="openAddLeadModal()">+ Add Lead</button>
           </div>
           <div style="display:flex;gap:0.75rem;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap;">
             <select id="leads-status-filter" class="input-field" style="max-width:200px;padding:0.5rem 0.85rem;font-size:0.85rem" onchange="loadLeads()">
@@ -3320,6 +3327,7 @@
                     <th>Email</th>
                     <th>Phone</th>
                     <th>Experience</th>
+                    <th>Program</th>
                     <th>Preferred Date</th>
                     <th>Message</th>
                     <th>Status</th>
@@ -3334,6 +3342,118 @@
         </div>
 
       </main>
+    </div>
+  </div>
+
+  <!-- ─── ADD LEAD MODAL ─── -->
+  <div id="add-lead-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeAddLeadModal()">
+    <div class="modal" style="max-width:520px">
+      <h3>Add Lead Manually</h3>
+      <div id="add-lead-error" class="error-msg hidden"></div>
+      <form id="add-lead-form" onsubmit="submitAddLead(event)">
+        <div class="form-group">
+          <label>Full Name *</label>
+          <input type="text" id="add-lead-name" required placeholder="Jane Smith">
+        </div>
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+          <div class="form-group">
+            <label>Email *</label>
+            <input type="email" id="add-lead-email" required placeholder="jane@example.com">
+          </div>
+          <div class="form-group">
+            <label>Phone</label>
+            <input type="tel" id="add-lead-phone" placeholder="(555) 000-0000">
+          </div>
+        </div>
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+          <div class="form-group">
+            <label>Program Interest</label>
+            <select id="add-lead-program">
+              <option value="">Not specified</option>
+              <option value="Discovery Flight">Discovery Flight</option>
+              <option value="Sport Pilot">Sport Pilot</option>
+              <option value="Private Pilot (PPL)">Private Pilot (PPL)</option>
+              <option value="Instrument Rating (IFR)">Instrument Rating (IFR)</option>
+              <option value="Commercial Pilot">Commercial Pilot</option>
+              <option value="Not sure yet">Not sure yet</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Experience</label>
+            <select id="add-lead-experience">
+              <option value="">Not specified</option>
+              <option value="No flying experience">No flying experience</option>
+              <option value="Some flying experience">Some flying experience</option>
+              <option value="Student pilot">Student pilot</option>
+              <option value="Licensed pilot">Licensed pilot</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description / Notes</label>
+          <textarea id="add-lead-notes" rows="3" placeholder="How they heard about us, goals, follow-up notes…" style="width:100%;resize:vertical"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeAddLeadModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Lead</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── LEAD DETAIL MODAL ─── -->
+  <div id="lead-detail-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeLeadDetailModal()">
+    <div class="modal" style="max-width:640px;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem">
+        <div>
+          <h3 id="lead-detail-name" style="margin-bottom:0.35rem"></h3>
+          <div id="lead-detail-status-wrap"></div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeLeadDetailModal()">Close</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1.25rem;padding:1rem;background:var(--dark-blue-2);border-radius:8px;border:1px solid var(--border)">
+        <div>
+          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Email</div>
+          <a id="lead-detail-email" href="#" style="color:var(--sky);font-weight:600;word-break:break-all"></a>
+        </div>
+        <div>
+          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Phone</div>
+          <a id="lead-detail-phone" href="#" style="color:var(--sky);font-weight:600"></a>
+        </div>
+        <div>
+          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Program</div>
+          <div id="lead-detail-program" style="color:var(--gray-200)"></div>
+        </div>
+        <div>
+          <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.25rem">Source</div>
+          <div id="lead-detail-source" style="color:var(--gray-400);font-size:0.85rem"></div>
+        </div>
+      </div>
+      <div id="lead-detail-message-wrap" style="margin-bottom:1.25rem" class="hidden">
+        <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.35rem">Description</div>
+        <div id="lead-detail-message" style="color:var(--gray-300);font-size:0.88rem;line-height:1.5;white-space:pre-wrap;padding:0.75rem;background:var(--dark-blue-2);border-radius:8px;border:1px solid var(--border)"></div>
+      </div>
+      <div style="display:flex;gap:0.75rem;align-items:center;margin-bottom:1.25rem;flex-wrap:wrap">
+        <label style="font-size:0.82rem;color:var(--gray-400)">Status:</label>
+        <select id="lead-detail-status" class="input-field" style="max-width:180px;padding:0.45rem 0.75rem;font-size:0.85rem" onchange="updateLeadStatusFromDetail()">
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="booked">Booked</option>
+          <option value="no_show">No Show</option>
+          <option value="converted">Converted</option>
+        </select>
+      </div>
+      <div style="margin-bottom:1rem">
+        <div style="font-size:0.68rem;color:var(--gray-500);text-transform:uppercase;margin-bottom:0.5rem">History</div>
+        <div id="lead-detail-activity" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:0.5rem"></div>
+      </div>
+      <form onsubmit="submitLeadNote(event)">
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label>Add Note</label>
+          <textarea id="lead-detail-note-input" rows="2" placeholder="Log a call, email, or follow-up…" style="width:100%;resize:vertical"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Add to History</button>
+      </form>
     </div>
   </div>
 
@@ -4473,12 +4593,12 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
 
 // ─── APP INIT: auth gate – only show app after login ───
 (function initApp() {
-  // No token → show auth modal only (app screen stays hidden)
+  // Password reset link — show reset screen only, not login modal
+  if (resetToken) return;
   if (!token) {
     openAuthModal('signin');
     return;
   }
-  // Has token → verify and enter
   enterApp();
 })();
 
@@ -4550,7 +4670,21 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
     return;
   }
 
+  const termsEl = document.getElementById('register-terms');
+  if (!termsEl.checked) {
+    errEl.textContent = 'You must agree to the Terms of Service and Privacy Policy to create an account.';
+    errEl.classList.add('visible');
+    termsEl.focus();
+    return;
+  }
+
   try {
+    let termsVersion = '2026-05-27';
+    try {
+      const ti = await api('/api/auth/terms-info');
+      if (ti.version) termsVersion = ti.version;
+    } catch { /* use default */ }
+
     const data = await api('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({
@@ -4559,6 +4693,8 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
         password: password,
         phone: phoneRaw,
         role: document.getElementById('register-role').value,
+        acceptedTerms: true,
+        termsVersion,
       })
     });
     // All new signups require approval — show pending screen instead of entering app
@@ -16210,20 +16346,159 @@ function closeInterventionPanel() {
 
 // ─── DISCOVERY FLIGHT LEADS (admin/owner) ─────────────────
 
+let activeLeadId = null;
+
+const LEAD_PROGRAM_OPTS = ['Discovery Flight', 'Sport Pilot', 'Private Pilot (PPL)', 'Instrument Rating (IFR)', 'Commercial Pilot', 'Not sure yet'];
+
+function openAddLeadModal() {
+  document.getElementById('add-lead-error').classList.add('hidden');
+  document.getElementById('add-lead-form').reset();
+  document.getElementById('add-lead-modal').classList.remove('hidden');
+}
+
+function closeAddLeadModal() {
+  document.getElementById('add-lead-modal').classList.add('hidden');
+}
+
+async function submitAddLead(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('add-lead-error');
+  errEl.classList.add('hidden');
+  const payload = {
+    name: document.getElementById('add-lead-name').value.trim(),
+    email: document.getElementById('add-lead-email').value.trim(),
+    phone: document.getElementById('add-lead-phone').value.trim(),
+    program_interest: document.getElementById('add-lead-program').value,
+    experience_level: document.getElementById('add-lead-experience').value,
+    notes: document.getElementById('add-lead-notes').value.trim(),
+  };
+  try {
+    await api('/api/leads/manual', { method: 'POST', body: JSON.stringify(payload) });
+    closeAddLeadModal();
+    showToast('Lead added', 'success');
+    loadLeads();
+  } catch (err) {
+    errEl.textContent = err.error || 'Could not save lead';
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function openLeadDetail(id) {
+  activeLeadId = id;
+  const modal = document.getElementById('lead-detail-modal');
+  modal.classList.remove('hidden');
+  document.getElementById('lead-detail-activity').innerHTML = '<div style="color:var(--gray-500);font-size:0.82rem">Loading…</div>';
+  try {
+    const data = await api('/api/leads/' + id);
+    renderLeadDetail(data.lead, data.activity || []);
+  } catch (err) {
+    showToast(err.error || 'Could not load lead', 'error');
+    closeLeadDetailModal();
+  }
+}
+
+function closeLeadDetailModal() {
+  activeLeadId = null;
+  document.getElementById('lead-detail-modal').classList.add('hidden');
+  document.getElementById('lead-detail-note-input').value = '';
+}
+
+function renderLeadDetail(lead, activity) {
+  document.getElementById('lead-detail-name').textContent = lead.name;
+  document.getElementById('lead-detail-status-wrap').innerHTML = leadStatusBadge(lead.status);
+  document.getElementById('lead-detail-status').value = lead.status || 'new';
+
+  const emailEl = document.getElementById('lead-detail-email');
+  emailEl.textContent = lead.email || '—';
+  emailEl.href = lead.email ? 'mailto:' + lead.email : '#';
+
+  const phoneEl = document.getElementById('lead-detail-phone');
+  phoneEl.textContent = lead.phone || '—';
+  phoneEl.href = lead.phone ? 'tel:' + lead.phone.replace(/\D/g, '') : '#';
+
+  document.getElementById('lead-detail-program').textContent = lead.program_interest || '—';
+  document.getElementById('lead-detail-source').textContent = lead.source_label === 'manual' ? 'Manual entry' : (lead.source_label || 'Website form');
+
+  const msgWrap = document.getElementById('lead-detail-message-wrap');
+  if (lead.message) {
+    msgWrap.classList.remove('hidden');
+    document.getElementById('lead-detail-message').textContent = lead.message;
+  } else {
+    msgWrap.classList.add('hidden');
+  }
+
+  renderLeadActivity(activity);
+}
+
+function renderLeadActivity(items) {
+  const el = document.getElementById('lead-detail-activity');
+  if (!items.length) {
+    el.innerHTML = '<div style="color:var(--gray-500);font-size:0.82rem">No history yet.</div>';
+    return;
+  }
+  const typeLabels = {
+    created: 'Lead submitted',
+    manual: 'Added manually',
+    note: 'Note',
+    status_change: 'Status changed',
+  };
+  el.innerHTML = items.slice().reverse().map(a => {
+    const when = a.created_at ? new Date(a.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+    const who = a.user_name ? ' · ' + escHtml(a.user_name) : '';
+    let body = '';
+    if (a.activity_type === 'status_change') {
+      body = escHtml(a.old_status || '?') + ' → ' + escHtml(a.new_status || '?');
+    } else if (a.body) {
+      body = escHtml(a.body);
+    }
+    return `<div style="padding:0.65rem 0.85rem;background:var(--dark-blue-2);border-radius:8px;border:1px solid var(--border)">
+      <div style="font-size:0.72rem;color:var(--gray-500);margin-bottom:0.2rem">${escHtml(typeLabels[a.activity_type] || a.activity_type)}${who} · ${when}</div>
+      ${body ? `<div style="font-size:0.85rem;color:var(--gray-200);white-space:pre-wrap">${body}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function updateLeadStatusFromDetail() {
+  if (!activeLeadId) return;
+  const status = document.getElementById('lead-detail-status').value;
+  try {
+    const data = await api('/api/leads/' + activeLeadId + '/status', { method: 'PATCH', body: JSON.stringify({ status }) });
+    renderLeadDetail(data.lead, data.activity || []);
+    showToast('Status updated', 'success');
+    loadLeads();
+  } catch (err) {
+    showToast(err.error || 'Failed to update status', 'error');
+  }
+}
+
+async function submitLeadNote(e) {
+  e.preventDefault();
+  if (!activeLeadId) return;
+  const note = document.getElementById('lead-detail-note-input').value.trim();
+  if (!note) return;
+  try {
+    const data = await api('/api/leads/' + activeLeadId + '/notes', { method: 'POST', body: JSON.stringify({ note }) });
+    document.getElementById('lead-detail-note-input').value = '';
+    renderLeadActivity(data.activity || []);
+    showToast('Note added', 'success');
+  } catch (err) {
+    showToast(err.error || 'Failed to save note', 'error');
+  }
+}
+
 async function loadLeads() {
   const tbody = document.getElementById('leads-tbody');
   const emptyEl = document.getElementById('leads-empty');
   const listEl = document.getElementById('leads-list');
   const filter = document.getElementById('leads-status-filter').value;
-  const canDelete = ['owner', 'admin'].includes(currentUser.role);
+  const canManage = ['owner', 'admin'].includes(currentUser.role);
 
-  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--gray-500);padding:2rem">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--gray-500);padding:2rem">Loading...</td></tr>';
   emptyEl.classList.add('hidden');
   listEl.classList.remove('hidden');
 
-  // Show/hide actions column
   const actTh = document.getElementById('leads-actions-th');
-  if (actTh) { actTh.style.display = canDelete ? '' : 'none'; if (canDelete) actTh.textContent = 'Actions'; }
+  if (actTh) { actTh.style.display = canManage ? '' : 'none'; if (canManage) actTh.textContent = 'Actions'; }
 
   try {
     const data = await api('/api/leads');
@@ -16241,15 +16516,19 @@ async function loadLeads() {
       const statusBadge = leadStatusBadge(l.status);
       const dateStr = l.created_at ? new Date(l.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
       const prefDate = l.preferred_date ? String(l.preferred_date).slice(0, 10) : '—';
-      const msg = l.message ? `<span title="${escHtml(l.message)}" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;cursor:default">${escHtml(l.message).slice(0, 40)}${l.message.length > 40 ? '…' : ''}</span>` : '—';
-      const actionTd = canDelete
-        ? `<td style="white-space:nowrap"><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteLead(${l.id}, '${escHtml(l.name).replace(/'/g, "\\'")}')">Delete</button></td>`
+      const msg = l.message ? `<span title="${escHtml(l.message)}" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;cursor:default">${escHtml(l.message).slice(0, 30)}${l.message.length > 30 ? '…' : ''}</span>` : '—';
+      const actionTd = canManage
+        ? `<td style="white-space:nowrap">
+            <button class="btn btn-sm btn-secondary" style="font-size:0.72rem;padding:2px 8px;margin-right:4px" onclick="openLeadDetail(${l.id})">View</button>
+            <button class="btn btn-sm" style="font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteLead(${l.id}, '${escHtml(l.name).replace(/'/g, "\\'")}')">Delete</button>
+          </td>`
         : '';
-      return `<tr>
-        <td style="font-weight:600">${escHtml(l.name)}</td>
-        <td><a href="mailto:${escHtml(l.email)}" style="color:var(--sky)">${escHtml(l.email)}</a></td>
-        <td><a href="tel:${escHtml(l.phone || '')}" style="color:var(--gray-300)">${escHtml(l.phone || '—')}</a></td>
+      return `<tr style="cursor:pointer" onclick="if(!event.target.closest('button'))openLeadDetail(${l.id})">
+        <td style="font-weight:600;color:var(--sky)">${escHtml(l.name)}</td>
+        <td><a href="mailto:${escHtml(l.email)}" style="color:var(--sky)" onclick="event.stopPropagation()">${escHtml(l.email)}</a></td>
+        <td><a href="tel:${escHtml(l.phone || '')}" style="color:var(--gray-300)" onclick="event.stopPropagation()">${escHtml(l.phone || '—')}</a></td>
         <td style="color:var(--gray-400);font-size:0.82rem">${escHtml(l.experience_level || '—')}</td>
+        <td style="color:var(--gray-400);font-size:0.82rem">${escHtml(l.program_interest || '—')}</td>
         <td style="font-size:0.82rem;color:var(--gray-400)">${escHtml(prefDate)}</td>
         <td style="font-size:0.8rem;color:var(--gray-400)">${msg}</td>
         <td>${statusBadge}</td>
@@ -16259,7 +16538,7 @@ async function loadLeads() {
     }).join('');
   } catch (err) {
     const msg = err?.status === 403 ? 'Access denied — admin/owner only' : (err?.error || 'Failed to load leads');
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:2rem">${escHtml(msg)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:2rem">${escHtml(msg)}</td></tr>`;
     console.error('[loadLeads] error:', err);
   }
 }

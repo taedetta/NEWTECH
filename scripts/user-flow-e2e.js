@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
-  : (process.env.QA_BASE || 'http://localhost:3000');
+  : (process.env.QA_BASE || 'https://www.newtechaviation.com');
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'NewTech2026!';
 

@@ -87,7 +87,7 @@ app.use(compression({ threshold: 1024, filter: (req, res) => {
 app.use(expressJson({ limit: '25mb' }));
 app.use(cookieParser());
 
-// Health: /health (no DB) for Render probes; /health/deep for full stack check
+// Health: /health (no DB) for Railway probes; /health/deep for full stack check
 app.locals.pool = pool;
 app.locals.PORT = PORT;
 app.use('/health', healthRoutes);

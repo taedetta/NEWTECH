@@ -128,6 +128,18 @@ router.get('/sitemap.xml', (req, res) => {
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>https://www.newtechaviation.com/terms-of-service</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+  </url>
+  <url>
+    <loc>https://www.newtechaviation.com/privacy-policy</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+  </url>
 </urlset>`
   );
 });
@@ -218,6 +230,16 @@ router.get('/become-a-pilot', (req, res) => {
 router.get('/book-discovery-flight', (req, res) => {
   res.set('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, '..', 'public', 'book-discovery-flight.html'));
+});
+
+router.get('/terms-of-service', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.sendFile(path.join(__dirname, '..', 'public', 'terms-of-service.html'));
+});
+
+router.get('/privacy-policy', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.sendFile(path.join(__dirname, '..', 'public', 'privacy-policy.html'));
 });
 
 router.get('/api/app-version', (req, res) => {

@@ -1,7 +1,6 @@
 /**
  * New Tech Aviation — Email Templates
  * All transactional emails sent by FlightSlate on behalf of New Tech Aviation.
- * No Polsia branding appears here — these are fully white-labeled.
  */
 
 const LOGO_URL = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
@@ -27,7 +26,6 @@ async function sendEmail(to, subject, html, text, attachments) {
 
 /**
  * Shared HTML wrapper — New Tech Aviation header + footer.
- * No Polsia branding anywhere.
  */
 function wrapEmailHtml(bodyContent) {
   const appUrl = getAppUrl();

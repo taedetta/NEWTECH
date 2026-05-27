@@ -60,8 +60,7 @@ async function migrate() {
  * These use CREATE IF NOT EXISTS so they're safe to run repeatedly.
  */
 async function runCoreMigrations(client) {
-  // Users table with subscription support
-  // Used by Polsia for syncing end-user subscription status
+  // Users table with optional subscription fields (legacy Stripe sync columns)
   await client.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -70,7 +69,7 @@ async function runCoreMigrations(client) {
       password_hash VARCHAR(255),
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
-      -- Subscription fields (synced by Polsia when customer subscribes)
+      -- Subscription fields (optional; legacy Stripe sync)
       stripe_subscription_id VARCHAR(255),
       subscription_status VARCHAR(50),
       subscription_plan VARCHAR(255),

@@ -97,6 +97,26 @@ async function ensureSchemaPatches(pool) {
   }
 }
 
+async function ensureUserIdSequence(pool) {
+  try {
+    const seqName = await pool.query(`SELECT pg_get_serial_sequence('users', 'id') AS name`);
+    if (seqName.rows[0]?.name) {
+      await pool.query(
+        `SELECT setval($1::regclass, GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1))`,
+        [seqName.rows[0].name]
+      );
+    } else {
+      await pool.query(`
+        CREATE SEQUENCE IF NOT EXISTS users_id_seq OWNED BY users.id;
+        ALTER TABLE users ALTER COLUMN id SET DEFAULT nextval('users_id_seq');
+        SELECT setval('users_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1));
+      `);
+    }
+  } catch (err) {
+    console.error('[bootstrap] users id sequence sync error:', err.message);
+  }
+}
+
 async function ensureDefaultAdminAccount(pool) {
   const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
   try {
@@ -204,7 +224,7 @@ async function startBackup(pool) {
 
 /**
  * Rehydrate editor file changes from database to filesystem.
- * Render's filesystem is ephemeral — every deploy rebuilds from GitHub,
+ * Railway's filesystem is ephemeral — every deploy rebuilds from GitHub,
  * wiping any editor changes. This restores them from the DB on boot.
  */
 async function rehydrateFileOverrides(pool) {
@@ -266,6 +286,7 @@ async function runStartup({ pool }) {
   try {
     await ensureDatabaseSchema(pool);
     await ensureSchemaPatches(pool);
+    await ensureUserIdSequence(pool);
     await ensureDefaultAdminAccount(pool);
   } catch (err) {
     console.error('[bootstrap] startup error:', err.message);

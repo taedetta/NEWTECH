@@ -6,6 +6,19 @@
 
 const pool = require('./index');
 
+/** Ensure upsert target exists (Railway DB may predate schema patch). */
+async function ensureAtRiskUniqueIndex() {
+  await pool.query(`
+    DELETE FROM at_risk_assessments a
+    USING at_risk_assessments b
+    WHERE a.student_id IS NOT NULL AND a.student_id = b.student_id AND a.id > b.id
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_id_unique
+    ON at_risk_assessments(student_id)
+  `);
+}
+
 /** Fetch all at-risk threshold settings from school_settings */
 async function getThresholds() {
   const keys = ['at_risk_low_days', 'at_risk_medium_days', 'at_risk_high_days', 'at_risk_critical_days'];
@@ -44,6 +57,7 @@ async function saveThresholds({ at_risk_low_days, at_risk_medium_days, at_risk_h
  * upsert into at_risk_assessments, and return enriched results.
  */
 async function computeAtRiskStudents() {
+  await ensureAtRiskUniqueIndex();
   const thresholds = await getThresholds();
 
   // Get all active students with their most recent flight activity and assigned instructor
@@ -133,6 +147,7 @@ async function computeAtRiskStudents() {
 
 /** Set manual override for a student's risk level */
 async function setManualOverride(studentId, level, notes, overrideByUserId) {
+  await ensureAtRiskUniqueIndex();
   // Ensure assessment row exists first
   await pool.query(`
     INSERT INTO at_risk_assessments (student_id, risk_level, risk_score, days_since_last_flight)

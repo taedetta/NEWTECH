@@ -34,6 +34,10 @@ ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_notes T
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_by INTEGER REFERENCES users(id);
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_at TIMESTAMPTZ;
 UPDATE at_risk_assessments SET manual_override_level = manual_override WHERE manual_override_level IS NULL AND manual_override IS NOT NULL;
+-- Dedupe before unique index (clone/migration may insert duplicates)
+DELETE FROM at_risk_assessments a
+USING at_risk_assessments b
+WHERE a.student_id IS NOT NULL AND a.student_id = b.student_id AND a.id > b.id;
 CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_id_unique ON at_risk_assessments(student_id);
 
 -- ── Student interventions ──
@@ -57,6 +61,26 @@ ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_message TEXT;
 UPDATE instructor_hours SET audit_status = 'pending' WHERE audit_status IS NULL;
 UPDATE bookings SET source = 'production' WHERE source IS NULL;
 UPDATE flight_logs SET source = 'production' WHERE source IS NULL;
+
+-- ── Users: terms acceptance audit trail ──
+ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version VARCHAR(32);
+
+-- ── Leads: program interest + activity history ──
+ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS program_interest VARCHAR(100);
+ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS source_label VARCHAR(100);
+
+CREATE TABLE IF NOT EXISTS lead_activity (
+  id SERIAL PRIMARY KEY,
+  lead_id INTEGER NOT NULL REFERENCES discovery_flight_leads(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id),
+  activity_type VARCHAR(30) NOT NULL,
+  body TEXT,
+  old_status VARCHAR(20),
+  new_status VARCHAR(20),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS lead_activity_lead_id_idx ON lead_activity(lead_id);
 
 -- ── Instructor availability overrides ──
 ALTER TABLE instructor_availability_overrides ADD COLUMN IF NOT EXISTS start_date DATE;

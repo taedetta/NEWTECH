@@ -10,7 +10,7 @@ node_modules/
 # Local dev data
 data/live-cms.json
 
-# Polsia / editor artifacts
+# Editor / agent artifacts
 .claude/
 .claude.json*
 .tmp/

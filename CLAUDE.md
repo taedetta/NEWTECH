@@ -4,7 +4,7 @@ Flight school management platform: scheduling, booking, instructor availability,
 
 ## Stack
 
-Express.js + PostgreSQL (Neon) + vanilla JS frontend, deployed on Render.
+Express.js + PostgreSQL + vanilla JS frontend, deployed on Railway.
 
 ## Directory Map
 
@@ -15,10 +15,11 @@ Express.js + PostgreSQL (Neon) + vanilla JS frontend, deployed on Render.
 - `public/` — static frontend (`app.html` = main SPA, `index.html` = landing page, `admin/analytics.html` = admin analytics dashboard)
 - `migrations/` — `node-pg-migrate` style DDL scripts (one file per schema change)
 - `email-templates.js` — transactional email HTML builders (bookingConfirmationEmail, preflightReminderEmailStudent, preflightReminderEmailInstructor, etc.)
-- `jobs/reminder-email.js` — standalone cron script for 24hr pre-flight email reminders (run via polsia.toml [[crons]])
+- `lib/preflight-reminders.js` — in-process scheduler for 24hr pre-flight email reminders (started from `server.js`)
 - `services/startup.js` — startup task orchestrator (image migration, training program seeding, backup scheduler, route verification)
 - `backup-service.js` — nightly PDF backup (2am CT) + starts nightly CSV export at 11pm CT
 - `export-service.js` — nightly 11pm CT CSV export: 9 topic folders uploaded to R2, emailed as download links
+- `railway.toml` — Railway deploy config (healthcheck, start command)
 
 ## Database
 
@@ -51,13 +52,13 @@ Express.js + PostgreSQL (Neon) + vanilla JS frontend, deployed on Render.
 - `aircraft_downtime` — scheduled maintenance windows per aircraft (start_date, end_date, reason, created_by). Blocks aircraft from booking calendar during window.
 - `flight_hobbs_readings` — per-booking Hobbs readings per role (student/instructor); one row per booking per role; auto-triggers discrepancy check.
 - `flight_discrepancies` — flagged Hobbs mismatches (delta > 0.1 hrs) between student and instructor; status pending/resolved; resolution stores which reading to use.
-- `file_overrides` — persists editor file changes across Render deploys; rehydrated to filesystem on startup so downloads always include editor modifications.
+- `file_overrides` — persists editor file changes across deploys; rehydrated to filesystem on startup so downloads always include editor modifications.
 
 ## External Integrations
 
-- Polsia email proxy — transactional emails (booking confirmations, pre-flight reminders, approval notifications) sent via Polsia platform
-- Polsia R2 — file storage for backups, PDFs, CSV exports, and CMS image uploads
-- polsia.toml — declares [[crons]] for pre-flight email reminder job (runs hourly via Polsia infrastructure)
+- Brevo — transactional emails (booking confirmations, pre-flight reminders, approval notifications) via REST API or SMTP
+- Cloudflare R2 — file storage for backups, PDFs, CSV exports, and CMS image uploads (`R2_*` env vars)
+- Railway — hosting, PostgreSQL, custom domains, in-process cron schedulers (backups, exports, preflight reminders)
 
 ## Key Conventions
 
@@ -65,7 +66,8 @@ Express.js + PostgreSQL (Neon) + vanilla JS frontend, deployed on Render.
 - Bookings stored as TIMESTAMPTZ (UTC) — availability checks must compare local times, not UTC-extracted
 - Frontend sends `local_date`, `local_start`, `local_end` with booking requests for correct availability validation
 - Page view tracking is automatic — `routes/analytics.js` middleware (`createPageViewMiddleware`) records all non-API page views server-side. Analytics endpoints (`GET /api/analytics/views`, `/referrers`, `/popular`, `/daily`) require `owner` or `admin` role. Admin dashboard at `/admin/analytics`.
-- Health checks: `/health` returns `{ ok: true }` instantly (no DB, for Render deploy). `GET /health/deep` runs full stack checks — DB (SELECT 1) + HTTP probe of /api/auth, /api/bookings, /api/aircraft, /api/schedule. Returns 503 if DB is down so Render auto-restarts.
+- Health checks: `/health` returns `{ ok: true }` instantly (no DB, for Railway deploy). `GET /health/deep` runs full stack checks — DB (SELECT 1) + HTTP probe of /api/auth, /api/bookings, /api/aircraft, /api/schedule. Returns 503 if DB is down so Railway auto-restarts.
+- Public URL: `APP_URL` env var, or `RAILWAY_PUBLIC_DOMAIN` (set automatically by Railway for custom domains), fallback `https://www.newtechaviation.com`
 
 ## Staging & Production Data Isolation
 
@@ -75,7 +77,7 @@ FlightSlate now supports **source-tag isolation** for complete staging/productio
 
 - 2026-05-24: Progress tab instructor features — viewStudentReadiness (checkride readiness modal, GET /api/training/checkride-readiness/:studentId) and Reassign Instructor modal (openAssignModal, PATCH /api/training/enroll/:id via trainingDb.reassignInstructor)
 - 2026-05-22: Download Source DB Override Fix — Both download-source endpoints (`routes/cms.js`, `routes/admin.js`) now query `file_overrides` table and overlay DB content on top of filesystem files in the ZIP. Fixes bug where downloads after deploy could serve stale pre-editor content. Rehydration in `services/startup.js` now awaited (was fire-and-forget), preventing race conditions.
-- 2026-05-22: Editor-to-GitHub Sync Fix — Editor changes (`PUT /api/project-files`) now persist to `file_overrides` DB table alongside filesystem writes. On every deploy/restart, `services/startup.js` rehydrates overrides from DB to filesystem so editor changes survive Render's ephemeral rebuilds. New endpoints: `GET /api/file-overrides` (list pending), `POST /api/file-overrides/mark-synced`, `DELETE /api/file-overrides` (clear all). Source code downloads now always include editor modifications.
+- 2026-05-22: Editor-to-GitHub Sync Fix — Editor changes persist to `file_overrides` DB table; rehydrated on every Railway deploy/restart.
 - 2026-05-22: Download Source Code Fix — `routes/admin.js` and `routes/cms.js` download-source endpoints used `__dirname` (routes/ dir) instead of `path.join(__dirname, '..')` (project root). ZIP downloads only contained route files, missing server.js, public/, db/, migrations/, package.json. Fixed both endpoints to archive from the correct project root.
 - 2026-05-21: Source-Tag Data Isolation Complete — `source` column added to all 28 data tables via migration `1779395261_add_source_isolation.sql`; `db/source-wrapper.js` provides query filtering; `APP_ENV` env var controls visibility (production|staging). Staging branch created in GitHub. Production running with APP_ENV=production. Staging preview ready to deploy. Verification: `node verify-source-isolation.js`. Docs: `STAGING_SETUP.md` and `STAGING_IMPLEMENTATION_COMPLETE.md`.
 - 2026-05-21: Backend Security Hardening — Removed Dev Tools panel (routes/developer.js deleted, frontend UI stripped). Hobbs validation: server re-reads aircraft current_hobbs at submission, rejects if delta > 0.5 hrs. Booking creation validates start_time in future, 12-hour max duration, aircraft downtime check. Role re-verified from DB on critical ops. Hobbs rate limiter: >5 failed submissions in 10min → 15min block. All numeric inputs sanitized (reject NaN, negative, >99999).
