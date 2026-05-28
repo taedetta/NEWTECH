@@ -158,6 +158,8 @@ app.use('/api/admin/system-health', systemHealthRoutes);
 app.use('/admin', adminPagesRoutes);
 
 // ── Static Files ───────────────────────────────────────────────────────────────
+const { getUploadRoot } = require('./lib/r2-storage');
+app.use('/uploads', express.static(getUploadRoot(), { maxAge: '1d', etag: true }));
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false,
   maxAge: '7d',

@@ -115,11 +115,14 @@ function canUploadAircraftDocs() {
   return currentUser && ['owner', 'admin'].includes(currentUser.role);
 }
 
-function openAircraftDocsModal(aircraftId, tailNumber, makeModel) {
+function openAircraftDocsModal(aircraftId) {
+  aircraftId = parseInt(aircraftId, 10);
+  if (!Number.isFinite(aircraftId)) return;
+  var ac = (typeof allAircraft !== 'undefined' && allAircraft || []).find(function(x) { return x.id === aircraftId; });
   _aircraftDocsAircraftId = aircraftId;
   document.getElementById('aircraft-docs-aircraft-id').value = aircraftId;
-  document.getElementById('aircraft-docs-title').textContent = tailNumber + ' — Documents';
-  document.getElementById('aircraft-docs-subtitle').textContent = makeModel || '';
+  document.getElementById('aircraft-docs-title').textContent = (ac && ac.tail_number ? ac.tail_number : 'Aircraft') + ' — Documents';
+  document.getElementById('aircraft-docs-subtitle').textContent = (ac && ac.make_model) || '';
   document.getElementById('aircraft-docs-error').classList.remove('visible');
   document.getElementById('aircraft-docs-error').textContent = '';
   document.getElementById('aircraft-docs-upload-wrap').classList.toggle('hidden', !canUploadAircraftDocs());
@@ -233,6 +236,11 @@ async function deleteAircraftDocument(docId) {
     showToast(err.error || err.message || 'Delete failed', 'error');
   }
 }
+
+window.openAircraftDocsModal = openAircraftDocsModal;
+window.closeAircraftDocsModal = closeAircraftDocsModal;
+window.submitAircraftDocument = submitAircraftDocument;
+window.deleteAircraftDocument = deleteAircraftDocument;
 
 async function loadCfiUtilizationPage() {
   var el = document.getElementById('cfi-util-content');

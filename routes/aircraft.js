@@ -3,7 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
-const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
+const { uploadBuffer } = require('../lib/r2-storage');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -330,9 +330,6 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
     }
     if (!file_data || !file_name) {
       return res.status(400).json({ error: 'File is required' });
-    }
-    if (!isConfigured()) {
-      return res.status(503).json({ error: 'File storage not configured' });
     }
 
     const buffer = Buffer.from(file_data, 'base64');

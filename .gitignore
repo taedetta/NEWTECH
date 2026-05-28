@@ -9,6 +9,7 @@ node_modules/
 
 # Local dev data
 data/live-cms.json
+data/uploads/
 
 # Editor / agent artifacts
 .claude/

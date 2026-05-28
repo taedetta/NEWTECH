@@ -9748,7 +9748,7 @@ async function loadFleet() {
       <td><span class="tag ${statusClass}">${a.status}</span></td>
       <td style="white-space:nowrap">
         ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
-        <button class="btn btn-secondary btn-sm" onclick="openAircraftDocsModal(${a.id}, '${escHtml(a.tail_number).replace(/'/g, "\\'")}', '${escHtml(a.make_model).replace(/'/g, "\\'")}')" title="Aircraft documents">Docs</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-aircraft-id="${a.id}" onclick="openAircraftDocsModal(this.dataset.aircraftId)" title="Aircraft documents">Docs</button>
         <button class="btn btn-secondary btn-sm" onclick="openHoursHistory(${a.id}, '${escHtml(a.tail_number)}')" title="Hours history" style="margin-left:0.25rem">History</button>
         ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="openDeleteAircraftModal(${a.id}, '${escHtml(a.tail_number)}')" style="margin-left:0.25rem" title="Delete aircraft">Delete</button>` : ''}
       </td>

@@ -26,7 +26,30 @@ const DOC_LABELS = {
   other: 'Other',
 };
 
+let _schemaReady = false;
+
+async function ensureTable() {
+  if (_schemaReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS aircraft_documents (
+      id SERIAL PRIMARY KEY,
+      aircraft_id INTEGER NOT NULL REFERENCES aircraft(id) ON DELETE CASCADE,
+      doc_type VARCHAR(50) NOT NULL,
+      title VARCHAR(255),
+      file_url TEXT NOT NULL,
+      file_name VARCHAR(255) NOT NULL,
+      expiry_date DATE,
+      notes TEXT,
+      uploaded_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS aircraft_documents_aircraft_id_idx ON aircraft_documents(aircraft_id);
+  `);
+  _schemaReady = true;
+}
+
 async function listByAircraft(aircraftId) {
+  await ensureTable();
   const result = await pool.query(
     `SELECT d.*, u.name AS uploaded_by_name
      FROM aircraft_documents d
@@ -39,6 +62,7 @@ async function listByAircraft(aircraftId) {
 }
 
 async function createDocument({ aircraftId, docType, title, fileUrl, fileName, expiryDate, notes, uploadedBy }) {
+  await ensureTable();
   const result = await pool.query(
     `INSERT INTO aircraft_documents
        (aircraft_id, doc_type, title, file_url, file_name, expiry_date, notes, uploaded_by)
@@ -60,6 +84,7 @@ async function deleteDocument(docId, aircraftId) {
 module.exports = {
   DOC_TYPES,
   DOC_LABELS,
+  ensureTable,
   listByAircraft,
   createDocument,
   deleteDocument,
