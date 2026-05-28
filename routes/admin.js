@@ -8,6 +8,7 @@ const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getAllOverrides } = require('../db/file-overrides');
 const { emailFullDataBackup } = require('../lib/full-data-backup');
+const { isStaging } = require('../lib/app-env');
 const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue } = require('../lib/instructors');
 const { execSync } = require('child_process');
 
@@ -38,6 +39,10 @@ const RESET_DELETE_TABLES = [
 // ─── ADMIN: RESET ALL DATA ───────────────────────────────
 
 router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Reset all data is disabled in staging to protect shared production data.' });
+  }
+
   const client = await pool.connect();
   try {
     // Safety backup before any deletion — abort if email fails
@@ -564,6 +569,10 @@ router.post('/run-export', authenticateToken, requireRole('owner', 'admin'), asy
 // Also resets reminder_sent for bookings matching criteria.
 
 router.post('/run-reminder-check', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Reminder checks are disabled in staging to avoid mutating shared booking reminder state.' });
+  }
+
   const { child } = require('child_process');
   // Spawn the job script — fires immediately and runs in background
   const job = child.spawn('node', ['jobs/reminder-email.js'], {
@@ -579,6 +588,10 @@ router.post('/run-reminder-check', authenticateToken, requireRole('owner', 'admi
 // Use for testing: create a booking for tomorrow, call this to reset its flag.
 
 router.post('/reset-reminders', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Resetting reminder state is disabled in staging to protect shared production data.' });
+  }
+
   const { booking_ids } = req.body;
   if (!booking_ids || !Array.isArray(booking_ids)) {
     return res.status(400).json({ error: 'booking_ids array required' });

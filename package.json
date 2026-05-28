@@ -12,6 +12,7 @@
     "test:qa": "node scripts/seed-test-users.js && node scripts/comprehensive-qa.js",
     "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
     "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
+    "test:staging-guards": "node scripts/staging-guards-ci.js",
     "test:schema": "node scripts/verify-schema.js --fix",
     "test:pipeline": "node scripts/test-complete-pipeline.js"
   },
