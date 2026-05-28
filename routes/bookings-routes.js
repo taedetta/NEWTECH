@@ -162,6 +162,24 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
   return conflicts;
 }
 
+async function lockBookingResources(client, { aircraft_id, instructor_id, student_id }) {
+  const locks = [
+    ['aircraft', aircraft_id],
+    ['instructor', instructor_id],
+    ['student', student_id],
+  ].filter(([, id]) => id !== null && id !== undefined && !Number.isNaN(parseInt(id, 10)));
+
+  const namespaces = { aircraft: 1101, instructor: 1102, student: 1103 };
+  locks.sort(([aType, aId], [bType, bId]) => {
+    const nsDiff = namespaces[aType] - namespaces[bType];
+    return nsDiff || parseInt(aId, 10) - parseInt(bId, 10);
+  });
+
+  for (const [type, id] of locks) {
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [namespaces[type], parseInt(id, 10)]);
+  }
+}
+
 async function findNextAvailableSlots(client, instructorId, afterTime, durationMinutes, count) {
   const slots = [];
   const startDate = new Date(afterTime);
@@ -455,6 +473,11 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
     if (grounding.blocked) return res.status(409).json({ error: 'Aircraft grounded', reason: grounding.reason });
 
     await client.query('BEGIN');
+    await lockBookingResources(client, {
+      aircraft_id: b.aircraft_id,
+      instructor_id: b.instructor_id,
+      student_id: b.student_id,
+    });
     const conflicts = await checkConflicts(client, {
       aircraft_id: b.aircraft_id,
       instructor_id: b.instructor_id,
@@ -516,13 +539,19 @@ router.post('/recurring', authenticateToken, async (req, res) => {
       try {
         // Inline create logic — reuse validation via internal helper
         const fakeReq = { body, user: req.user };
+        await client.query('BEGIN');
         const result = await createBookingInternal(client, fakeReq);
-        if (result.error) skipped.push({ week: w + 1, reason: result.error });
+        if (result.error) {
+          await client.query('ROLLBACK');
+          skipped.push({ week: w + 1, reason: result.error });
+        }
         else {
+          await client.query('COMMIT');
           created.push(result.booking);
           sendBookingConfirmationEmails(result.booking.id, client).catch((err) => console.error('[booking-email] recurring:', err.message));
         }
       } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
         skipped.push({ week: w + 1, reason: e.message });
       }
     }
@@ -562,6 +591,7 @@ async function createBookingInternal(client, req) {
   if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
   if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
 
+  await lockBookingResources(client, { aircraft_id, instructor_id: iid, student_id: sid });
   const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
   if (conflicts.length) return { error: 'Scheduling conflict', conflicts };
 
@@ -646,6 +676,7 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: `Aircraft is currently ${aircraft.rows[0].status}` });
     }
     await client.query('BEGIN');
+    await lockBookingResources(client, { aircraft_id, instructor_id: iid, student_id: sid });
     const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
     if (conflicts.length > 0) {
       await client.query('ROLLBACK');
@@ -758,13 +789,16 @@ router.put('/:id', authenticateToken, async (req, res) => {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: updDowntime.rows[0].reason });
       }
     }
-    if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
+    const requiresConflictCheck = sid !== null || iid !== null || acId !== b.aircraft_id || st !== b.start_time || et !== b.end_time;
+    await client.query('BEGIN');
+    if (requiresConflictCheck) {
+      await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
       const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: st, end_time: et, excludeBookingId: bookingId });
       if (conflicts.length > 0) {
+        await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Scheduling conflict', conflicts });
       }
     }
-    await client.query('BEGIN');
     // If start_time changed, reset reminder_sent so a new reminder fires for the new time
     const timeChanged = st !== b.start_time || et !== b.end_time;
     const result = await client.query(

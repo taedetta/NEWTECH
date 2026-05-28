@@ -10248,9 +10248,17 @@ async function saveInstructorRate(userId, inputId) {
   }
 }
 
-// ─── AVAILABILITY (placeholder) ───
+// ─── AVAILABILITY SHORTCUT ───
 function openAvailabilityModal(userId, userName) {
-  alert('Availability management for ' + userName + ' is coming soon.');
+  navigate('availability');
+  setTimeout(() => {
+    const sel = document.getElementById('avail-instructor-select');
+    if (sel) {
+      sel.value = String(userId);
+      loadAvailabilityPage();
+    }
+    showToast('Editing availability for ' + userName, 'info');
+  }, 0);
 }
 
 // ─── INVITE USER ───
@@ -11797,20 +11805,10 @@ async function openProgressDetail(studentId) {
           <div class="stat-card" style="min-width:80px;padding:0.5rem 0.75rem">
             <div class="stat-label" style="font-size:0.65rem">Hobbs Hrs</div>
             <div class="stat-value" style="font-size:1.1rem">${parseFloat(s.total_hobbs_hours||0).toFixed(1)}</div>
-            ${['owner','admin'].includes(currentUser.role) ? `
-            <div style="display:flex;gap:0.3rem;margin-top:0.35rem">
-              <button class="btn btn-secondary btn-sm" style="font-size:0.65rem;padding:1px 6px" onclick="openEditStudentHoursModal(${studentId}, '${escHtml(s.name).replace(/'/g,"\\'")}', ${parseFloat(s.total_hobbs_hours||0).toFixed(1)}, ${parseFloat(s.total_tach_hours||0).toFixed(1)})">Edit</button>
-              <button class="btn btn-sm" style="font-size:0.65rem;padding:1px 6px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmResetStudentHours(${studentId}, '${escHtml(s.name).replace(/'/g,"\\'")}', 'hobbs')">Reset</button>
-            </div>` : ''}
           </div>
           <div class="stat-card" style="min-width:80px;padding:0.5rem 0.75rem">
             <div class="stat-label" style="font-size:0.65rem">Tach Hrs</div>
             <div class="stat-value" style="font-size:1.1rem">${parseFloat(s.total_tach_hours||0).toFixed(1)}</div>
-            ${['owner','admin'].includes(currentUser.role) ? `
-            <div style="display:flex;gap:0.3rem;margin-top:0.35rem">
-              <button class="btn btn-secondary btn-sm" style="font-size:0.65rem;padding:1px 6px" onclick="openEditStudentHoursModal(${studentId}, '${escHtml(s.name).replace(/'/g,"\\'")}', ${parseFloat(s.total_hobbs_hours||0).toFixed(1)}, ${parseFloat(s.total_tach_hours||0).toFixed(1)})">Edit</button>
-              <button class="btn btn-sm" style="font-size:0.65rem;padding:1px 6px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmResetStudentHours(${studentId}, '${escHtml(s.name).replace(/'/g,"\\'")}', 'tach')">Reset</button>
-            </div>` : ''}
           </div>
         </div>
       </div>

@@ -78,24 +78,32 @@ async function sendMessageReply(e, threadId) {
   e.preventDefault();
   var body = document.getElementById('msg-reply-input').value.trim();
   if (!body) return;
-  await api('/api/messages/threads/' + threadId, { method: 'POST', body: JSON.stringify({ body: body }) });
-  document.getElementById('msg-reply-input').value = '';
-  openMessageThread(threadId);
+  try {
+    await api('/api/messages/threads/' + threadId, { method: 'POST', body: JSON.stringify({ body: body }) });
+    document.getElementById('msg-reply-input').value = '';
+    openMessageThread(threadId);
+  } catch (err) {
+    showToast(err.error || 'Failed to send message', 'error');
+  }
 }
 
 async function startNewMessageThread(e) {
   e.preventDefault();
-  await api('/api/messages/threads', {
-    method: 'POST',
-    body: JSON.stringify({
-      student_id: parseInt(document.getElementById('msg-new-student').value, 10),
-      instructor_id: parseInt(document.getElementById('msg-new-instructor').value, 10),
-      body: document.getElementById('msg-new-body').value.trim(),
-    }),
-  });
-  document.getElementById('msg-new-body').value = '';
-  showToast('Message sent', 'success');
-  loadMessagesPage();
+  try {
+    await api('/api/messages/threads', {
+      method: 'POST',
+      body: JSON.stringify({
+        student_id: parseInt(document.getElementById('msg-new-student').value, 10),
+        instructor_id: parseInt(document.getElementById('msg-new-instructor').value, 10),
+        body: document.getElementById('msg-new-body').value.trim(),
+      }),
+    });
+    document.getElementById('msg-new-body').value = '';
+    showToast('Message sent', 'success');
+    loadMessagesPage();
+  } catch (err) {
+    showToast(err.error || 'Failed to start conversation', 'error');
+  }
 }
 
 function populateMessageNewForm() {
