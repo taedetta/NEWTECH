@@ -2,6 +2,8 @@
 
 const express = require('express');
 const pool = require('../db/index');
+const aircraftDocsDb = require('../db/aircraft-documents');
+const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -292,6 +294,88 @@ router.delete('/:id/ads/:adId', authenticateToken, requirePermission('can_manage
   } catch (err) {
     console.error('AD delete error:', err);
     res.status(500).json({ error: 'Failed to delete AD' });
+  }
+});
+
+// ── Aircraft documents (Fleet — per-tail file vault) ──
+
+router.get('/document-types', authenticateToken, (req, res) => {
+  res.json({ types: aircraftDocsDb.DOC_TYPES, labels: aircraftDocsDb.DOC_LABELS });
+});
+
+router.get('/:id/documents', authenticateToken, async (req, res) => {
+  try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [aircraftId]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
+    const documents = await aircraftDocsDb.listByAircraft(aircraftId);
+    res.json({ aircraft: ac.rows[0], documents, labels: aircraftDocsDb.DOC_LABELS });
+  } catch (err) {
+    console.error('[aircraft-docs] list:', err.message);
+    res.status(500).json({ error: 'Failed to load aircraft documents' });
+  }
+});
+
+router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [aircraftId]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
+
+    const { doc_type, title, file_data, file_name, expiry_date, notes } = req.body;
+    if (!doc_type || !aircraftDocsDb.DOC_TYPES.includes(doc_type)) {
+      return res.status(400).json({ error: 'Valid document type is required' });
+    }
+    if (!file_data || !file_name) {
+      return res.status(400).json({ error: 'File is required' });
+    }
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'File storage not configured' });
+    }
+
+    const buffer = Buffer.from(file_data, 'base64');
+    if (buffer.length > 12 * 1024 * 1024) {
+      return res.status(400).json({ error: 'File too large (max 12MB)' });
+    }
+
+    const fileUrl = await uploadBuffer(buffer, file_name, {
+      folder: `aircraft-docs/${aircraftId}`,
+    });
+    if (!fileUrl) return res.status(500).json({ error: 'Upload failed' });
+
+    const doc = await aircraftDocsDb.createDocument({
+      aircraftId,
+      docType: doc_type,
+      title: title || file_name,
+      fileUrl,
+      fileName: file_name,
+      expiryDate: expiry_date || null,
+      notes: notes || null,
+      uploadedBy: req.user.id,
+    });
+
+    res.status(201).json({ document: doc });
+  } catch (err) {
+    console.error('[aircraft-docs] create:', err.message);
+    res.status(500).json({ error: 'Failed to save document' });
+  }
+});
+
+router.delete('/:id/documents/:docId', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const aircraftId = parseInt(req.params.id, 10);
+    const docId = parseInt(req.params.docId, 10);
+    if (!Number.isFinite(aircraftId) || !Number.isFinite(docId)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const doc = await aircraftDocsDb.deleteDocument(docId, aircraftId);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    res.json({ ok: true, document: doc });
+  } catch (err) {
+    console.error('[aircraft-docs] delete:', err.message);
+    res.status(500).json({ error: 'Failed to delete document' });
   }
 });
 

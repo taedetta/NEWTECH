@@ -278,3 +278,18 @@ CREATE INDEX IF NOT EXISTS user_notifications_user_id_idx ON user_notifications(
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS converted_user_id INTEGER REFERENCES users(id);
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS last_follow_up_at TIMESTAMPTZ;
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS follow_up_count INTEGER DEFAULT 0;
+
+-- ── Aircraft document vault (per-tail files in Fleet) ──
+CREATE TABLE IF NOT EXISTS aircraft_documents (
+  id SERIAL PRIMARY KEY,
+  aircraft_id INTEGER NOT NULL REFERENCES aircraft(id) ON DELETE CASCADE,
+  doc_type VARCHAR(50) NOT NULL,
+  title VARCHAR(255),
+  file_url TEXT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  expiry_date DATE,
+  notes TEXT,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS aircraft_documents_aircraft_id_idx ON aircraft_documents(aircraft_id);
