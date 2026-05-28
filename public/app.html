@@ -1662,7 +1662,6 @@
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <a onclick="navigate('phone-app')" data-page="phone-app" id="nav-phone-app"><span class="nav-icon">&#128241;</span> Phone App</a>
           <a onclick="navigate('messages')" data-page="messages" id="nav-messages"><span class="nav-icon">&#128172;</span> Messages</a>
-          <!-- Documents nav injected by syncDocumentsNav() for owner/admin/instructor only -->
           <div class="nav-divider"></div>
           <div class="nav-section-label">Management</div>
           <a onclick="navigate('approvals')" data-page="approvals" id="nav-approvals" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128100;</span> Pending Approvals <span id="approvals-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
@@ -3595,36 +3594,6 @@
           </div>
         </div>
 
-        <!-- ─── DOCUMENTS ─── -->
-        <div id="page-documents" class="page hidden">
-          <div class="page-header"><h1>&#128193; Documents</h1></div>
-          <div id="documents-staff-bar" class="hidden" style="margin-bottom:1rem;max-width:400px">
-            <label style="font-size:0.82rem;color:var(--gray-400)">Student</label>
-            <select id="docs-student-select" class="input-field" onchange="loadDocumentsPage()"></select>
-          </div>
-          <form id="doc-upload-form" onsubmit="submitStudentDocument(event)" style="max-width:520px;margin-bottom:1.5rem" class="pwa-device-card">
-            <h2 style="font-size:0.95rem;color:var(--white);margin-bottom:0.75rem">Upload document</h2>
-            <div class="form-group"><label>Type</label>
-              <select id="doc-type-select" class="input-field">
-                <option value="medical">Medical Certificate</option>
-                <option value="student_pilot_cert">Student Pilot Certificate</option>
-                <option value="id">Government ID</option>
-                <option value="tsa">TSA / Citizenship</option>
-                <option value="insurance">Insurance</option>
-                <option value="renter_agreement">Renter Agreement</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div class="form-row-2">
-              <div class="form-group"><label>Expiry (optional)</label><input type="date" id="doc-expiry-input" class="input-field"></div>
-              <div class="form-group"><label>File (optional)</label><input type="file" id="doc-file-input" accept=".pdf,.jpg,.jpeg,.png,.webp"></div>
-            </div>
-            <div class="form-group"><label>Notes</label><input type="text" id="doc-notes-input" class="input-field" placeholder="Class, cert number, etc."></div>
-            <button type="submit" class="btn btn-primary btn-sm">Save</button>
-          </form>
-          <div id="documents-content"></div>
-        </div>
-
         <!-- ─── CFI UTILIZATION ─── -->
         <div id="page-cfi-utilization" class="page hidden">
           <div class="page-header"><h1>&#128202; CFI Utilization</h1></div>
@@ -5086,33 +5055,8 @@ function logout() {
 }
 
 // ─── APP INIT ───
-function canSeeDocumentsNav() {
-  return currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
-}
-
-/** Documents tab is staff-only — remove from DOM for students/renters (not just hidden). */
-function syncDocumentsNav() {
-  const existing = document.getElementById('nav-documents');
-  if (!canSeeDocumentsNav()) {
-    if (existing) existing.remove();
-    return;
-  }
-  if (existing) {
-    existing.classList.remove('hidden');
-    existing.style.display = '';
-    return;
-  }
-  const anchor = document.getElementById('nav-messages');
-  if (!anchor || !anchor.parentNode) return;
-  const link = document.createElement('a');
-  link.id = 'nav-documents';
-  link.dataset.page = 'documents';
-  link.onclick = function() { navigate('documents'); };
-  link.innerHTML = '<span class="nav-icon">&#128193;</span> Documents';
-  anchor.insertAdjacentElement('afterend', link);
-}
-
 async function enterApp() {
+  document.getElementById('nav-documents')?.remove();
   const appEl = document.getElementById('app-screen');
   if (appEl) appEl.classList.add('app-booting');
   // Hide all nav items until role-specific visibility is applied (prevents role-switch flash)
@@ -5191,7 +5135,6 @@ async function enterApp() {
     currentUser = freshData.user;
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
-    syncDocumentsNav();
     navigate('tracking');
     if (appEl) appEl.classList.remove('app-booting');
     initPWA();
@@ -5221,7 +5164,6 @@ async function enterApp() {
     currentUser = freshData.user;
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
-    syncDocumentsNav();
     navigate('portal');
     if (appEl) appEl.classList.remove('app-booting');
     initPWA();
@@ -5390,7 +5332,6 @@ async function enterApp() {
     // Error logged to console only — no debug UI
   }
   // Students land on their portal; everyone else lands on dashboard
-  syncDocumentsNav();
   document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
     el.style.display = el.classList.contains('hidden') ? 'none' : '';
   });
@@ -6059,25 +6000,6 @@ function navigate(page) {
   else if (page === 'leads') loadLeads();
   else if (page === 'phone-app') loadPhoneAppPage();
   else if (page === 'messages') loadMessagesPage();
-  else if (page === 'documents') {
-    if (!['owner', 'admin', 'instructor'].includes(currentUser.role)) {
-      showToast('Documents are managed by your instructor or admin', 'info');
-      page = 'dashboard';
-      document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-      document.getElementById('page-dashboard').classList.remove('hidden');
-      document.querySelectorAll('.sidebar-nav a').forEach(a => a.classList.toggle('active', a.dataset.page === 'dashboard'));
-      currentPage = 'dashboard';
-      loadDashboard();
-      return;
-    }
-    const bar = document.getElementById('documents-staff-bar');
-    const sel = document.getElementById('docs-student-select');
-    if (bar && sel && featuresCanStaff && featuresCanStaff()) {
-      bar.classList.remove('hidden');
-      sel.innerHTML = allUsers.filter(u => u.role === 'student').map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
-    } else if (bar) bar.classList.add('hidden');
-    loadDocumentsPage();
-  }
   else if (page === 'cfi-utilization') loadCfiUtilizationPage();
   // admin-settings has no async data to load — static page
   else if (page === 'admin-settings') loadLocationsAdmin();

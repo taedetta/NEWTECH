@@ -1,6 +1,6 @@
 'use strict';
 
-/* FlightSlate feature bundle — messaging, documents, utilization, push, locations, leads */
+/* FlightSlate feature bundle — messaging, utilization, push, locations, leads */
 
 let _activeMessageThreadId = null;
 let _readinessPrintData = null;
@@ -106,34 +106,6 @@ function populateMessageNewForm() {
   iSel.innerHTML = allUsers.filter(function(u) { return u.role === 'instructor' || u.is_instructor; }).map(function(u) { return '<option value="' + u.id + '">' + escHtml(u.name) + '</option>'; }).join('');
   if (currentUser.role === 'student') stSel.value = currentUser.id;
   if (currentUser.role === 'instructor') iSel.value = currentUser.id;
-}
-
-async function loadDocumentsPage() {
-  var el = document.getElementById('documents-content');
-  if (!el) return;
-  var studentId = currentUser.role === 'student' ? currentUser.id : parseInt(document.getElementById('docs-student-select').value, 10);
-  if (!studentId) { el.innerHTML = '<p style="color:var(--gray-500)">Select a student.</p>'; return; }
-  var data = await api('/api/documents/student/' + studentId);
-  var labels = { medical: 'Medical', student_pilot_cert: 'Student Pilot Cert', id: 'ID', tsa: 'TSA', insurance: 'Insurance', renter_agreement: 'Renter Agmt', other: 'Other' };
-  el.innerHTML = '<div class="table-card scroll-x-wrap"><table class="data-table"><thead><tr><th>Type</th><th>File</th><th>Expires</th><th>Notes</th></tr></thead><tbody>' +
-    (data.documents || []).map(function(d) {
-      return '<tr><td>' + escHtml(labels[d.doc_type] || d.doc_type) + '</td><td>' + (d.file_url ? '<a href="' + escHtml(d.file_url) + '" target="_blank">View</a>' : '—') + '</td><td>' + (d.expiry_date || '—') + '</td><td>' + escHtml(d.notes || '') + '</td></tr>';
-    }).join('') + '</tbody></table></div>';
-}
-
-async function submitStudentDocument(e) {
-  e.preventDefault();
-  var studentId = currentUser.role === 'student' ? currentUser.id : parseInt(document.getElementById('docs-student-select').value, 10);
-  var payload = { doc_type: document.getElementById('doc-type-select').value, expiry_date: document.getElementById('doc-expiry-input').value || null, notes: document.getElementById('doc-notes-input').value || null };
-  var fileInput = document.getElementById('doc-file-input');
-  if (fileInput.files[0]) {
-    var buf = await fileInput.files[0].arrayBuffer();
-    payload.file_name = fileInput.files[0].name;
-    payload.file_data = btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
-  }
-  await api('/api/documents/student/' + studentId, { method: 'POST', body: JSON.stringify(payload) });
-  showToast('Document saved', 'success');
-  loadDocumentsPage();
 }
 
 async function loadCfiUtilizationPage() {
