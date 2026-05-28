@@ -154,11 +154,52 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
     const { role } = req.user;
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can delete booking history records' });
     const bookingId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT id, status FROM bookings WHERE id = $1', [bookingId]);
+    const existing = await pool.query(
+      `SELECT b.id, b.status, b.aircraft_id, b.student_id, b.instructor_id,
+              COALESCE(fl.hobbs_delta, CASE WHEN b.hobbs_end IS NOT NULL AND b.hobbs_start IS NOT NULL THEN b.hobbs_end - b.hobbs_start ELSE 0 END) AS hobbs_delta,
+              COALESCE(fl.tach_delta, CASE WHEN b.tach_end IS NOT NULL AND b.tach_start IS NOT NULL THEN b.tach_end - b.tach_start ELSE 0 END) AS tach_delta
+       FROM bookings b
+       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    const booking = existing.rows[0];
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      if (booking.status === 'completed') {
+        const hDelta = parseFloat(booking.hobbs_delta || 0);
+        const tDelta = parseFloat(booking.tach_delta || 0);
+        if (booking.aircraft_id && (hDelta || tDelta)) {
+          await client.query(
+            `UPDATE aircraft
+             SET total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2, 0),
+                 updated_at = NOW()
+             WHERE id = $3`,
+            [hDelta, tDelta, booking.aircraft_id]
+          );
+        }
+        if (booking.student_id && (hDelta || tDelta)) {
+          await client.query(
+            `UPDATE users
+             SET total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2, 0)
+             WHERE id = $3`,
+            [hDelta, tDelta, booking.student_id]
+          );
+        }
+        if (booking.instructor_id && (hDelta || tDelta)) {
+          await client.query(
+            `UPDATE users
+             SET total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2, 0)
+             WHERE id = $3`,
+            [hDelta, tDelta, booking.instructor_id]
+          );
+        }
+      }
       // Clean up all related records before deleting the booking.
       // flight_hobbs_readings & flight_discrepancies have ON DELETE CASCADE,
       // but admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
@@ -233,15 +274,36 @@ router.post('/manual', authenticateToken, async (req, res) => {
         );
         const bkId = bkResult.rows[0].id;
         await client.query(
-          `INSERT INTO flight_logs (booking_id, flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta, dual_instruction_hours, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [bkId, flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
+          `INSERT INTO flight_logs (booking_id, aircraft_id, student_id, instructor_id, booking_type, flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta, dual_instruction_hours, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          [bkId, acId, sid, iid, iid ? 'dual' : 'student_solo', flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
         );
         if (acId) {
-          await client.query(`UPDATE aircraft SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2, current_hobbs = total_hobbs_hours + $1, current_tach = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, acId]);
-          await client.query(`INSERT INTO aircraft_hours_history (aircraft_id, field, old_value, new_value, source) SELECT $1, 'hobbs', total_hobbs_hours - $2, total_hobbs_hours, 'manual_entry' FROM aircraft WHERE id = $1`, [acId, hDelta]);
+          const acTotals = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE', [acId]);
+          const oldHobbs = parseFloat(acTotals.rows[0]?.total_hobbs_hours || 0);
+          const oldTach = parseFloat(acTotals.rows[0]?.total_tach_hours || 0);
+          const newHobbsTotal = oldHobbs + hDelta;
+          const newTachTotal = oldTach + (tDelta || 0);
+          await client.query(
+            `UPDATE aircraft
+             SET total_hobbs_hours = $1,
+                 total_tach_hours = $2,
+                 current_hobbs = $3,
+                 current_tach = COALESCE($4, current_tach),
+                 updated_at = NOW()
+             WHERE id = $5`,
+            [newHobbsTotal, newTachTotal, hEnd, tE, acId]
+          );
+          await client.query(
+            `INSERT INTO aircraft_hours_history (aircraft_id, booking_id, field, old_value, new_value, source)
+             VALUES ($1, $2, 'hobbs', $3, $4, 'manual_entry')`,
+            [acId, bkId, oldHobbs, newHobbsTotal]
+          );
         }
-        await client.query(`UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, sid]);
+        await client.query(`UPDATE users SET total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1, total_tach_hours = COALESCE(total_tach_hours, 0) + $2 WHERE id = $3`, [hDelta, tDelta || 0, sid]);
+        if (iid) {
+          await client.query(`UPDATE users SET total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1, total_tach_hours = COALESCE(total_tach_hours, 0) + $2 WHERE id = $3`, [hDelta, tDelta || 0, iid]);
+        }
         await client.query('COMMIT');
         res.json({ booking_id: bkId });
       } catch (err) {

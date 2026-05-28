@@ -5,15 +5,46 @@ const pool = require('../db/index');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Authentication required' });
+  let decoded;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT id, email, name, role, is_instructor, deleted_at, approval_status
+       FROM users
+       WHERE id = $1`,
+      [decoded.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'User account not found' });
+    }
+    const user = result.rows[0];
+    if (user.deleted_at || user.approval_status === 'rejected') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active.' });
+    }
+    if (user.approval_status === 'pending') {
+      return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    }
+    req.user = {
+      ...decoded,
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      is_instructor: !!user.is_instructor,
+      approval_status: user.approval_status || 'approved',
+    };
+    next();
+  } catch (err) {
+    console.error('Authentication check error:', err.message);
+    return res.status(500).json({ error: 'Authentication check failed' });
   }
 }
 

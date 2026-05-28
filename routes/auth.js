@@ -156,14 +156,15 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
-    if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
-    }
     // Account pending approval — correct credentials but not yet activated
     if (user.approval_status === 'pending') {
       return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    }
+    if (user.deleted_at || user.approval_status === 'rejected') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active. Please contact the school if you believe this is a mistake.' });
+    }
+    if (user.approval_status && user.approval_status !== 'approved') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not approved for access.' });
     }
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role },
@@ -278,7 +279,12 @@ router.get('/me', authenticateToken, async (req, res) => {
       [req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    if (result.rows[0].deleted_at) return res.status(401).json({ error: 'Account has been deleted' });
+    if (result.rows[0].deleted_at || result.rows[0].approval_status === 'rejected') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active.' });
+    }
+    if (result.rows[0].approval_status === 'pending') {
+      return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    }
     const u = result.rows[0];
     const permissions = ['owner', 'admin'].includes(u.role)
       ? { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true, can_edit_website: true }
@@ -314,28 +320,40 @@ router.get('/me', authenticateToken, async (req, res) => {
 });
 
 router.post('/claim-owner', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
-    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner'");
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('claim-owner'))");
+    const ownerCheck = await client.query("SELECT id FROM users WHERE role = 'owner'");
     if (ownerCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(409).json({ error: 'An owner already exists' });
     }
-    const currentRole = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
+    const currentRole = await client.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
     if (['student', 'renter'].includes(currentRole.rows[0]?.role)) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Students and renters cannot claim owner role' });
     }
-    const result = await pool.query(
+    const result = await client.query(
       "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
       [req.user.id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found' });
+    }
     const user = result.rows[0];
     const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true };
     const newToken = jwt.sign({ id: user.id, email: user.email, name: user.name, role: 'owner' }, JWT_SECRET, { expiresIn: '7d' });
+    await client.query('COMMIT');
     res.cookie('token', newToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ user: { ...user, permissions }, token: newToken });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Claim owner error:', err);
     res.status(500).json({ error: 'Failed to claim owner role' });
+  } finally {
+    client.release();
   }
 });
 
