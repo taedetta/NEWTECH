@@ -5279,7 +5279,6 @@ async function enterApp() {
   // Messages: all authenticated users except maintenance-only
   const navMsg = document.getElementById('nav-messages');
   if (navMsg) navMsg.classList.toggle('hidden', currentUser.role === 'maintenance');
-  syncDocumentsNav();
 
   // Admin Settings: owner and admin only
   try {
