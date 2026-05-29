@@ -455,6 +455,7 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
     if (grounding.blocked) return res.status(409).json({ error: 'Aircraft grounded', reason: grounding.reason });
 
     await client.query('BEGIN');
+    await client.query('LOCK TABLE bookings IN SHARE ROW EXCLUSIVE MODE');
     const conflicts = await checkConflicts(client, {
       aircraft_id: b.aircraft_id,
       instructor_id: b.instructor_id,
@@ -509,7 +510,7 @@ router.post('/recurring', authenticateToken, async (req, res) => {
         start_time: st.toISOString(),
         end_time: et.toISOString(),
         lesson_type, notes,
-        local_date: local_date || st.toISOString().slice(0, 10),
+        local_date: st.toISOString().slice(0, 10),
         local_start, local_end,
         force_booking: req.body.force_booking,
       };
@@ -536,14 +537,18 @@ router.post('/recurring', authenticateToken, async (req, res) => {
 });
 
 async function createBookingInternal(client, req) {
-  const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
+  const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end, force_booking } = req.body;
   let sid = student_id ? parseInt(student_id, 10) : null;
   const iid = instructor_id ? parseInt(instructor_id, 10) : null;
   if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
   if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
+  if (!sid && !iid) return { error: 'At least one person (student or instructor) is required' };
   const start = new Date(start_time);
   const end = new Date(end_time);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return { error: 'Invalid date format for start or end time' };
   if (end <= start) return { error: 'End time must be after start time' };
+  const durationHrs = (end - start) / (1000 * 60 * 60);
+  if (durationHrs > MAX_BOOKING_DURATION_HOURS) return { error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` };
   const policy = await getPolicySettings();
   const isAdmin = ['owner', 'admin'].includes(req.user.role);
   const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin });
@@ -562,16 +567,60 @@ async function createBookingInternal(client, req) {
   if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
   if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
 
+  const bookingStartDate = start.toISOString().slice(0, 10);
+  const bookingEndDate = end.toISOString().slice(0, 10);
+  const downtimeCheck = await client.query(
+    `SELECT id, reason FROM aircraft_downtime
+     WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date LIMIT 1`,
+    [aircraft_id, bookingStartDate, bookingEndDate]
+  );
+  if (downtimeCheck.rows.length > 0) {
+    return { error: `Aircraft is scheduled for maintenance during this period: ${downtimeCheck.rows[0].reason || 'maintenance'}` };
+  }
+
+  const preflight = await runPreflightChecks(client, {
+    aircraft_id: parseInt(aircraft_id, 10),
+    student_id: sid,
+    instructor_id: iid,
+    start_time,
+    end_time,
+    booking_type,
+    local_start,
+    local_end,
+  }, req.user.role);
+  if (!preflight.ok) return { error: preflight.errors[0], errors: preflight.errors, warnings: preflight.warnings };
+
+  if (iid && force_booking !== true && force_booking !== 'true') {
+    const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
+    const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
+    if (!availCheck.available) return { error: `Instructor not available: ${availCheck.reason || 'outside availability'}` };
+  }
+
+  let inTx = false;
+  try {
+    await client.query('BEGIN');
+    inTx = true;
+    await client.query('LOCK TABLE bookings IN SHARE ROW EXCLUSIVE MODE');
   const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
-  if (conflicts.length) return { error: 'Scheduling conflict', conflicts };
+  if (conflicts.length) {
+    await client.query('ROLLBACK');
+    inTx = false;
+    return { error: 'Scheduling conflict', conflicts };
+  }
 
   const result = await client.query(
     `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
     [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
   );
+  await client.query('COMMIT');
+  inTx = false;
   sendBookingConfirmationEmails(result.rows[0].id, client).catch((err) => console.error('[booking-email] create:', err.message));
   return { booking: result.rows[0] };
+  } catch (err) {
+    if (inTx) await client.query('ROLLBACK');
+    throw err;
+  }
 }
 
 router.post('/', authenticateToken, async (req, res) => {
@@ -646,6 +695,7 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: `Aircraft is currently ${aircraft.rows[0].status}` });
     }
     await client.query('BEGIN');
+    await client.query('LOCK TABLE bookings IN SHARE ROW EXCLUSIVE MODE');
     const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
     if (conflicts.length > 0) {
       await client.query('ROLLBACK');

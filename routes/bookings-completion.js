@@ -100,6 +100,14 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
 
 router.patch('/:id/complete', authenticateToken, async (req, res) => {
   const client = await pool.connect();
+  let inTx = false;
+  async function rollbackAndReturn(status, payload) {
+    if (inTx) {
+      await client.query('ROLLBACK');
+      inTx = false;
+    }
+    return res.status(status).json(payload);
+  }
   try {
     const { hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, notes, no_change,
             is_night, is_xc, is_instrument, is_solo } = req.body;
@@ -109,31 +117,33 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     if (dbUser.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
     const verifiedRole = dbUser.rows[0].role;
 
-    const bResult = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (bResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    await client.query('BEGIN');
+    inTx = true;
+    const bResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (bResult.rows.length === 0) return rollbackAndReturn(404, { error: 'Booking not found' });
     const b = bResult.rows[0];
-    if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    if (b.status !== 'confirmed') return rollbackAndReturn(400, { error: 'Only confirmed bookings can be completed' });
     const isAdmin = ['owner', 'admin'].includes(verifiedRole);
     if (!isAdmin) {
       if (b.instructor_id) {
         if (req.user.id !== b.instructor_id) {
-          return res.status(403).json({
+          return rollbackAndReturn(403, {
             error: 'Only the assigned instructor (or admin) can complete this flight and enter Hobbs/Tach hours.',
           });
         }
       } else if (req.user.id !== b.student_id && req.user.id !== b.instructor_id) {
-        return res.status(403).json({ error: 'Access denied' });
+        return rollbackAndReturn(403, { error: 'Access denied' });
       }
     }
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
-      await client.query('BEGIN');
       await client.query(
-        `UPDATE bookings SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+        `UPDATE bookings SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [req.params.id]
       );
       await client.query('COMMIT');
+      inTx = false;
       const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
       res.json({ booking: updated.rows[0], log_id: null });
 
@@ -145,25 +155,25 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // ── Hobbs rate limit check — block after repeated bad submissions ──
     const rlCheck = checkHobbsRateLimit(req.user.id);
     if (rlCheck.blocked) {
-      return res.status(429).json({ error: `Too many failed Hobbs submissions. Try again in ${rlCheck.retryAfter} seconds.` });
+      return rollbackAndReturn(429, { error: `Too many failed Hobbs submissions. Try again in ${rlCheck.retryAfter} seconds.` });
     }
 
     // Normal path — validate hobbs before starting transaction
-    if (hobbs_start == null || hobbs_end == null) return res.status(400).json({ error: 'hobbs_start and hobbs_end are required' });
+    if (hobbs_start == null || hobbs_end == null) return rollbackAndReturn(400, { error: 'hobbs_start and hobbs_end are required' });
 
     // ── Input sanitization: reject NaN, negative, impossibly large values ──
     const hStartErr = validateHobbsValue(hobbs_start, 'hobbs_start');
-    if (hStartErr) { recordHobbsFail(req.user.id); return res.status(400).json({ error: hStartErr }); }
+    if (hStartErr) { recordHobbsFail(req.user.id); return rollbackAndReturn(400, { error: hStartErr }); }
     const hEndErr = validateHobbsValue(hobbs_end, 'hobbs_end');
-    if (hEndErr) { recordHobbsFail(req.user.id); return res.status(400).json({ error: hEndErr }); }
+    if (hEndErr) { recordHobbsFail(req.user.id); return rollbackAndReturn(400, { error: hEndErr }); }
 
     const hStart = parseFloat(hobbs_start);
     const hEnd = parseFloat(hobbs_end);
-    if (hEnd <= hStart) { recordHobbsFail(req.user.id); return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' }); }
+    if (hEnd <= hStart) { recordHobbsFail(req.user.id); return rollbackAndReturn(400, { error: 'hobbs_end must be greater than hobbs_start' }); }
 
     // ── Server-side Hobbs validation: prevent backdating, allow normal meter variance ──
     if (b.aircraft_id) {
-      const acResult = await client.query('SELECT current_hobbs, total_hobbs_hours FROM aircraft WHERE id = $1', [b.aircraft_id]);
+      const acResult = await client.query('SELECT current_hobbs, total_hobbs_hours FROM aircraft WHERE id = $1 FOR UPDATE', [b.aircraft_id]);
       if (acResult.rows.length > 0) {
         const currentHobbs = acResult.rows[0].current_hobbs != null
           ? parseFloat(acResult.rows[0].current_hobbs)
@@ -171,13 +181,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         if (currentHobbs > 0) {
           if (hStart < currentHobbs - 0.1) {
             recordHobbsFail(req.user.id);
-            return res.status(400).json({
+            return rollbackAndReturn(400, {
               error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
             });
           }
           if (hStart > currentHobbs + 5) {
             recordHobbsFail(req.user.id);
-            return res.status(400).json({
+            return rollbackAndReturn(400, {
               error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
             });
           }
@@ -187,16 +197,16 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     // Validate tach values if provided — both or neither
     if ((tach_start != null) !== (tach_end != null)) {
-      return res.status(400).json({ error: 'Both tach_start and tach_end are required when logging tach time' });
+      return rollbackAndReturn(400, { error: 'Both tach_start and tach_end are required when logging tach time' });
     }
     if (tach_start != null) {
       const tStartErr = validateHobbsValue(tach_start, 'tach_start');
-      if (tStartErr) return res.status(400).json({ error: tStartErr });
+      if (tStartErr) return rollbackAndReturn(400, { error: tStartErr });
       const tEndErr = validateHobbsValue(tach_end, 'tach_end');
-      if (tEndErr) return res.status(400).json({ error: tEndErr });
+      if (tEndErr) return rollbackAndReturn(400, { error: tEndErr });
     }
     if (tach_start != null && tach_end != null && parseFloat(tach_end) <= parseFloat(tach_start)) {
-      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
+      return rollbackAndReturn(400, { error: 'tach_end must be greater than tach_start' });
     }
 
     const hobbsFlown = hEnd - hStart;
@@ -204,7 +214,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
       const dualErr = validateHobbsValue(dual_instruction_hours, 'dual_instruction_hours');
-      if (dualErr) return res.status(400).json({ error: dualErr });
+      if (dualErr) return rollbackAndReturn(400, { error: dualErr });
     }
     const tStart = tach_start != null ? parseFloat(tach_start) : null;
     const tEnd = tach_end != null ? parseFloat(tach_end) : null;
@@ -216,7 +226,6 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const xcFlag = !!is_xc;
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
-    await client.query('BEGIN');
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
@@ -227,7 +236,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const aircraftChargeAmt = acRate ? Math.round(hobbsFlown * parseFloat(acRate.hourly_rate || 0) * 100) / 100 : 0;
     const instrChargeAmt = (dualHrs > 0 && instrRate) ? Math.round(dualHrs * parseFloat(instrRate.instructor_rate || 0) * 100) / 100 : 0;
     // Upsert flight_log — aircraft_id, student_id, instructor_id, booking_type are required
-    const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [req.params.id]);
+    const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [req.params.id]);
     let logId;
     if (existingLog.rows.length > 0) {
       await client.query(
@@ -263,14 +272,20 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
     // Update aircraft running totals — parseFloat because Postgres DECIMAL returns strings
     if (b.aircraft_id) {
-      const acDelta = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1', [b.aircraft_id]);
+      const acDelta = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE', [b.aircraft_id]);
       if (acDelta.rows.length > 0) {
         const oldHobbs = parseFloat(acDelta.rows[0].total_hobbs_hours) || 0;
         const oldTach = parseFloat(acDelta.rows[0].total_tach_hours) || 0;
         const newHobbs = oldHobbs + hobbsFlown;
         const newTach = oldTach + (tachFlown || 0);
         await client.query(
-          `UPDATE aircraft SET total_hobbs_hours = $1, total_tach_hours = $2, current_hobbs = $3, current_tach = $4, updated_at = NOW() WHERE id = $5`,
+          `UPDATE aircraft
+           SET total_hobbs_hours = $1,
+               total_tach_hours = $2,
+               current_hobbs = GREATEST(COALESCE(current_hobbs, 0), $3),
+               current_tach = GREATEST(COALESCE(current_tach, 0), $4),
+               updated_at = NOW()
+           WHERE id = $5`,
           [newHobbs, newTach, hEnd, tEnd || newTach, b.aircraft_id]
         );
         await client.query(
@@ -302,7 +317,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Update booking — persist hobbs/tach on booking row for billing queries
     await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, updated_at = NOW() WHERE id = $5`,
+       tach_start = $3, tach_end = $4, completed_at = NOW(), updated_at = NOW() WHERE id = $5`,
       [hStart, hEnd, tStart, tEnd, req.params.id]
     );
 
@@ -323,6 +338,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
 
     await client.query('COMMIT');
+    inTx = false;
 
     // Record Hobbs reading for discrepancy tracking (fire-and-forget — does not affect booking completion)
     const submitterRole = ['owner', 'admin'].includes(req.user.role) ? 'admin' : req.user.role;
@@ -341,10 +357,175 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Send flight completed email to student + instructor (fire-and-forget)
     sendFlightCompletedEmail(req.params.id, req.user.id, req.user.role, hobbsFlown, tachFlown, dualHrs);
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (inTx) await client.query('ROLLBACK');
     const ts = new Date().toISOString();
     console.error(`[bookings-completion] [${ts}] PATCH /:id/complete — user=${req.user?.id} error: ${err.message}`);
     res.status(500).json({ code: 'COMPLETE_ERROR', error: 'Failed to save flight data — please try again.', message: 'Booking temporarily unavailable, please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.patch('/:id/hours', authenticateToken, async (req, res) => {
+  if (!['owner', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only owners and admins can edit completed flight hours' });
+  }
+
+  const client = await pool.connect();
+  let inTx = false;
+  try {
+    const bookingId = parseInt(req.params.id, 10);
+    if (isNaN(bookingId)) return res.status(400).json({ error: 'Invalid booking ID' });
+
+    const {
+      flight_date, hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours,
+      aircraft_charge_amount, instruction_charge_amount, notes,
+    } = req.body;
+
+    await client.query('BEGIN');
+    inTx = true;
+
+    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    if (bookingResult.rows.length === 0) {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    const booking = bookingResult.rows[0];
+    if (booking.status !== 'completed') {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(400).json({ error: 'Only completed bookings can have hours edited' });
+    }
+
+    const logResult = await client.query('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [bookingId]);
+    if (logResult.rows.length === 0) {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(404).json({ error: 'No flight log record found for this booking' });
+    }
+    const log = logResult.rows[0];
+
+    const nextHStart = hobbs_start !== undefined && hobbs_start !== null ? parseFloat(hobbs_start) : parseFloat(log.hobbs_start);
+    const nextHEnd = hobbs_end !== undefined && hobbs_end !== null ? parseFloat(hobbs_end) : parseFloat(log.hobbs_end);
+    if (isNaN(nextHStart) || isNaN(nextHEnd) || nextHEnd <= nextHStart) {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(400).json({ error: 'Valid Hobbs start/end values are required' });
+    }
+
+    const tachProvided = tach_start !== undefined || tach_end !== undefined;
+    const nextTStart = tach_start !== undefined && tach_start !== null ? parseFloat(tach_start) : (log.tach_start != null ? parseFloat(log.tach_start) : null);
+    const nextTEnd = tach_end !== undefined && tach_end !== null ? parseFloat(tach_end) : (log.tach_end != null ? parseFloat(log.tach_end) : null);
+    if ((nextTStart == null) !== (nextTEnd == null)) {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(400).json({ error: 'Both tach_start and tach_end are required when logging tach time' });
+    }
+    if (nextTStart != null && (isNaN(nextTStart) || isNaN(nextTEnd) || nextTEnd <= nextTStart)) {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
+    }
+
+    const oldHobbsDelta = parseFloat(log.hobbs_delta || 0);
+    const oldTachDelta = parseFloat(log.tach_delta || 0);
+    const hobbsDelta = parseFloat((nextHEnd - nextHStart).toFixed(2));
+    const tachDelta = nextTStart != null ? parseFloat((nextTEnd - nextTStart).toFixed(2)) : null;
+    const hobbsAdjustment = hobbsDelta - oldHobbsDelta;
+    const tachAdjustment = (tachDelta || 0) - oldTachDelta;
+
+    const dualHrs = dual_instruction_hours !== undefined && dual_instruction_hours !== null
+      ? parseFloat(dual_instruction_hours)
+      : parseFloat(log.dual_instruction_hours || (booking.booking_type === 'dual' ? hobbsDelta : 0));
+    if (isNaN(dualHrs) || dualHrs < 0) {
+      await client.query('ROLLBACK'); inTx = false;
+      return res.status(400).json({ error: 'dual_instruction_hours must be a valid non-negative number' });
+    }
+
+    const acRate = booking.aircraft_id
+      ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [booking.aircraft_id])).rows[0]
+      : null;
+    const instrRate = booking.instructor_id
+      ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1', [booking.instructor_id])).rows[0]
+      : null;
+    const aircraftCharge = aircraft_charge_amount !== undefined && aircraft_charge_amount !== null
+      ? parseFloat(aircraft_charge_amount)
+      : Math.round(hobbsDelta * parseFloat(acRate?.hourly_rate || 0) * 100) / 100;
+    const instructionCharge = instruction_charge_amount !== undefined && instruction_charge_amount !== null
+      ? parseFloat(instruction_charge_amount)
+      : ((dualHrs > 0 && instrRate) ? Math.round(dualHrs * parseFloat(instrRate.instructor_rate || 0) * 100) / 100 : 0);
+    const nextFlightDate = flight_date || log.flight_date || new Date(booking.start_time).toISOString().slice(0, 10);
+
+    const updatedLog = await client.query(
+      `UPDATE flight_logs SET
+         flight_date = $1, hobbs_start = $2, hobbs_end = $3, hobbs_delta = $4,
+         tach_start = $5, tach_end = $6, tach_delta = $7,
+         dual_instruction_hours = $8,
+         aircraft_charge_amount = $9, instruction_charge_amount = $10,
+         notes = COALESCE($11, notes), updated_at = NOW()
+       WHERE booking_id = $12
+       RETURNING *`,
+      [nextFlightDate, nextHStart, nextHEnd, hobbsDelta, nextTStart, nextTEnd, tachDelta,
+       dualHrs, aircraftCharge, instructionCharge, notes !== undefined ? notes : null, bookingId]
+    );
+
+    await client.query(
+      `UPDATE bookings
+       SET hobbs_start = $1, hobbs_end = $2, tach_start = $3, tach_end = $4, updated_at = NOW()
+       WHERE id = $5`,
+      [nextHStart, nextHEnd, nextTStart, nextTEnd, bookingId]
+    );
+
+    if (hobbsAdjustment !== 0 || tachAdjustment !== 0) {
+      if (booking.student_id) {
+        await client.query(
+          `UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`,
+          [hobbsAdjustment, tachAdjustment, booking.student_id]
+        );
+      }
+      if (booking.instructor_id) {
+        await client.query(
+          `UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`,
+          [hobbsAdjustment, tachAdjustment, booking.instructor_id]
+        );
+      }
+      if (booking.aircraft_id) {
+        await client.query(
+          `UPDATE aircraft
+           SET total_hobbs_hours = total_hobbs_hours + $1,
+               total_tach_hours = total_tach_hours + $2,
+               current_hobbs = CASE
+                 WHEN current_hobbs IS NULL OR current_hobbs <= $3 + 0.1 THEN $4
+                 ELSE current_hobbs
+               END,
+               current_tach = CASE
+                 WHEN $6::numeric IS NULL THEN current_tach
+                 WHEN current_tach IS NULL OR current_tach <= COALESCE($5, current_tach, 0) + 0.1 THEN $6
+                 ELSE current_tach
+               END,
+               updated_at = NOW()
+           WHERE id = $7`,
+          [hobbsAdjustment, tachAdjustment, parseFloat(log.hobbs_end || 0), nextHEnd,
+           log.tach_end != null ? parseFloat(log.tach_end) : null, nextTEnd, booking.aircraft_id]
+        );
+      }
+    }
+
+    if (booking.instructor_id) {
+      const studentName = booking.student_id
+        ? (await client.query('SELECT name FROM users WHERE id = $1', [booking.student_id])).rows[0]?.name || null
+        : null;
+      await syncInstructorHoursFromFlight(client, {
+        booking,
+        hobbsFlown: hobbsDelta,
+        dualHrs,
+        flightDate: nextFlightDate,
+        studentName,
+      });
+    }
+
+    await client.query('COMMIT');
+    inTx = false;
+    res.json({ ok: true, log: updatedLog.rows[0] });
+  } catch (err) {
+    if (inTx) await client.query('ROLLBACK');
+    console.error('[bookings-completion] PATCH /:id/hours error:', err.message);
+    res.status(500).json({ error: 'Failed to update flight hours' });
   } finally {
     client.release();
   }
@@ -431,7 +612,11 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    res.json(result.rows[0]);
+    const booking = result.rows[0];
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const isParticipant = req.user.id === booking.student_id || req.user.id === booking.instructor_id;
+    if (!isAdmin && !isParticipant) return res.status(403).json({ error: 'Access denied' });
+    res.json(booking);
   } catch (err) {
     const ts = new Date().toISOString();
     console.error(`[bookings-completion] [${ts}] GET /:id — user=${req.user?.id} error: ${err.message}`);

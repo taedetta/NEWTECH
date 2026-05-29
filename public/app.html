@@ -1630,7 +1630,7 @@
       <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.5rem;font-size:0.85rem;color:var(--gray-300);text-align:left;">
         <div style="font-weight:600;color:var(--sky);margin-bottom:0.4rem;">What happens next?</div>
         <ul style="margin:0;padding-left:1.25rem;line-height:1.8;">
-          <li>An admin, owner, or instructor will review your account</li>
+          <li>An admin or owner will review your account</li>
           <li>You'll be able to sign in once approved</li>
           <li>Contact your flight school directly if you need urgent access</li>
         </ul>
@@ -5184,11 +5184,11 @@ async function enterApp() {
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
     });
 
-  // Show approvals nav for owner/admin/instructor
+  // Show approvals nav for account administrators.
   const navApprovals = document.getElementById('nav-approvals');
   if (navApprovals) {
-    navApprovals.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
-    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+    navApprovals.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
+    if (['owner', 'admin'].includes(currentUser.role)) {
       loadApprovalsBadge();
     }
   }
@@ -12811,8 +12811,8 @@ async function saveEditBillingFlight() {
 async function confirmDeleteBillingFlight(id, dateStr) {
   if (!confirm('Delete flight billing entry from ' + dateStr + '? This removes the charge record. Cannot be undone.')) return;
   try {
-    await api('/api/booking-history/flights/' + id, { method: 'DELETE' });
-    showToast('Flight billing entry deleted', 'success');
+    await api('/api/billing/flights/' + id, { method: 'DELETE' });
+    showToast('Flight billing entry voided', 'success');
     if (currentBillingStudentId != null) await loadBillingForStudent(currentBillingStudentId);
     else await loadBilling();
   } catch(e) {
@@ -13051,6 +13051,7 @@ async function saveEditFlog() {
   var errEl = document.getElementById('edit-flog-error');
   if (errEl) errEl.classList.add('hidden');
   var id = document.getElementById('edit-flog-id').value;
+  var logRow = (window._flogCache || {})[id];
   var body = {
     flight_date: document.getElementById('edit-flog-date').value || null,
     dual_instruction_hours: document.getElementById('edit-flog-dual-hrs').value !== '' ? parseFloat(document.getElementById('edit-flog-dual-hrs').value) : null,
@@ -13061,7 +13062,11 @@ async function saveEditFlog() {
     notes: document.getElementById('edit-flog-notes').value.trim() || null,
   };
   try {
-    await api('/api/flight-logs/' + id, { method: 'PUT', body: JSON.stringify(body) });
+    if (logRow && logRow.booking_id) {
+      await api('/api/bookings/' + logRow.booking_id + '/hours', { method: 'PATCH', body: JSON.stringify(body) });
+    } else {
+      await api('/api/flight-logs/' + id, { method: 'PUT', body: JSON.stringify(body) });
+    }
     showToast('Flight log updated', 'success');
     closeEditFlogModal();
     await loadFlightLog();
@@ -13351,7 +13356,7 @@ async function saveEditHistory() {
     instruction_charge_amount: document.getElementById('edit-history-instr-charge').value !== '' ? parseFloat(document.getElementById('edit-history-instr-charge').value) : null,
   };
   try {
-    await api('/api/flight-logs/' + id, { method: 'PUT', body: JSON.stringify(body) });
+    await api('/api/bookings/' + id + '/hours', { method: 'PATCH', body: JSON.stringify(body) });
     showToast('Booking record updated', 'success');
     closeEditHistoryModal();
     await loadHistoryLegacyPage();

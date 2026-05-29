@@ -156,10 +156,8 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
     if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
+      return res.status(403).json({ error: 'Account is inactive. Contact an administrator for access.' });
     }
     // Account pending approval — correct credentials but not yet activated
     if (user.approval_status === 'pending') {

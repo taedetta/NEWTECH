@@ -69,10 +69,6 @@ async function getUserPermissions(userId, role) {
 function requirePermission(permKey) {
   return async (req, res, next) => {
     try {
-      if (['owner', 'admin', 'maintenance'].includes(req.user.role)) return next();
-      if (req.user.role !== 'instructor') {
-        return res.status(403).json({ error: 'Insufficient permissions' });
-      }
       const perms = await getUserPermissions(req.user.id, req.user.role);
       if (!perms[permKey]) {
         return res.status(403).json({ error: 'Insufficient permissions' });
