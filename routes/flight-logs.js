@@ -56,8 +56,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can edit flight log entries' });
     const logId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT id FROM flight_logs WHERE id = $1', [logId]);
+    const existing = await pool.query('SELECT id, booking_id FROM flight_logs WHERE id = $1', [logId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
+    if (existing.rows[0].booking_id) {
+      return res.status(409).json({ error: 'Use the booking hours editor for flight logs tied to completed bookings' });
+    }
     const { flight_date, hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, aircraft_charge_amount, instruction_charge_amount, notes } = req.body;
     const hobbsDelta = (hobbs_start != null && hobbs_end != null) ? parseFloat(hobbs_end) - parseFloat(hobbs_start) : undefined;
     const tachDelta  = (tach_start  != null && tach_end  != null) ? parseFloat(tach_end)  - parseFloat(tach_start)  : undefined;
@@ -93,6 +96,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can delete flight log entries' });
     const logId = parseInt(req.params.id);
+    const existing = await pool.query('SELECT booking_id FROM flight_logs WHERE id = $1', [logId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
+    if (existing.rows[0].booking_id) {
+      return res.status(409).json({ error: 'Flight log entries tied to completed bookings cannot be deleted directly' });
+    }
     const result = await pool.query('DELETE FROM flight_logs WHERE id = $1 RETURNING id', [logId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
     res.json({ ok: true });

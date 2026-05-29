@@ -12,8 +12,8 @@ const { sendEmail, approvalConfirmationEmail, rejectionEmail } = require('../ema
 
 const router = express.Router();
 
-// All approval endpoints require auth; accessible to owner/admin/instructor
-const canApprove = [authenticateToken, requireRole('owner', 'admin', 'instructor')];
+// Approval decisions must remain with account administrators.
+const canApprove = [authenticateToken, requireRole('owner', 'admin')];
 
 // GET /api/approvals/pending — list all pending users
 router.get('/pending', ...canApprove, async (req, res) => {
