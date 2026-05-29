@@ -111,6 +111,20 @@ function populateMessageNewForm() {
 var _aircraftDocsAircraftId = null;
 var _aircraftDocsLabels = {};
 
+function readFileBase64(file) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function() {
+      var result = reader.result;
+      if (typeof result !== 'string') return reject(new Error('Failed to read file'));
+      var comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = function() { reject(reader.error || new Error('Failed to read file')); };
+    reader.readAsDataURL(file);
+  });
+}
+
 function canUploadAircraftDocs() {
   return currentUser && ['owner', 'admin'].includes(currentUser.role);
 }
@@ -186,28 +200,42 @@ async function loadAircraftDocsList() {
 
 async function submitAircraftDocument(e) {
   e.preventDefault();
-  if (!_aircraftDocsAircraftId || !canUploadAircraftDocs()) return;
   var errEl = document.getElementById('aircraft-docs-error');
   var btn = document.getElementById('aircraft-doc-upload-btn');
   var fileInput = document.getElementById('aircraft-doc-file');
   errEl.classList.remove('visible');
+  errEl.textContent = '';
+  if (!_aircraftDocsAircraftId) {
+    errEl.textContent = 'No aircraft selected — close and reopen the Docs modal.';
+    errEl.classList.add('visible');
+    return;
+  }
+  if (!canUploadAircraftDocs()) {
+    errEl.textContent = 'Only owners and admins can upload aircraft documents.';
+    errEl.classList.add('visible');
+    return;
+  }
   if (!fileInput.files || !fileInput.files[0]) {
     errEl.textContent = 'Please choose a file';
+    errEl.classList.add('visible');
+    return;
+  }
+  var file = fileInput.files[0];
+  if (file.size > 12 * 1024 * 1024) {
+    errEl.textContent = 'File too large (max 12 MB)';
     errEl.classList.add('visible');
     return;
   }
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   try {
-    var file = fileInput.files[0];
-    var buf = await file.arrayBuffer();
     var payload = {
       doc_type: document.getElementById('aircraft-doc-type').value,
       title: document.getElementById('aircraft-doc-title').value.trim() || null,
       expiry_date: document.getElementById('aircraft-doc-expiry').value || null,
       notes: document.getElementById('aircraft-doc-notes').value.trim() || null,
       file_name: file.name,
-      file_data: btoa(String.fromCharCode.apply(null, new Uint8Array(buf))),
+      file_data: await readFileBase64(file),
     };
     await api('/api/aircraft/' + _aircraftDocsAircraftId + '/documents', {
       method: 'POST',

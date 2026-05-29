@@ -61,17 +61,40 @@ async function main() {
     if (msg.type() === 'error') console.log('  CONSOLE ERROR:', msg.text());
   });
 
-  // Admin: open modal + upload if form visible
+  const pdfPath = require('path').join(__dirname, 'fixtures', 'e2e-test-doc.pdf');
+  require('fs').mkdirSync(require('path').dirname(pdfPath), { recursive: true });
+  if (!require('fs').existsSync(pdfPath)) {
+    require('fs').writeFileSync(pdfPath, '%PDF-1.4\n%%EOF\n');
+  }
+  const bigPdfPath = require('path').join(__dirname, 'fixtures', 'e2e-big-doc.pdf');
+  if (!require('fs').existsSync(bigPdfPath)) {
+    const header = Buffer.from('%PDF-1.4\n%%EOF\n');
+    const big = Buffer.alloc(600 * 1024, 0);
+    header.copy(big);
+    require('fs').writeFileSync(bigPdfPath, big);
+  }
+
+  // Admin: open modal, upload, verify View link opens PDF
   console.log('\n--- admin ---');
   await login(page, ROLES[0].email);
-  const adminModal = await openFleetDocs(page);
+  await openFleetDocs(page);
   const uploadWrap = page.locator('#aircraft-docs-upload-wrap');
   ok('admin sees upload form', !(await uploadWrap.evaluate((el) => el.classList.contains('hidden'))));
 
-  // Try upload a tiny PDF if R2 configured (API test handles upload; UI smoke here)
-  await page.click('#aircraft-docs-modal .modal button.btn-secondary', { hasText: 'Close' }).catch(() =>
-    page.locator('#aircraft-docs-modal').click({ position: { x: 5, y: 5 } })
-  );
+  await page.selectOption('#aircraft-doc-type', 'other');
+  await page.fill('#aircraft-doc-title', 'E2E UI Test Doc');
+  await page.setInputFiles('#aircraft-doc-file', bigPdfPath);
+  await page.click('#aircraft-doc-upload-btn');
+  await page.waitForTimeout(3000);
+  const uploadErr = await page.locator('#aircraft-docs-error.visible').textContent().catch(() => '');
+  ok('large PDF upload succeeds', !uploadErr, uploadErr || '');
+  const viewLink = page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).first();
+  ok('admin sees View link after upload', (await viewLink.count()) > 0);
+  const viewHref = await viewLink.getAttribute('href');
+  ok('View link has URL', !!viewHref && viewHref.startsWith('http'));
+  const viewRes = await page.request.get(viewHref);
+  ok('View URL returns PDF', viewRes.ok(), `status=${viewRes.status()}`);
+  await page.locator('#aircraft-docs-modal .modal').locator('button.btn-secondary', { hasText: 'Close' }).click().catch(() => {});
 
   for (const user of ROLES.slice(1)) {
     console.log(`\n--- ${user.role} ---`);
@@ -81,7 +104,11 @@ async function main() {
     await openFleetDocs(page);
     const hiddenUpload = await page.locator('#aircraft-docs-upload-wrap').evaluate((el) => el.classList.contains('hidden'));
     ok(`${user.role} upload hidden`, hiddenUpload === !user.canUpload);
-    await page.keyboard.press('Escape').catch(() => {});
+    ok(`${user.role} sees uploaded doc`, (await page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).count()) > 0);
+    const roleView = page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).first();
+    const roleHref = await roleView.getAttribute('href');
+    const roleRes = await page.request.get(roleHref);
+    ok(`${user.role} can fetch document`, roleRes.ok(), `status=${roleRes.status()}`);
     await page.locator('#aircraft-docs-modal').evaluate((el) => el.classList.add('hidden')).catch(() => {});
   }
 
