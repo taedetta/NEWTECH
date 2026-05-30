@@ -3,6 +3,7 @@
 // Does not own: PDF backup (backup-service.js), auth, booking logic, aircraft management
 
 const { uploadBuffer } = require('./lib/r2-storage');
+const { isStaging } = require('./lib/app-env');
 const { sendEmail } = require('./email-templates');
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
 
@@ -308,7 +309,11 @@ async function genStudentProgress(pool) {
 // ── R2 upload ──────────────────────────────────────────────────────────────────
 
 async function uploadCsvToR2(csvBuffer, filename) {
-  const url = await uploadBuffer(csvBuffer, filename, { folder: 'exports', contentType: 'text/csv' });
+  const url = await uploadBuffer(csvBuffer, filename, {
+    folder: 'exports',
+    contentType: 'text/csv',
+    allowLocalFallback: isStaging(),
+  });
   if (!url) console.error('[export] CSV upload failed for', filename);
   return url;
 }
@@ -460,7 +465,6 @@ async function runExport(pool) {
 // ── Scheduler ──────────────────────────────────────────────────────────────────
 
 function startExportScheduler(pool) {
-  const { isStaging } = require('./lib/app-env');
   if (isStaging()) {
     console.log('[export] Staging — nightly export scheduler disabled');
     return;
