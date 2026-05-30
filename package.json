@@ -13,6 +13,7 @@
     "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
     "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
     "test:schema": "node scripts/verify-schema.js --fix",
+    "test:r2-storage": "node scripts/r2-storage-fallback-check.js",
     "test:pipeline": "node scripts/test-complete-pipeline.js"
   },
   "dependencies": {

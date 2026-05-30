@@ -161,6 +161,7 @@ async function ensureDefaultAdminAccount(pool) {
 
 async function migrateDataUriImagesToR2Inline(pool) {
   const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
+  const { isStaging } = require('../lib/app-env');
   if (!isConfigured()) { console.log('[image-migration] Skipping — R2 env vars not set'); return; }
   try {
     const result = await pool.query("SELECT key, value FROM site_content WHERE key LIKE '%image%' AND value LIKE 'data:%'");
@@ -176,7 +177,11 @@ async function migrateDataUriImagesToR2Inline(pool) {
         const buffer = Buffer.from(base64Data, 'base64');
         const ext = mimeType.split('/')[1] || 'jpg';
         const uniqueName = `cms-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        const imageUrl = await uploadBuffer(buffer, uniqueName, { folder: 'images', contentType: mimeType });
+        const imageUrl = await uploadBuffer(buffer, uniqueName, {
+          folder: 'images',
+          contentType: mimeType,
+          allowLocalFallback: isStaging(),
+        });
         if (imageUrl) {
           await pool.query('UPDATE site_content SET value = $1, updated_at = NOW() WHERE key = $2', [imageUrl, row.key]);
           console.log(`[image-migration] migrated ${row.key} to ${imageUrl}`);

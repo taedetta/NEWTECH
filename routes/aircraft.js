@@ -4,6 +4,7 @@ const express = require('express');
 const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
 const { uploadBuffer } = require('../lib/r2-storage');
+const { isStaging } = require('../lib/app-env');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -339,6 +340,7 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
 
     const fileUrl = await uploadBuffer(buffer, file_name, {
       folder: `aircraft-docs/${aircraftId}`,
+      allowLocalFallback: isStaging(),
     });
     if (!fileUrl) return res.status(500).json({ error: 'Upload failed' });
 

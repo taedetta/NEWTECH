@@ -16,6 +16,7 @@
 const PDFDocument = require('pdfkit');
 const { PassThrough } = require('stream');
 const { uploadBuffer } = require('./lib/r2-storage');
+const { isStaging } = require('./lib/app-env');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
 
@@ -953,7 +954,11 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
 // ── R2 upload helper ──────────────────────────────────────────────────────────
 
 async function uploadPdfToR2(pdfBuffer, filename) {
-  const url = await uploadBuffer(pdfBuffer, filename, { folder: 'backups', contentType: 'application/pdf' });
+  const url = await uploadBuffer(pdfBuffer, filename, {
+    folder: 'backups',
+    contentType: 'application/pdf',
+    allowLocalFallback: isStaging(),
+  });
   if (!url) console.error('[backup] PDF upload failed for', filename);
   return url;
 }
@@ -1165,7 +1170,6 @@ async function runBackup(pool, frequency) {
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 function startBackupScheduler(pool) {
-  const { isStaging } = require('./lib/app-env');
   if (isStaging()) {
     console.log('[backup] Staging — backup scheduler disabled');
     return;

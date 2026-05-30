@@ -4,6 +4,7 @@ const express = require('express');
 const https = require('https');
 const OpenAI = (() => { try { return require('openai'); } catch { return null; } })();
 const { uploadBuffer } = require('../lib/r2-storage');
+const { isStaging } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -46,7 +47,11 @@ router.post('/generate-logo', async (req, res) => {
       }).on('error', reject);
     });
 
-    const url = await uploadBuffer(imageBuffer, 'new-tech-aviation-logo.png', { folder: 'images', contentType: 'image/png' });
+    const url = await uploadBuffer(imageBuffer, 'new-tech-aviation-logo.png', {
+      folder: 'images',
+      contentType: 'image/png',
+      allowLocalFallback: isStaging(),
+    });
     if (!url) throw new Error('R2 upload failed');
     res.json({ success: true, url });
   } catch (err) {
