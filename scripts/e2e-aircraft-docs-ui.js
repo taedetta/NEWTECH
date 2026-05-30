@@ -40,7 +40,7 @@ async function login(page, email) {
 async function openFleetDocs(page) {
   await page.click('[data-page="fleet"]');
   await page.waitForSelector('#fleet-table tr', { timeout: 10000 });
-  const docsBtn = page.locator('#fleet-table button[data-aircraft-id]').first();
+  const docsBtn = page.locator('#fleet-table [data-aircraft-docs-id]').first();
   ok('docs button exists', (await docsBtn.count()) > 0);
   await docsBtn.click();
   await page.waitForTimeout(500);

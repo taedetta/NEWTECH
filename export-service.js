@@ -2,7 +2,7 @@
 // Owns: nightly 11 PM CT CSV export — 9 topic-specific CSVs uploaded to R2, emailed as download links
 // Does not own: PDF backup (backup-service.js), auth, booking logic, aircraft management
 
-const { uploadBuffer, isConfigured: isR2Configured } = require('./lib/r2-storage');
+const { uploadBuffer } = require('./lib/r2-storage');
 const { sendEmail } = require('./email-templates');
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
 
@@ -308,8 +308,9 @@ async function genStudentProgress(pool) {
 // ── R2 upload ──────────────────────────────────────────────────────────────────
 
 async function uploadCsvToR2(csvBuffer, filename) {
-  if (!isR2Configured()) { console.error('[export] R2 not configured — set R2_* env vars'); return null; }
-  return uploadBuffer(csvBuffer, filename, { folder: 'exports', contentType: 'text/csv' });
+  const url = await uploadBuffer(csvBuffer, filename, { folder: 'exports', contentType: 'text/csv' });
+  if (!url) console.error('[export] CSV upload failed for', filename);
+  return url;
 }
 
 // ── Email ──────────────────────────────────────────────────────────────────────

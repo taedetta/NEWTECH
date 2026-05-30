@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'nta-portal-v6';
+const CACHE = 'nta-portal-v7';
 const OFFLINE_API_CACHE = 'nta-offline-api-v1';
 
 const OFFLINE_URLS = [

@@ -15,7 +15,7 @@
 
 const PDFDocument = require('pdfkit');
 const { PassThrough } = require('stream');
-const { uploadBuffer, isConfigured: isR2Configured } = require('./lib/r2-storage');
+const { uploadBuffer } = require('./lib/r2-storage');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
 
@@ -953,11 +953,9 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
 // ── R2 upload helper ──────────────────────────────────────────────────────────
 
 async function uploadPdfToR2(pdfBuffer, filename) {
-  if (!isR2Configured()) {
-    console.error('[backup] R2 not configured — set R2_* env vars');
-    return null;
-  }
-  return uploadBuffer(pdfBuffer, filename, { folder: 'backups', contentType: 'application/pdf' });
+  const url = await uploadBuffer(pdfBuffer, filename, { folder: 'backups', contentType: 'application/pdf' });
+  if (!url) console.error('[backup] PDF upload failed for', filename);
+  return url;
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────────
@@ -1148,6 +1146,10 @@ async function runBackup(pool, frequency) {
 
     const uploadedCount = downloadLinks.filter(dl => dl.url).length;
     console.log(`[backup] ${uploadedCount}/${pdfFiles.length} PDFs uploaded`);
+
+    if (uploadedCount === 0) {
+      throw new Error('All PDF uploads failed — check R2 credentials or disk storage');
+    }
 
     await sendBackupEmail(frequency, label, downloadLinks, recordCounts);
 
