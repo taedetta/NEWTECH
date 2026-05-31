@@ -154,14 +154,91 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
     const { role } = req.user;
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can delete booking history records' });
     const bookingId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT id, status FROM bookings WHERE id = $1', [bookingId]);
+    const existing = await pool.query('SELECT id FROM bookings WHERE id = $1', [bookingId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const bookingResult = await client.query(`
+        SELECT b.id, b.status, b.aircraft_id, b.student_id, b.instructor_id,
+               COALESCE(fl.hobbs_delta, CASE WHEN b.hobbs_end IS NOT NULL AND b.hobbs_start IS NOT NULL THEN b.hobbs_end - b.hobbs_start END) AS hobbs_delta,
+               fl.tach_delta,
+               COALESCE(fl.hobbs_end, b.hobbs_end) AS hobbs_end,
+               COALESCE(fl.tach_end, b.tach_end) AS tach_end
+        FROM bookings b
+        LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+        WHERE b.id = $1
+        FOR UPDATE OF b
+      `, [bookingId]);
+      if (bookingResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Booking not found' });
+      }
+      const b = bookingResult.rows[0];
+      const hobbsDelta = parseFloat(b.hobbs_delta || 0);
+      const tachDelta = parseFloat(b.tach_delta || 0);
+      const instructorHoursResult = await client.query(
+        'SELECT id FROM instructor_hours WHERE booking_id = $1 LIMIT 1',
+        [bookingId]
+      );
+      if (b.status === 'completed' && hobbsDelta > 0) {
+        if (b.aircraft_id) {
+          const previousReadings = await client.query(
+            `SELECT MAX(hobbs_end) AS hobbs_end, MAX(tach_end) AS tach_end
+             FROM flight_logs
+             WHERE aircraft_id = $1 AND booking_id <> $2`,
+            [b.aircraft_id, bookingId]
+          );
+          await client.query(`
+            UPDATE aircraft
+            SET total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1::numeric, 0),
+                total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2::numeric, 0),
+                current_hobbs = CASE
+                  WHEN $3::numeric IS NOT NULL AND current_hobbs IS NOT NULL AND ABS(current_hobbs - $3::numeric) < 0.05
+                  THEN COALESCE($5::numeric, GREATEST(COALESCE(total_hobbs_hours, 0) - $1::numeric, 0))
+                  ELSE current_hobbs
+                END,
+                current_tach = CASE
+                  WHEN $4::numeric IS NOT NULL AND current_tach IS NOT NULL AND ABS(current_tach - $4::numeric) < 0.05
+                  THEN COALESCE($6::numeric, GREATEST(COALESCE(total_tach_hours, 0) - $2::numeric, 0))
+                  ELSE current_tach
+                END,
+                updated_at = NOW()
+            WHERE id = $7`,
+            [
+              hobbsDelta,
+              tachDelta,
+              b.hobbs_end,
+              b.tach_end,
+              previousReadings.rows[0]?.hobbs_end || null,
+              previousReadings.rows[0]?.tach_end || null,
+              b.aircraft_id,
+            ]
+          );
+        }
+        if (b.student_id) {
+          await client.query(
+            `UPDATE users
+             SET total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1::numeric, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2::numeric, 0)
+             WHERE id = $3`,
+            [hobbsDelta, tachDelta, b.student_id]
+          );
+        }
+        if (b.instructor_id && instructorHoursResult.rows.length > 0) {
+          await client.query(
+            `UPDATE users
+             SET total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1::numeric, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2::numeric, 0)
+             WHERE id = $3`,
+            [hobbsDelta, tachDelta, b.instructor_id]
+          );
+        }
+      }
       // Clean up all related records before deleting the booking.
       // flight_hobbs_readings & flight_discrepancies have ON DELETE CASCADE,
       // but admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
+      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)

@@ -129,13 +129,18 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
       await client.query('BEGIN');
-      await client.query(
-        `UPDATE bookings SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+      const noChangeResult = await client.query(
+        `UPDATE bookings SET status = 'completed', updated_at = NOW()
+         WHERE id = $1 AND status = 'confirmed'
+         RETURNING *`,
         [req.params.id]
       );
+      if (noChangeResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+      }
       await client.query('COMMIT');
-      const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-      res.json({ booking: updated.rows[0], log_id: null });
+      res.json({ booking: noChangeResult.rows[0], log_id: null });
 
       // Send flight completed email (no_change — no hobbs/tach data)
       sendFlightCompletedEmail(req.params.id, req.user.id, req.user.role, null, null, null);
@@ -217,6 +222,16 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
     await client.query('BEGIN');
+    const lockedBooking = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (lockedBooking.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    if (lockedBooking.rows[0].status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    }
+    Object.assign(b, lockedBooking.rows[0]);
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
@@ -228,6 +243,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrChargeAmt = (dualHrs > 0 && instrRate) ? Math.round(dualHrs * parseFloat(instrRate.instructor_rate || 0) * 100) / 100 : 0;
     // Upsert flight_log — aircraft_id, student_id, instructor_id, booking_type are required
     const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [req.params.id]);
+    if (existingLog.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This booking already has a flight log and cannot be completed again' });
+    }
     let logId;
     if (existingLog.rows.length > 0) {
       await client.query(
@@ -431,7 +450,12 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    res.json(result.rows[0]);
+    const booking = result.rows[0];
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const isParticipant = Number(req.user.id) === Number(booking.student_id)
+      || Number(req.user.id) === Number(booking.instructor_id);
+    if (!isAdmin && !isParticipant) return res.status(403).json({ error: 'Access denied' });
+    res.json(booking);
   } catch (err) {
     const ts = new Date().toISOString();
     console.error(`[bookings-completion] [${ts}] GET /:id — user=${req.user?.id} error: ${err.message}`);
