@@ -646,6 +646,13 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: `Aircraft is currently ${aircraft.rows[0].status}` });
     }
     await client.query('BEGIN');
+    const lockKeys = [];
+    if (aircraft_id) lockKeys.push(`booking:aircraft:${aircraft_id}`);
+    if (iid) lockKeys.push(`booking:instructor:${iid}`);
+    if (sid) lockKeys.push(`booking:student:${sid}`);
+    for (const lockKey of lockKeys) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
+    }
     const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
     if (conflicts.length > 0) {
       await client.query('ROLLBACK');

@@ -7673,7 +7673,7 @@ async function loadDashboard() {
             <div style="font-weight:600;color:var(--amber)">&#9888; ${pending.length} flight${pending.length !== 1 ? 's' : ''} need hours logged</div>
             <div style="font-size:0.82rem;color:var(--gray-300);margin-top:0.2rem">Log Hobbs &amp; Tach hours to keep the aircraft record current</div>
           </div>
-          <button class="btn btn-sm btn-primary" onclick="navigate('flight-log')">Go to Flight Log</button>
+          <button class="btn btn-sm btn-primary" onclick="openPendingHoursFromDashboard()">Log Hours</button>
         `;
         document.getElementById('page-dashboard').appendChild(banner);
       }
@@ -8147,10 +8147,7 @@ function openDayDetail(year, month, day) {
   const date = new Date(year, month, day);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  if (date < today) {
-    alert('Cannot schedule flights in the past.');
-    return;
-  }
+  const isPastDay = date < today;
 
   const title = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   document.getElementById('day-modal-title').textContent = title;
@@ -8160,7 +8157,9 @@ function openDayDetail(year, month, day) {
 
   const list = document.getElementById('day-bookings-list');
   if (dayBookings.length === 0) {
-    list.innerHTML = '<div class="empty-state" style="padding:2rem"><h3>No flights scheduled</h3><p>Click below to add one</p></div>';
+    list.innerHTML = isPastDay
+      ? '<div class="empty-state" style="padding:2rem"><h3>No flights scheduled</h3><p>No flights were scheduled for this day.</p></div>'
+      : '<div class="empty-state" style="padding:2rem"><h3>No flights scheduled</h3><p>Click below to add one</p></div>';
   } else {
     const now = new Date();
     list.innerHTML = dayBookings.map(b => {
@@ -8253,6 +8252,8 @@ function openDayDetail(year, month, day) {
   const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   selectedBookingDate = dateStr;
   document.getElementById('booking-date').value = dateStr;
+  const addBtn = document.getElementById('day-add-booking-btn');
+  if (addBtn) addBtn.classList.toggle('hidden', isPastDay);
   document.getElementById('day-modal').classList.remove('hidden');
 }
 
@@ -9264,6 +9265,16 @@ function openCompleteModal(bookingId) {
   openPostFlightWizard(bookingId);
 }
 
+function openPendingHoursFromDashboard() {
+  const pending = Array.isArray(completableBookings) ? completableBookings : [];
+  if (pending.length === 0) {
+    navigate('schedule');
+    return;
+  }
+  const booking = pending[0];
+  openPostFlightWizard(booking.id, booking);
+}
+
 function closePostFlightWizard() {
   document.getElementById('post-flight-wizard').classList.add('hidden');
 }
@@ -10187,10 +10198,12 @@ async function loadPeople(filter, skipReload) {
       var isDualRole = !!u.is_instructor && ['admin', 'owner'].includes(u.role) && u.role !== 'instructor';
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
       var roleLabel = u.role === 'owner' ? 'Owner' : u.role === 'instructor' ? 'Instructor' : isDualRole ? 'Admin / Instructor' : u.role === 'admin' ? 'Admin' : u.role === 'renter' ? 'Renter' : u.role === 'maintenance' ? 'Maintenance' : 'Student';
-      var editRoleBtn = isOwner && !isSelf ? ' <button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:0.85rem;padding:0.15rem 0.3rem;border-radius:4px;line-height:1;vertical-align:middle;transition:color 0.15s" title="Edit user" onmouseover="this.style.color=\'var(--sky)\'" onmouseout="this.style.color=\'var(--gray-400)\'" onclick="openRoleChangeModal(' + u.id + ',\'' + escHtml(u.name).replace(/'/g,"\\'") + '\',\'' + u.role + '\', ' + (!!u.is_instructor ? 'true' : 'false') + ')">&#9998;</button>' : '';
+      var editRoleBtn = isOwner && !isSelf ? ' <button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:0.85rem;padding:0.15rem 0.3rem;border-radius:4px;line-height:1;vertical-align:middle;transition:color 0.15s" title="Edit user" onmouseover="this.style.color=\'var(--sky)\'" onmouseout="this.style.color=\'var(--gray-400)\'" onclick="openRoleChangeModal(' + u.id + ',\'' + escInlineJsString(u.name) + '\',\'' + u.role + '\', ' + (!!u.is_instructor ? 'true' : 'false') + ')">&#9998;</button>' : '';
+      var pendingForUser = pendingPermChanges[u.id] || {};
 
       function makeToggle(perm, value) {
-        var checked = isTargetOwner ? true : !!value;
+        var effectiveValue = pendingForUser[perm] !== undefined ? pendingForUser[perm] : value;
+        var checked = isTargetOwner ? true : !!effectiveValue;
         var title = isTargetOwner ? 'Owner has all permissions' : isNonMgmtRole ? (u.role === 'student' ? 'Students' : u.role === 'renter' ? 'Renters' : 'Maintenance') + ' cannot have management permissions' : '';
         return '<label class="toggle-switch" title="' + title + '">' +
           '<input type="checkbox" ' + (checked ? 'checked ' : '') + (disabled ? 'disabled ' : '') +
@@ -10237,8 +10250,8 @@ async function loadPeople(filter, skipReload) {
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_manage_permissions', u.can_manage_permissions)) + '</td>' +
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_edit_website', u.can_edit_website)) + '</td>' +
         '<td style="display:flex;gap:0.4rem;flex-wrap:wrap">' +
-          (canEditAvail ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escHtml(u.name).replace(/'/g, "\\'") + '\')">Availability</button>' : '') +
-          (canDelete ? '<button class="btn btn-danger btn-sm" onclick="deleteUser(' + u.id + ', \'' + escHtml(u.name) + '\')">Remove</button>' : '') +
+          (canEditAvail ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escInlineJsString(u.name) + '\')">Availability</button>' : '') +
+          (canDelete ? '<button class="btn btn-danger btn-sm" onclick="deleteUser(' + u.id + ', \'' + escInlineJsString(u.name) + '\')">Remove</button>' : '') +
         '</td>' +
         '</tr>';
     }).join('');
@@ -10258,7 +10271,7 @@ async function loadPeople(filter, skipReload) {
         '<td><span class="tag ' + roleClass + '">' + roleLabel + '</span></td>' +
         '<td style="text-align:center">' + ((['instructor','admin','owner'].includes(u.role) || u.is_instructor) ? (u.assigned_students || 0) : '—') + '</td>' +
         '<td style="color:var(--gray-500)">' + new Date(u.created_at).toLocaleDateString() + '</td>' +
-        '<td>' + (canEditAvailBasic ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escHtml(u.name).replace(/'/g, "\\'") + '\')">Availability</button>' : '') + '</td>' +
+        '<td>' + (canEditAvailBasic ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escInlineJsString(u.name) + '\')">Availability</button>' : '') + '</td>' +
         '</tr>';
     }).join('');
   }
@@ -10336,21 +10349,21 @@ async function savePermissions() {
         method: 'PATCH',
         body: JSON.stringify(payload)
       });
+      delete pendingPermChanges[userId];
     } catch (err) {
       errors.push((user.name || 'User ' + userId) + ': ' + (err.error || 'Failed'));
     }
   }
 
-  // Clear pending changes
-  pendingPermChanges = {};
-
   // Reload fresh data from server
   await loadUsers();
+  loadPeople(currentPeopleFilter);
 
   var container = document.getElementById('perm-save-container');
   if (errors.length > 0) {
     container.innerHTML = '<div class="perm-save-bar" style="border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.06)">' +
-      '<div class="save-info" style="color:var(--red)">Some changes failed: ' + escHtml(errors.join('; ')) + '</div></div>';
+      '<div class="save-info" style="color:var(--red)">Some changes failed: ' + escHtml(errors.join('; ')) + '</div>' +
+      '<div style="display:flex;gap:0.5rem;"><button class="btn-discard" onclick="discardPermChanges()">Discard</button><button class="btn-save" id="perm-save-btn" onclick="savePermissions()">Retry Failed</button></div></div>';
   } else {
     container.innerHTML = '<div class="perm-save-success">&#10003; Permissions saved successfully</div>';
     setTimeout(function() {
@@ -10358,8 +10371,6 @@ async function savePermissions() {
       if (c && c.querySelector('.perm-save-success')) c.innerHTML = '';
     }, 3000);
   }
-
-  loadPeople(currentPeopleFilter);
 }
 
 function discardPermChanges() {
@@ -10546,6 +10557,10 @@ document.getElementById('invite-form').addEventListener('submit', async (e) => {
 // ─── HELPERS ───
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escInlineJsString(str) {
+  return escHtml(String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n]/g, ' '));
 }
 
 function formatTime(d) {
@@ -16618,8 +16633,8 @@ function renderIHTable(entries) {
       : '';
     var deleteBtn = canDelete
       ? (isGround
-        ? '<button class="btn btn-sm btn-danger" onclick="deleteGSEntry(' + e.id + ', \'' + escHtml(e.student_name || '') + '\', \'' + escHtml(dateStr) + '\')" title="Delete ground session" style="padding:0.25rem 0.5rem;font-size:0.75rem;">✕</button>'
-        : '<button class="btn btn-sm btn-danger" onclick="deleteIHEntry(' + e.id + ', \'' + escHtml(e.student_name || '') + '\', \'' + escHtml(dateStr) + '\')" title="Delete entry" style="padding:0.25rem 0.5rem;font-size:0.75rem;">✕</button>')
+        ? '<button class="btn btn-sm btn-danger" onclick="deleteGSEntry(' + e.id + ', \'' + escInlineJsString(e.student_name || '') + '\', \'' + escInlineJsString(dateStr) + '\')" title="Delete ground session" style="padding:0.25rem 0.5rem;font-size:0.75rem;">✕</button>'
+        : '<button class="btn btn-sm btn-danger" onclick="deleteIHEntry(' + e.id + ', \'' + escInlineJsString(e.student_name || '') + '\', \'' + escInlineJsString(dateStr) + '\')" title="Delete entry" style="padding:0.25rem 0.5rem;font-size:0.75rem;">✕</button>')
       : '';
     var acHrsCell = !isGround && parseFloat(e.aircraft_hours || 0) > 0
       ? '<td style="color:var(--sky);font-weight:600">' + acHrs + '</td>'
