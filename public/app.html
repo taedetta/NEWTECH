@@ -10767,6 +10767,7 @@ function openRoleChangeModal(userId, userName, currentRole, isInstructor) {
   document.getElementById('role-change-current-instructor').value = isInstructor ? 'true' : 'false';
   document.getElementById('role-change-is-instructor').checked = !!isInstructor;
   document.getElementById('role-change-instructor-note').classList.add('hidden');
+  document.getElementById('role-change-error').classList.add('hidden');
   document.getElementById('role-change-error').classList.remove('visible');
   document.getElementById('role-change-error').textContent = '';
   const btn = document.getElementById('role-change-save-btn');
@@ -10797,11 +10798,12 @@ async function saveRoleChange() {
   const btn = document.getElementById('role-change-save-btn');
   if (!userId || !newRole) {
     errEl.textContent = 'Invalid user or role selection';
+    errEl.classList.remove('hidden');
     errEl.classList.add('visible');
     return;
   }
+  errEl.classList.add('hidden');
   errEl.classList.remove('visible');
-  errEl.textContent = '';
   btn.disabled = true;
   btn.textContent = 'Saving...';
   try {
@@ -10822,6 +10824,7 @@ async function saveRoleChange() {
   } catch (err) {
     const msg = err.error || err.message || 'Failed to save changes';
     errEl.textContent = msg;
+    errEl.classList.remove('hidden');
     errEl.classList.add('visible');
     showToast(msg, 'error');
     btn.disabled = false;

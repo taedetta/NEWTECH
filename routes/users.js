@@ -201,12 +201,13 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
         return res.status(403).json({ error: 'Cannot change the last owner\'s role' });
       }
     }
+    const setInstructor = role === 'instructor';
     await pool.query(
       `UPDATE users SET role = $1,
-        is_instructor = CASE WHEN $1 = 'instructor' THEN TRUE ELSE is_instructor END,
+        is_instructor = CASE WHEN $3 THEN TRUE ELSE is_instructor END,
         updated_at = NOW()
        WHERE id = $2`,
-      [role, targetId]
+      [role, targetId, setInstructor]
     );
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,

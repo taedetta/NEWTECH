@@ -24,7 +24,7 @@ try {
 const EMAIL = process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com';
 const NAME = process.env.ADMIN_NAME || 'Evaughntae White';
 const PASSWORD = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
-const ROLE = process.env.ADMIN_ROLE || 'admin';
+const ROLE = process.env.ADMIN_ROLE || 'owner';
 
 async function main() {
   const poolConfig = { connectionString: process.env.DATABASE_URL };
