@@ -107,12 +107,14 @@ function mergePositionSummary(summary, positionData) {
   return merged;
 }
 
-function archiveLocalTrack(session) {
+function archiveLocalTrack(session, summary) {
   if (!session?.fa_flight_id || !session.points?.length) return;
   localTrackArchive.set(session.fa_flight_id, {
     tail: session.tail,
     fa_flight_id: session.fa_flight_id,
     points: [...session.points],
+    departure_time: summary?.departure_time || session.departure_time || null,
+    arrival_time: summary?.arrival_time || session.arrival_time || null,
     archived_at: Date.now(),
   });
 }
@@ -122,7 +124,7 @@ function recordLocalTrack(tail, summary) {
 
   for (const [key, session] of [...localTrackActive.entries()]) {
     if (session.tail === tail && session.fa_flight_id !== summary.fa_flight_id) {
-      archiveLocalTrack(session);
+      archiveLocalTrack(session, summary);
       localTrackActive.delete(key);
     }
   }
@@ -149,7 +151,7 @@ function recordLocalTrack(tail, summary) {
   }
 
   if (summary.flight_status === 'on_ground' && session.points.length > 0) {
-    archiveLocalTrack(session);
+    archiveLocalTrack(session, summary);
     localTrackActive.delete(key);
   }
 
@@ -280,18 +282,19 @@ async function enrichWithTracks(tail, summary) {
   return summary;
 }
 
-async function enrichHistoryTracks(tail, history) {
-  const enriched = [...history];
-  for (let i = 0; i < Math.min(enriched.length, HISTORY_TRACK_LIMIT); i++) {
-    const item = { ...enriched[i] };
-    item.local_track = getLocalTrack(tail, item.fa_flight_id);
-    item.fa_track = await fetchFlightTrack(item.fa_flight_id, { inFlight: false });
-    if (!item.last_position && item.fa_track.length) {
-      item.last_position = item.fa_track[item.fa_track.length - 1];
+function attachHistoryTracks(tail, history) {
+  return history.map((item) => {
+    const h = { ...item, fa_track: item.fa_track || [], local_track: [] };
+    const archived = localTrackArchive.get(h.fa_flight_id);
+    if (archived?.points?.length) {
+      h.local_track = archived.points;
+      h.departure_time = h.departure_time || archived.departure_time;
+      h.arrival_time = h.arrival_time || archived.arrival_time;
+    } else {
+      h.local_track = getLocalTrack(tail, h.fa_flight_id);
     }
-    enriched[i] = await enrichAirports(item);
-  }
-  return enriched;
+    return h;
+  });
 }
 
 // GET /api/flights/tracking — live fleet tracking (all authenticated roles)
@@ -323,7 +326,10 @@ router.get('/tracking', authenticateToken, async (req, res) => {
           flightInfo = await enrichAirports(flightInfo);
           flightInfo = await enrichWithTracks(ac.tail_number, flightInfo);
           history[0] = flightInfo;
-          history = await enrichHistoryTracks(ac.tail_number, history);
+          history = attachHistoryTracks(ac.tail_number, history);
+          for (let i = 0; i < Math.min(history.length, HISTORY_TRACK_LIMIT); i++) {
+            history[i] = await enrichAirports(history[i]);
+          }
           flightStatus = flightInfo.flight_status;
         } else if (raw.__error) {
           flightStatus = 'unknown';
@@ -348,6 +354,25 @@ router.get('/tracking', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('[tracking] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch tracking data' });
+  }
+});
+
+// GET /api/flights/track/:faFlightId — on-demand track for a history flight
+router.get('/track/:faFlightId', authenticateToken, async (req, res) => {
+  try {
+    if (!process.env.FLIGHTAWARE_API_KEY) {
+      return res.status(503).json({ error: 'FlightAware not configured' });
+    }
+    const { faFlightId } = req.params;
+    const tail = req.query.tail || '';
+    const fa_track = await fetchFlightTrack(faFlightId, { inFlight: false });
+    let local_track = getLocalTrack(tail, faFlightId);
+    const archived = localTrackArchive.get(faFlightId);
+    if (archived?.points?.length) local_track = archived.points;
+    res.json({ fa_flight_id: faFlightId, fa_track, local_track });
+  } catch (err) {
+    console.error('[tracking] track fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch flight track' });
   }
 });
 
