@@ -4825,6 +4825,11 @@ function isBookableInstructor(u) {
   if (u.approval_status && u.approval_status !== 'approved') return false;
   return u.is_instructor === true || u.role === 'instructor';
 }
+
+function isInstructorUser(u) {
+  if (!u || u.deleted_at) return false;
+  return u.is_instructor === true || u.role === 'instructor';
+}
 let editingAircraftId = null;
 let hasOwnerAccount = false;
 let currentPeopleFilter = 'all';
@@ -7951,7 +7956,7 @@ async function loadDashboard() {
     return d.toDateString() === now.toDateString();
   });
 
-  const instructorCount = allUsers.filter(u => ['instructor','admin','owner'].includes(u.role)).length;
+  const instructorCount = allUsers.filter(isInstructorUser).length;
   const studentCount = allUsers.filter(u => u.role === 'student').length;
   const availableAircraft = allAircraft.filter(a => a.status === 'available').length;
 
@@ -8105,7 +8110,7 @@ async function loadBookingHistory() {
     const instrSel = document.getElementById('history-instructor-filter');
     if (instrSel && instrSel.options.length <= 1 && currentUser && currentUser.role !== 'student') {
       instrSel.style.display = '';
-      const instructors = (allUsers || []).filter(u => u.role === 'instructor' || u.role === 'admin' || u.role === 'owner');
+      const instructors = (allUsers || []).filter(isBookableInstructor);
       instructors.forEach(u => {
         const opt = document.createElement('option');
         opt.value = u.id;
@@ -8338,7 +8343,7 @@ function openManualEntryModal() {
 
   const instrSel = document.getElementById('me-instructor');
   instrSel.innerHTML = '<option value="">None</option>';
-  (allUsers || []).filter(u => ['instructor','admin','owner'].includes(u.role) && !u.deleted_at).forEach(u => {
+  (allUsers || []).filter(isBookableInstructor).forEach(u => {
     const opt = document.createElement('option');
     opt.value = u.id; opt.textContent = u.name;
     instrSel.appendChild(opt);
@@ -10535,7 +10540,11 @@ async function loadPeople(filter, skipReload) {
   const canManageStudents = isOwner || perms.can_manage_students;
   const canAddUsers = isOwner || canManageInstructors || canManageStudents;
 
-  const users = filter === 'all' ? allUsers : allUsers.filter(u => u.role === filter);
+  const users = filter === 'all'
+    ? allUsers
+    : filter === 'instructor'
+      ? allUsers.filter(isInstructorUser)
+      : allUsers.filter(u => u.role === filter);
 
   // Show/hide Add User button
   document.getElementById('add-user-btn').classList.toggle('hidden', !canAddUsers);
@@ -10580,7 +10589,6 @@ async function loadPeople(filter, skipReload) {
       var isNonMgmtRole = ['student', 'renter', 'maintenance'].includes(u.role);
       var disabled = isTargetOwner || isNonMgmtRole;
       var isSelf = u.id === currentUser.id;
-      var canEditAvail = (!!u.is_instructor) && (isOwner || isSelf || canManageInstructors);
       var isDualRole = !!u.is_instructor && ['admin', 'owner'].includes(u.role) && u.role !== 'instructor';
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
       var roleLabel = u.role === 'owner' ? 'Owner' : u.role === 'instructor' ? 'Instructor' : isDualRole ? 'Admin / Instructor' : u.role === 'admin' ? 'Admin' : u.role === 'renter' ? 'Renter' : u.role === 'maintenance' ? 'Maintenance' : 'Student';
@@ -10595,7 +10603,7 @@ async function loadPeople(filter, skipReload) {
           '<span class="toggle-slider"></span></label>';
       }
 
-      var canEditAvail = (u.role === 'instructor' || (u.role === 'admin' && u.has_instructor_availability)) && (isOwner || isSelf || canManageInstructors);
+      var canEditAvail = isInstructorUser(u) && (isOwner || isSelf || canManageInstructors);
       var canDelete = !isSelf && (
         (isOwner && isTargetOwner) ||
         (!isTargetOwner && (isOwner ||
@@ -10607,7 +10615,7 @@ async function loadPeople(filter, skipReload) {
                  isNonMgmtRole ? '<span class="perm-note">No management access</span>' : '';
 
       var rateCell = '';
-      var canHaveRate = ['instructor', 'admin', 'owner'].includes(u.role);
+      var canHaveRate = isInstructorUser(u);
       if (canHaveRate && isOwner) {
         var rateVal = u.instructor_rate != null ? parseFloat(u.instructor_rate).toFixed(2) : '';
         rateCell = '<div class="rate-input-wrap">' +
@@ -10621,7 +10629,7 @@ async function loadPeople(filter, skipReload) {
         rateCell = '<span style="color:var(--gray-500)">—</span>';
       }
 
-      var studentCount = (['instructor', 'admin', 'owner'].includes(u.role) || u.is_instructor)
+      var studentCount = isInstructorUser(u)
         ? '<span style="font-weight:600;color:' + ((u.assigned_students || 0) > 0 ? 'var(--sky)' : 'var(--gray-500)') + '">' + (u.assigned_students || 0) + '</span>'
         : '<span style="color:var(--gray-500)">—</span>';
 
@@ -10646,17 +10654,17 @@ async function loadPeople(filter, skipReload) {
     // Basic view
     thead.innerHTML = '<tr><th class="people-sticky">Name</th><th class="people-sticky-2">Email</th><th>Phone</th><th>Role</th><th>Students</th><th>Joined</th><th></th></tr>';
     tbody.innerHTML = users.map(function(u) {
-      var isDualRole = u.role === 'admin' && u.has_instructor_availability;
+      var isDualRole = !!u.is_instructor && ['admin', 'owner'].includes(u.role) && u.role !== 'instructor';
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
       var roleLabel = u.role === 'owner' ? 'Owner' : u.role === 'instructor' ? 'Instructor' : isDualRole ? 'Admin / Instructor' : u.role === 'admin' ? 'Admin' : u.role === 'renter' ? 'Renter' : u.role === 'maintenance' ? 'Maintenance' : 'Student';
       var isSelf = u.id === currentUser.id;
-      var canEditAvailBasic = (u.role === 'instructor' || (u.role === 'admin' && u.has_instructor_availability)) && (isOwner || isSelf || canManageInstructors);
+      var canEditAvailBasic = isInstructorUser(u) && (isOwner || isSelf || canManageInstructors);
       return '<tr>' +
         '<td class="people-sticky" style="font-weight:600">' + escHtml(u.name) + '</td>' +
         '<td class="people-sticky-2" style="color:var(--gray-300)">' + escHtml(u.email) + '</td>' +
         '<td style="color:var(--gray-300);font-size:0.875rem">' + (u.phone_number ? escHtml(u.phone_number) : '<span style="color:var(--gray-500)">—</span>') + '</td>' +
         '<td><span class="tag ' + roleClass + '">' + roleLabel + '</span></td>' +
-        '<td style="text-align:center">' + ((['instructor','admin','owner'].includes(u.role) || u.is_instructor) ? (u.assigned_students || 0) : '—') + '</td>' +
+        '<td style="text-align:center">' + (isInstructorUser(u) ? (u.assigned_students || 0) : '—') + '</td>' +
         '<td style="color:var(--gray-500)">' + new Date(u.created_at).toLocaleDateString() + '</td>' +
         '<td>' + (canEditAvailBasic ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escHtml(u.name).replace(/'/g, "\\'") + '\')">Availability</button>' : '') + '</td>' +
         '</tr>';
@@ -12492,7 +12500,7 @@ async function toggleEnrollForm() {
 
 async function populateEnrollForm() {
   const students = allUsers.filter(u => u.role === 'student');
-  const instructors = allUsers.filter(u => u.role === 'instructor' || u.role === 'admin' || u.role === 'owner');
+  const instructors = allUsers.filter(isBookableInstructor);
 
   const studentSel = document.getElementById('enroll-student-select');
   const programSel = document.getElementById('enroll-program-select');
@@ -13845,7 +13853,7 @@ async function loadHistoryLegacyPage() {
   const isInstructor = currentUser && currentUser.role === 'instructor';
   if (instWrap) instWrap.classList.toggle('hidden', isInstructor || isSelfService || (!isMgmtAll && ['owner','admin','instructor'].includes(currentUser?.role)));
   if (!isInstructor && instSel.options.length <= 1 && allUsers && allUsers.length > 0) {
-    const instructors = allUsers.filter(u => u.role === 'instructor' || u.role === 'admin' || u.role === 'owner');
+    const instructors = allUsers.filter(isBookableInstructor);
     instSel.innerHTML = '<option value="">All Instructors</option>' +
       instructors.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
   }
@@ -16666,7 +16674,7 @@ async function loadInstructorHoursPage() {
   if (isAdminOrOwner) {
     // Admins/owners: see all instructors with "All Instructors" default
     if (instrSel.options.length <= 1) {
-      allUsers.filter(function(u) { return ['instructor','admin','owner'].includes(u.role); }).forEach(function(u) {
+      allUsers.filter(isInstructorUser).forEach(function(u) {
         instrSel.innerHTML += '<option value="' + u.id + '">' + escHtml(u.name) + '</option>';
       });
     }
@@ -16716,7 +16724,7 @@ async function loadIHPrefill(instructorId) {
     if ((currentUser.role === 'owner' || currentUser.role === 'admin')) {
       var ihInstrSel = document.getElementById('ih-instructor-id');
       if (ihInstrSel && ihInstrSel.options.length <= 1) {
-        allUsers.filter(function(u) { return ['instructor','admin','owner'].includes(u.role); }).forEach(function(u) {
+        allUsers.filter(isInstructorUser).forEach(function(u) {
           ihInstrSel.innerHTML += '<option value="' + u.id + '">' + escHtml(u.name) + '</option>';
         });
         // Select current user by default
@@ -16748,7 +16756,7 @@ async function loadIHPrefill(instructorId) {
     if (currentUser.role === 'owner' || currentUser.role === 'admin') {
       var gsInstrSel = document.getElementById('gs-instructor-id');
       if (gsInstrSel && gsInstrSel.options.length <= 1) {
-        allUsers.filter(function(u) { return ['instructor','admin','owner'].includes(u.role); }).forEach(function(u) {
+        allUsers.filter(isInstructorUser).forEach(function(u) {
           gsInstrSel.innerHTML += '<option value="' + u.id + '">' + escHtml(u.name) + '</option>';
         });
         gsInstrSel.value = String(currentUser.id);

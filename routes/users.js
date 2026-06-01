@@ -44,7 +44,9 @@ router.get('/', authenticateToken, async (req, res) => {
       WHERE u.deleted_at IS NULL
     `;
     const params = [];
-    if (role) {
+    if (role === 'instructor') {
+      query += ` AND (u.is_instructor = TRUE OR u.role = 'instructor')`;
+    } else if (role) {
       query += ' AND u.role = $1';
       params.push(role);
     }
