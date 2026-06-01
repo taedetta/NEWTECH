@@ -1861,7 +1861,7 @@
                   <div style="text-align:center;color:var(--gray-300);">
                     <div style="font-size:2.5rem;margin-bottom:0.75rem;">&#9992;</div>
                     <div style="font-weight:600;margin-bottom:0.35rem;">No Position Data</div>
-                    <div style="font-size:0.83rem;">Aircraft positions will appear here when in flight</div>
+                    <div id="tracking-map-overlay-msg" style="font-size:0.83rem;">Aircraft positions will appear here when in flight</div>
                   </div>
                 </div>
               </div>
@@ -7112,11 +7112,18 @@ function renderTrackingMap(aircraft) {
     positions.push([pos.latitude, pos.longitude]);
   });
 
-  // Show overlay if no positions
+  // Show overlay if no positions — but keep map visible when aircraft are in flight (position may load next refresh)
   const overlay = document.getElementById('tracking-map-overlay');
+  const anyInFlight = aircraft.some(e => e.flight_status === 'in_flight' || e.flight?.flight_status === 'in_flight');
   if (positions.length === 0) {
     overlay.classList.remove('hidden');
     overlay.style.display = 'flex';
+    const msg = overlay.querySelector('div > div:last-child');
+    if (msg) {
+      msg.textContent = anyInFlight
+        ? 'Fetching live position — map will update shortly'
+        : 'Aircraft positions will appear here when in flight';
+    }
   } else {
     overlay.classList.add('hidden');
     overlay.style.display = 'none';

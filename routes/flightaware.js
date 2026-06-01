@@ -14,6 +14,23 @@ const FA_HISTORY_DAYS = 14;
 const flightAwareCache = new Map();
 const FA_CACHE_TTL = 60 * 1000;
 
+function mapPosition(pos) {
+  if (!pos || pos.latitude == null || pos.longitude == null) return null;
+  return {
+    latitude: pos.latitude,
+    longitude: pos.longitude,
+    altitude: pos.altitude,
+    groundspeed: pos.groundspeed,
+    heading: pos.heading,
+    timestamp: pos.timestamp,
+  };
+}
+
+function mapAirport(ap) {
+  if (!ap) return null;
+  return { code: ap.code, name: ap.name, city: ap.city };
+}
+
 function deriveFlightStatus(f) {
   const pos = f.last_position;
   if (f.progress_percent != null && f.progress_percent < 100 && pos) return 'in_flight';
@@ -25,7 +42,6 @@ function deriveFlightStatus(f) {
 }
 
 function mapFlightSummary(f, { isCurrent = false } = {}) {
-  const pos = f.last_position;
   const departure_time = f.actual_out || f.actual_off || f.estimated_off || f.scheduled_out;
   const arrival_time = f.actual_in || f.actual_on || f.estimated_on || f.scheduled_on;
 
@@ -35,33 +51,47 @@ function mapFlightSummary(f, { isCurrent = false } = {}) {
     status: f.status,
     flight_status: deriveFlightStatus(f),
     progress_percent: f.progress_percent,
-    origin: f.origin ? { code: f.origin.code, name: f.origin.name, city: f.origin.city } : null,
-    destination: f.destination ? { code: f.destination.code, name: f.destination.name, city: f.destination.city } : null,
+    origin: mapAirport(f.origin),
+    destination: mapAirport(f.destination),
     departure_time,
     arrival_time,
     is_current: isCurrent,
-    last_position: pos ? {
-      latitude: pos.latitude,
-      longitude: pos.longitude,
-      altitude: pos.altitude,
-      groundspeed: pos.groundspeed,
-      heading: pos.heading,
-      timestamp: pos.timestamp,
-    } : null,
+    last_position: mapPosition(f.last_position),
   };
 }
 
-async function fetchFlightAwareData(tailNumber) {
-  const apiKey = process.env.FLIGHTAWARE_API_KEY;
-  if (!apiKey) return { __error: 'no_api_key' };
+function mergePositionSummary(summary, positionData) {
+  if (!positionData?.last_position) return summary;
 
-  const cached = flightAwareCache.get(tailNumber);
-  if (cached && Date.now() - cached.ts < FA_CACHE_TTL) return cached.data;
+  const pos = mapPosition(positionData.last_position);
+  const merged = {
+    ...summary,
+    last_position: pos,
+    origin: summary.origin || mapAirport(positionData.origin),
+    destination: summary.destination || mapAirport(positionData.destination),
+    departure_time: summary.departure_time || positionData.actual_off,
+    arrival_time: summary.arrival_time || positionData.actual_on,
+  };
+  merged.flight_status = deriveFlightStatus({
+    last_position: positionData.last_position,
+    progress_percent: summary.progress_percent,
+    actual_in: positionData.actual_on,
+    actual_on: positionData.actual_on,
+    actual_out: positionData.actual_off,
+    actual_off: positionData.actual_off,
+    status: summary.status,
+  });
+  return merged;
+}
+
+function flightAwareRequest(path) {
+  const apiKey = process.env.FLIGHTAWARE_API_KEY;
+  if (!apiKey) return Promise.resolve({ __error: 'no_api_key' });
 
   return new Promise((resolve) => {
     const options = {
       hostname: 'aeroapi.flightaware.com',
-      path: `/aeroapi/flights/${encodeURIComponent(tailNumber)}`,
+      path,
       method: 'GET',
       headers: { 'x-apikey': apiKey, Accept: 'application/json' },
     };
@@ -71,9 +101,11 @@ async function fetchFlightAwareData(tailNumber) {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(raw);
-          const result = { statusCode: res.statusCode, ...parsed };
-          flightAwareCache.set(tailNumber, { data: result, ts: Date.now() });
-          resolve(result);
+          if (res.statusCode >= 400) {
+            resolve({ __error: 'api_error', statusCode: res.statusCode, ...parsed });
+            return;
+          }
+          resolve({ statusCode: res.statusCode, ...parsed });
         } catch { resolve({ __error: 'parse_error' }); }
       });
     });
@@ -81,6 +113,34 @@ async function fetchFlightAwareData(tailNumber) {
     req.setTimeout(10000, () => { req.destroy(); resolve({ __error: 'timeout' }); });
     req.end();
   });
+}
+
+async function fetchFlightAwareData(tailNumber) {
+  const cacheKey = `flights:${tailNumber}`;
+  const cached = flightAwareCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < FA_CACHE_TTL) return cached.data;
+
+  const result = await flightAwareRequest(`/aeroapi/flights/${encodeURIComponent(tailNumber)}`);
+  if (!result.__error) flightAwareCache.set(cacheKey, { data: result, ts: Date.now() });
+  return result;
+}
+
+async function fetchFlightPosition(faFlightId) {
+  const cacheKey = `position:${faFlightId}`;
+  const cached = flightAwareCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < FA_CACHE_TTL) return cached.data;
+
+  const result = await flightAwareRequest(`/aeroapi/flights/${encodeURIComponent(faFlightId)}/position`);
+  if (!result.__error) flightAwareCache.set(cacheKey, { data: result, ts: Date.now() });
+  return result.__error ? null : result;
+}
+
+async function enrichInFlightPosition(summary) {
+  if (!summary || summary.flight_status !== 'in_flight' || summary.last_position || !summary.fa_flight_id) {
+    return summary;
+  }
+  const positionData = await fetchFlightPosition(summary.fa_flight_id);
+  return mergePositionSummary(summary, positionData);
 }
 
 // GET /api/flights/tracking — live fleet tracking (all authenticated roles)
@@ -105,7 +165,8 @@ router.get('/tracking', authenticateToken, async (req, res) => {
 
         if (!raw.__error && Array.isArray(raw.flights) && raw.flights.length > 0) {
           history = raw.flights.map((f, idx) => mapFlightSummary(f, { isCurrent: idx === 0 }));
-          flightInfo = history[0];
+          flightInfo = await enrichInFlightPosition(history[0]);
+          history[0] = flightInfo;
           flightStatus = flightInfo.flight_status;
         } else if (raw.__error) {
           flightStatus = 'unknown';
