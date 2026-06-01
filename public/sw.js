@@ -1,12 +1,21 @@
 'use strict';
 
-const CACHE = 'nta-portal-v7';
+const CACHE = 'nta-portal-v8';
 const OFFLINE_API_CACHE = 'nta-offline-api-v1';
 
 const OFFLINE_URLS = [
   '/manifest.webmanifest',
-  '/app',
 ];
+
+function isAppShell(url) {
+  return url.pathname === '/app' || url.pathname === '/app/' || url.pathname.startsWith('/app/');
+}
+
+function isStaticAsset(url) {
+  return url.pathname.endsWith('.js')
+    || url.pathname.endsWith('.css')
+    || url.pathname === '/sw.js';
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -78,10 +87,18 @@ self.addEventListener('fetch', (event) => {
 
   if (url.pathname.startsWith('/api/')) return;
 
-  // Always fetch /app HTML from network so nav/role changes deploy immediately
-  if (url.pathname === '/app' || url.pathname === '/app/') {
+  // App shell + JS/CSS: network-first so deploys reach users without manual cache clear
+  if (isAppShell(url) || isStaticAsset(url)) {
     event.respondWith(
-      fetch(request).catch(() => caches.match(request))
+      fetch(request)
+        .then((response) => {
+          if (response.ok && isAppShell(url)) {
+            const copy = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || Response.error()))
     );
     return;
   }

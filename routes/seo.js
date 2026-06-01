@@ -3,6 +3,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { getAppBuildVersion } = require('../lib/app-build-version');
 const { getCmsData, getHtmlTemplate } = require('./cms');
 
 const router = express.Router();
@@ -243,83 +244,43 @@ router.get('/privacy-policy', (req, res) => {
 });
 
 router.get('/api/app-version', (req, res) => {
-  const buildTimestamp = process.env.BUILD_TIMESTAMP || String(Date.now());
-  res.json({ version: buildTimestamp, deployed: new Date().toISOString() });
+  res.set('Cache-Control', 'no-store');
+  res.json({ version: getAppBuildVersion(), deployed: new Date().toISOString() });
 });
+
+function sendAppHtml(res, content) {
+  const v = getAppBuildVersion();
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  const inject = `<meta name="app-version" content="${v}">`;
+  let html = content.replace('</head>', inject + '</head>');
+  html = html.replace(/\/js\/app-features\.js\?v=[^"']+/, `/js/app-features.js?v=${v}`);
+  res.type('html').send(html);
+}
+
+function readAndSendAppHtml(res) {
+  const filePath = path.join(__dirname, '..', 'public', 'app.html');
+  fs.readFile(filePath, 'utf8', (err, content) => {
+    if (err) {
+      console.error('[app] Could not read app.html:', err.message);
+      return res.status(500).send('Service temporarily unavailable');
+    }
+    sendAppHtml(res, content);
+  });
+}
 
 router.get('/app', (req, res) => {
-  const filePath = path.join(__dirname, '..', 'public', 'app.html');
-  fs.stat(filePath, (err, stats) => {
-    if (err) {
-      console.error('[app] Could not stat app.html:', err.message);
-      return res.status(500).send('Service temporarily unavailable');
-    }
-    const v = String(stats.mtimeMs);
-    fs.readFile(filePath, 'utf8', (err2, content) => {
-      if (err2) {
-        console.error('[app] Could not read app.html:', err2.message);
-        return res.status(500).send('Service temporarily unavailable');
-      }
-      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-      res.set('Surrogate-Control', 'no-store');
-      const inject = `<meta name="app-version" content="${v}">`;
-      const html = content.replace('</head>', inject + '</head>');
-      res.type('html').send(html);
-    });
-  });
+  readAndSendAppHtml(res);
 });
 
-// Cache-busting: serve app.html with ?v=filemtime so browser fetches fresh copy on every deploy
 router.get('/app/index.html', (req, res) => {
-  const filePath = path.join(__dirname, '..', 'public', 'app.html');
-  fs.stat(filePath, (err, stats) => {
-    if (err) {
-      console.error('[app] Could not stat app.html:', err.message);
-      return res.status(500).send('Service temporarily unavailable');
-    }
-    const v = String(stats.mtimeMs);
-    fs.readFile(filePath, 'utf8', (err2, content) => {
-      if (err2) {
-        console.error('[app] Could not read app.html:', err2.message);
-        return res.status(500).send('Service temporarily unavailable');
-      }
-      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-      res.set('Surrogate-Control', 'no-store');
-      // Inject cache-busting meta into <head> — makes ?v=... visible to the SPA router
-      const inject = `<meta name="app-version" content="${v}">`;
-      const html = content.replace('</head>', inject + '</head>');
-      res.type('html').send(html);
-    });
-  });
+  readAndSendAppHtml(res);
 });
 
-// Fallback: /app/* (e.g. /app/progress) — serve app.html with same cache-busting
 router.get('/app/*', (req, res) => {
-  const filePath = path.join(__dirname, '..', 'public', 'app.html');
-  fs.stat(filePath, (err, stats) => {
-    if (err) {
-      console.error('[app] Could not stat app.html:', err.message);
-      return res.status(500).send('Service temporarily unavailable');
-    }
-    const v = String(stats.mtimeMs);
-    fs.readFile(filePath, 'utf8', (err2, content) => {
-      if (err2) {
-        console.error('[app] Could not read app.html:', err2.message);
-        return res.status(500).send('Service temporarily unavailable');
-      }
-      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-      res.set('Surrogate-Control', 'no-store');
-      const inject = `<meta name="app-version" content="${v}">`;
-      const html = content.replace('</head>', inject + '</head>');
-      res.type('html').send(html);
-    });
-  });
+  readAndSendAppHtml(res);
 });
 
 // admin pages served from /admin prefix via routes/admin-pages.js (mounted in server.js)

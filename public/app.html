@@ -2,8 +2,43 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- Cache-busting: server injects app-version meta near </head>; client checks on DOMContentLoaded and reloads if version changed -->
-  <script>document.addEventListener('DOMContentLoaded',function(){var mv=document.querySelector('meta[name="app-version"]');if(mv){var v=mv.getAttribute('content'),ls=localStorage.getItem('app_version');if(ls&&ls!==v){localStorage.setItem('app_version',v);location.reload(true);}else{localStorage.setItem('app_version',v);}}});</script>
+  <!-- Cache-busting: server injects app-version meta; client polls /api/config and clears SW cache on deploy -->
+  <script>
+  (function () {
+    async function clearAppCaches() {
+      if ('serviceWorker' in navigator) {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(function (r) { return r.unregister(); }));
+      }
+      if ('caches' in window) {
+        var keys = await caches.keys();
+        await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      }
+    }
+    async function checkAppUpdate() {
+      try {
+        var r = await fetch('/api/config?_=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!r.ok) return;
+        var cfg = await r.json();
+        var v = cfg.version;
+        if (!v) return;
+        var prev = localStorage.getItem('app_version');
+        if (prev && prev !== v) {
+          localStorage.setItem('app_version', v);
+          await clearAppCaches();
+          location.reload();
+          return;
+        }
+        localStorage.setItem('app_version', v);
+      } catch (_) { /* offline — keep using cached app */ }
+    }
+    window.checkAppUpdate = checkAppUpdate;
+    checkAppUpdate();
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') checkAppUpdate();
+    });
+  })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5499,7 +5534,8 @@ function initPWA() {
   if (window._pwaInitialized) return;
   window._pwaInitialized = true;
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(err => {
+    var swVer = localStorage.getItem('app_version') || '1';
+    navigator.serviceWorker.register('/sw.js?v=' + encodeURIComponent(swVer), { scope: '/' }).catch(err => {
       console.warn('[pwa] service worker registration failed:', err.message);
     });
   }

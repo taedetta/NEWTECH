@@ -168,6 +168,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
+    if (filePath.endsWith('sw.js') || (filePath.includes(`${path.sep}js${path.sep}`) && filePath.endsWith('.js'))) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
     if (filePath.endsWith('.webmanifest')) {
       res.setHeader('Content-Type', 'application/manifest+json');
     }

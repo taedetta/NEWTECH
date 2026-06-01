@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { getAppBuildVersion } = require('../lib/app-build-version');
 
 const router = express.Router();
 
@@ -11,13 +12,14 @@ const router = express.Router();
 router.get('/', (req, res) => {
   const appEnv = process.env.APP_ENV || 'production';
   const staging = appEnv === 'staging';
+  res.set('Cache-Control', 'no-store');
   res.json({
     appEnv,
     isStaging: staging,
     isProduction: !staging,
     sideEffectsDisabled: staging,
     appUrl: process.env.APP_URL || '',
-    version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || null,
+    version: getAppBuildVersion(),
   });
 });
 

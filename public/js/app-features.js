@@ -131,7 +131,8 @@ async function ensurePushServiceWorker() {
   if (!('serviceWorker' in navigator)) throw new Error('Service workers not supported in this browser');
   var reg = await navigator.serviceWorker.getRegistration('/');
   if (!reg) {
-    reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    var swVer = localStorage.getItem('app_version') || '1';
+    reg = await navigator.serviceWorker.register('/sw.js?v=' + encodeURIComponent(swVer), { scope: '/' });
   }
   return navigator.serviceWorker.ready;
 }
