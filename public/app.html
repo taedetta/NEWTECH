@@ -502,6 +502,7 @@
     @media (max-width: 768px) { .messages-layout { grid-template-columns: 1fr; } }
 
     /* Staging environment banner */
+    :root { --staging-banner-height: 2.25rem; }
     #staging-env-banner {
       display: none;
       position: fixed;
@@ -515,9 +516,18 @@
       font-weight: 600;
       letter-spacing: 0.02em;
       box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      line-height: 1.35;
     }
-    body.staging-env { padding-top: 2rem; }
-    body.staging-env .sidebar { top: 2rem; height: calc(100vh - 2rem); }
+    body.staging-env { padding-top: var(--staging-banner-height); }
+    body.staging-env .sidebar { top: var(--staging-banner-height); height: calc(100vh - var(--staging-banner-height)); }
+    body.staging-env .mobile-toggle { top: calc(var(--staging-banner-height) + 0.5rem); }
+    body.staging-env .sidebar-overlay { top: var(--staging-banner-height); }
+    @media (max-width: 768px) {
+      body.staging-env .main-content { padding-top: calc(4.5rem + var(--staging-banner-height)); }
+    }
+    @media (max-width: 480px) {
+      body.staging-env .main-content { padding-top: calc(4rem + var(--staging-banner-height)); }
+    }
 
     @media (max-width: 480px) {
       .main-content { padding: 0.875rem; padding-top: 4rem; }
@@ -13160,8 +13170,15 @@ async function showStagingBannerIfNeeded() {
     const cfg = await fetch('/api/config').then((r) => r.json());
     if (cfg.isStaging) {
       const el = document.getElementById('staging-env-banner');
-      if (el) el.style.display = 'block';
-      document.body.classList.add('staging-env');
+      if (el) {
+        el.style.display = 'block';
+        document.body.classList.add('staging-env');
+        const syncBannerHeight = () => {
+          document.documentElement.style.setProperty('--staging-banner-height', `${el.offsetHeight}px`);
+        };
+        syncBannerHeight();
+        window.addEventListener('resize', syncBannerHeight);
+      }
     }
   } catch (_) { /* optional */ }
 }
