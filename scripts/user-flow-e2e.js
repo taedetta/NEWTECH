@@ -10,7 +10,7 @@ const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
   : (process.env.QA_BASE || 'https://www.newtechaviation.com');
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'NewTech2026!';
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
   || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);

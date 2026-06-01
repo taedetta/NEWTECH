@@ -16,7 +16,7 @@ const BASE = process.argv.includes('--base')
   : (process.env.QA_BASE || 'https://www.newtechaviation.com');
 
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'NewTech2026!';
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
   || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null)
@@ -285,7 +285,7 @@ async function testCancelFlow(tokens, users, ac) {
 
 async function testEndEarlyFlow(pool, tokens, users, ac) {
   console.log('\n=== End early → complete ===');
-  const { studentTok, adminTok } = tokens;
+  const { studentTok, adminTok, instructorTok } = tokens;
   const { student, instructor } = users;
   const slot = pastSlot(1, 120);
   const endEarly = new Date(new Date(slot.start_time).getTime() + 45 * 60000).toISOString();
@@ -307,7 +307,7 @@ async function testEndEarlyFlow(pool, tokens, users, ac) {
   const h = parseFloat(acRow.rows[0].current_hobbs);
   const t = parseFloat(acRow.rows[0].current_tach);
 
-  const complete = await api(studentTok, `/api/bookings/${bid}/complete`, {
+  const complete = await api(instructorTok, `/api/bookings/${bid}/complete`, {
     method: 'PATCH',
     body: JSON.stringify({ hobbs_start: h, hobbs_end: h + 0.8, tach_start: t, tach_end: t + 0.7, dual_instruction_hours: 0.8 }),
   });
@@ -348,6 +348,86 @@ async function testMaintenanceRole(tokens, ac) {
   ok('maintenance role pages defined', maintPages.length === 4);
 }
 
+async function ensureFleetBookable(adminTok, acList) {
+  console.log('\n=== Ensure fleet bookable (annual dates) ===');
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const nextAnnual = `${new Date().getFullYear() + 1}-05-30`;
+  for (const ac of acList) {
+    if (ac.status !== 'available') continue;
+    const due = ac.next_annual_due ? String(ac.next_annual_due).slice(0, 10) : null;
+    if (!due || due <= todayStr) {
+      const res = await api(adminTok, `/api/aircraft/${ac.id}/inspections`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          next_100hr_due: ac.next_100hr_due || 125,
+          next_annual_due: nextAnnual,
+        }),
+      });
+      ok(`${ac.tail_number} annual updated to ${nextAnnual}`, res.status === 200, JSON.stringify(res.data));
+    } else {
+      ok(`${ac.tail_number} annual OK (${due})`, true);
+    }
+  }
+}
+
+async function testDebriefWithRatings(tokens, users) {
+  console.log('\n=== Instructor debrief + star ratings → student sees feedback ===');
+  const { instructorTok, studentTok } = tokens;
+  const { student, instructor } = users;
+
+  const debrief = await api(instructorTok, '/api/training/debriefs', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: student.id,
+      notes: 'QA debrief — steep turns improving, needs work on landings',
+      recommendations: 'Practice slow flight next session',
+      overall_performance: 4,
+      flight_date: new Date().toISOString().slice(0, 10),
+      grades: [
+        { maneuver_name: 'Steep Turns', grade: 4 },
+        { maneuver_name: 'Landings', grade: 3 },
+      ],
+    }),
+  });
+  ok('instructor saves debrief with ratings', debrief.status === 201, JSON.stringify(debrief.data));
+
+  const studentDebriefs = await api(studentTok, `/api/training/students/${student.id}/debriefs`);
+  ok('student debrief history loads', studentDebriefs.status === 200);
+  const list = Array.isArray(studentDebriefs.data) ? studentDebriefs.data : (studentDebriefs.data?.debriefs || []);
+  const found = list.some((d) =>
+    d.notes && d.notes.includes('QA debrief') && Number(d.overall_performance) === 4
+  );
+  ok('student sees debrief with 4-star rating', found, JSON.stringify((studentDebriefs.data || []).slice(0, 1)));
+
+  const progress = await api(studentTok, '/api/training/my-progress');
+  ok('student progress page data', progress.status === 200 && progress.data?.enrollments != null);
+}
+
+async function testStudentDualBooking(tokens, users, ac) {
+  console.log('\n=== Student + instructor future dual booking ===');
+  const { studentTok } = tokens;
+  const { student, instructor } = users;
+  const slot = futureSlot(7, 90);
+  const book = await api(studentTok, '/api/bookings', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: student.id,
+      instructor_id: instructor.id,
+      aircraft_id: ac.id,
+      ...slot,
+      lesson_type: 'Dual instruction',
+    }),
+  });
+  ok('student books dual with instructor', book.status === 201, JSON.stringify(book.data));
+  if (book.status === 201) {
+    const cancel = await api(studentTok, `/api/bookings/${book.data.id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason: 'QA cleanup' }),
+    });
+    ok('student cancels dual booking', cancel.status === 200, JSON.stringify(cancel.data));
+  }
+}
+
 async function main() {
   console.log('Full beta QA —', BASE);
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
@@ -367,19 +447,24 @@ async function main() {
     || users.find((u) => u.email === 'evaughntaemw@gmail.com');
   const renter = users.find((u) => u.email === 'qa-renter@test.local');
   const acList = (await api(adminTok, '/api/aircraft')).data;
-  const ac = acList.find((a) => a.status === 'available');
+  await ensureFleetBookable(adminTok, acList);
+  const acListFresh = (await api(adminTok, '/api/aircraft')).data;
+  const ac = acListFresh.find((a) => a.status === 'available');
   if (!ac || !student || !renter || !instructor) throw new Error('Missing test users or aircraft');
 
   const hobbs = parseFloat(ac.current_hobbs);
   const tach = parseFloat(ac.current_tach || ac.current_hobbs);
   const tokens = { adminTok, studentTok, instructorTok, renterTok, maintTok };
+  const userMap = { student, instructor, renter };
 
-  await testStudentDualFlow(pool, tokens, { student, instructor }, ac, hobbs, tach);
+  await testStudentDualBooking(tokens, userMap, ac);
+  await testStudentDualFlow(pool, tokens, userMap, ac, hobbs, tach);
   await testRenterSoloFlow(pool, tokens, { renter }, ac);
   await testInstructorSoloFlow(pool, tokens, { instructor }, ac);
   await testCancelFlow(tokens, { renter }, ac);
-  await testEndEarlyFlow(pool, tokens, { student, instructor }, ac);
+  await testEndEarlyFlow(pool, tokens, userMap, ac);
   await testMaintenanceRole(tokens, ac);
+  await testDebriefWithRatings(tokens, userMap);
 
   await pool.end();
 

@@ -19,7 +19,7 @@ const ROLES = [
   {
     name: 'admin',
     email: 'evaughntaemw@gmail.com',
-    password: process.env.ADMIN_PASSWORD || 'NewTech2026!',
+    password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
     pages: [
       'dashboard', 'schedule', 'history', 'fleet', 'tracking', 'maintenance',
       'people', 'progress', 'at-risk', 'leads', 'billing', 'instructor-hours',
@@ -248,7 +248,7 @@ async function main() {
 
   let adminToken;
   try {
-    adminToken = await loginApi('evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD || 'NewTech2026!');
+    adminToken = await loginApi(process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD || 'Frbaga12$$!!');
     console.log('\nAdmin API login OK');
   } catch (e) {
     fail('auth', `Admin login: ${e.message}`);
