@@ -7,9 +7,49 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Personal tier: GET /flights/{ident} returns ~14 days of flights in one result set (no extra calls).
+const FA_HISTORY_DAYS = 14;
+
 // In-memory cache (60s TTL — fleet is small, rate limits are generous)
 const flightAwareCache = new Map();
 const FA_CACHE_TTL = 60 * 1000;
+
+function deriveFlightStatus(f) {
+  const pos = f.last_position;
+  if (f.progress_percent != null && f.progress_percent < 100 && pos) return 'in_flight';
+  if (f.actual_in || f.actual_on) return 'on_ground';
+  if ((f.actual_out || f.actual_off) && !(f.actual_in || f.actual_on)) return 'in_flight';
+  if (f.status === 'En Route') return 'in_flight';
+  if (f.status === 'Arrived' || f.status === 'Completed') return 'on_ground';
+  return 'unknown';
+}
+
+function mapFlightSummary(f, { isCurrent = false } = {}) {
+  const pos = f.last_position;
+  const departure_time = f.actual_out || f.actual_off || f.estimated_off || f.scheduled_out;
+  const arrival_time = f.actual_in || f.actual_on || f.estimated_on || f.scheduled_on;
+
+  return {
+    ident: f.ident,
+    fa_flight_id: f.fa_flight_id,
+    status: f.status,
+    flight_status: deriveFlightStatus(f),
+    progress_percent: f.progress_percent,
+    origin: f.origin ? { code: f.origin.code, name: f.origin.name, city: f.origin.city } : null,
+    destination: f.destination ? { code: f.destination.code, name: f.destination.name, city: f.destination.city } : null,
+    departure_time,
+    arrival_time,
+    is_current: isCurrent,
+    last_position: pos ? {
+      latitude: pos.latitude,
+      longitude: pos.longitude,
+      altitude: pos.altitude,
+      groundspeed: pos.groundspeed,
+      heading: pos.heading,
+      timestamp: pos.timestamp,
+    } : null,
+  };
+}
 
 async function fetchFlightAwareData(tailNumber) {
   const apiKey = process.env.FLIGHTAWARE_API_KEY;
@@ -23,11 +63,11 @@ async function fetchFlightAwareData(tailNumber) {
       hostname: 'aeroapi.flightaware.com',
       path: `/aeroapi/flights/${encodeURIComponent(tailNumber)}`,
       method: 'GET',
-      headers: { 'x-apikey': apiKey, 'Accept': 'application/json' }
+      headers: { 'x-apikey': apiKey, Accept: 'application/json' },
     };
     const req = https.request(options, (res) => {
       let raw = '';
-      res.on('data', c => raw += c);
+      res.on('data', (c) => { raw += c; });
       res.on('end', () => {
         try {
           const parsed = JSON.parse(raw);
@@ -61,39 +101,12 @@ router.get('/tracking', authenticateToken, async (req, res) => {
         const raw = await fetchFlightAwareData(ac.tail_number);
         let flightInfo = null;
         let flightStatus = 'unknown';
+        let history = [];
 
         if (!raw.__error && Array.isArray(raw.flights) && raw.flights.length > 0) {
-          const latest = raw.flights[0];
-          const pos = latest.last_position;
-
-          if (latest.progress_percent != null && latest.progress_percent < 100 && pos) {
-            flightStatus = 'in_flight';
-          } else if (latest.actual_in) {
-            flightStatus = 'on_ground';
-          } else if (latest.actual_out && !latest.actual_in) {
-            flightStatus = 'in_flight';
-          } else {
-            flightStatus = 'on_ground';
-          }
-
-          flightInfo = {
-            ident: latest.ident,
-            status: latest.status,
-            flight_status: flightStatus,
-            progress_percent: latest.progress_percent,
-            origin: latest.origin ? { code: latest.origin.code, name: latest.origin.name, city: latest.origin.city } : null,
-            destination: latest.destination ? { code: latest.destination.code, name: latest.destination.name, city: latest.destination.city } : null,
-            departure_time: latest.actual_out || latest.estimated_out,
-            arrival_time: latest.actual_in || latest.estimated_in,
-            last_position: pos ? {
-              latitude: pos.latitude,
-              longitude: pos.longitude,
-              altitude: pos.altitude,
-              groundspeed: pos.groundspeed,
-              heading: pos.heading,
-              timestamp: pos.timestamp
-            } : null
-          };
+          history = raw.flights.map((f, idx) => mapFlightSummary(f, { isCurrent: idx === 0 }));
+          flightInfo = history[0];
+          flightStatus = flightInfo.flight_status;
         } else if (raw.__error) {
           flightStatus = 'unknown';
         }
@@ -102,12 +115,17 @@ router.get('/tracking', authenticateToken, async (req, res) => {
           aircraft: ac,
           flight_status: flightInfo ? flightInfo.flight_status : flightStatus,
           flight: flightInfo,
-          error: raw.__error || null
+          history,
+          error: raw.__error || null,
         };
       })
     );
 
-    res.json({ api_key_configured: true, aircraft: trackingData });
+    res.json({
+      api_key_configured: true,
+      history_days: FA_HISTORY_DAYS,
+      aircraft: trackingData,
+    });
   } catch (err) {
     console.error('[tracking] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch tracking data' });
