@@ -9,13 +9,19 @@ const router = express.Router();
 
 // Personal tier: GET /flights/{ident} returns ~14 days of flights in one result set (no extra calls).
 const FA_HISTORY_DAYS = 14;
+const HISTORY_TRACK_LIMIT = 5;
 
 // In-memory cache — fleet is small; position polls faster when aircraft are airborne.
 const flightAwareCache = new Map();
 const airportCache = new Map();
+const localTrackActive = new Map();
+const localTrackArchive = new Map();
 const FA_CACHE_TTL = 60 * 1000;
 const FA_POSITION_CACHE_TTL = 15 * 1000;
+const FA_TRACK_ACTIVE_TTL = 30 * 1000;
+const FA_TRACK_STATIC_TTL = 15 * 60 * 1000;
 const AIRPORT_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+const LOCAL_TRACK_MAX = 600;
 
 function mapPosition(pos) {
   if (!pos || pos.latitude == null || pos.longitude == null) return null;
@@ -27,6 +33,12 @@ function mapPosition(pos) {
     heading: pos.heading,
     timestamp: pos.timestamp,
   };
+}
+
+function mapTrackPoints(positions) {
+  return (positions || [])
+    .map(mapPosition)
+    .filter(Boolean);
 }
 
 function mapAirport(ap) {
@@ -66,6 +78,8 @@ function mapFlightSummary(f, { isCurrent = false } = {}) {
     arrival_time,
     is_current: isCurrent,
     last_position: mapPosition(f.last_position),
+    fa_track: [],
+    local_track: [],
   };
 }
 
@@ -91,6 +105,64 @@ function mergePositionSummary(summary, positionData) {
     status: summary.status,
   });
   return merged;
+}
+
+function archiveLocalTrack(session) {
+  if (!session?.fa_flight_id || !session.points?.length) return;
+  localTrackArchive.set(session.fa_flight_id, {
+    tail: session.tail,
+    fa_flight_id: session.fa_flight_id,
+    points: [...session.points],
+    archived_at: Date.now(),
+  });
+}
+
+function recordLocalTrack(tail, summary) {
+  if (!summary?.fa_flight_id) return getLocalTrack(tail, summary?.fa_flight_id);
+
+  for (const [key, session] of [...localTrackActive.entries()]) {
+    if (session.tail === tail && session.fa_flight_id !== summary.fa_flight_id) {
+      archiveLocalTrack(session);
+      localTrackActive.delete(key);
+    }
+  }
+
+  const key = `${tail}:${summary.fa_flight_id}`;
+  let session = localTrackActive.get(key);
+  if (!session) {
+    const archived = localTrackArchive.get(summary.fa_flight_id);
+    session = {
+      tail,
+      fa_flight_id: summary.fa_flight_id,
+      points: archived?.points ? [...archived.points] : [],
+    };
+    localTrackActive.set(key, session);
+  }
+
+  const pos = summary.last_position;
+  if (pos) {
+    const last = session.points[session.points.length - 1];
+    if (!last || last.latitude !== pos.latitude || last.longitude !== pos.longitude) {
+      session.points.push({ ...pos });
+      if (session.points.length > LOCAL_TRACK_MAX) session.points.shift();
+    }
+  }
+
+  if (summary.flight_status === 'on_ground' && session.points.length > 0) {
+    archiveLocalTrack(session);
+    localTrackActive.delete(key);
+  }
+
+  return getLocalTrack(tail, summary.fa_flight_id);
+}
+
+function getLocalTrack(tail, faFlightId) {
+  if (!faFlightId) return [];
+  const active = localTrackActive.get(`${tail}:${faFlightId}`);
+  if (active?.points?.length) return active.points;
+  const archived = localTrackArchive.get(faFlightId);
+  if (archived?.tail === tail || !archived?.tail) return archived?.points || [];
+  return archived?.points || [];
 }
 
 function flightAwareRequest(path) {
@@ -119,7 +191,7 @@ function flightAwareRequest(path) {
       });
     });
     req.on('error', () => resolve({ __error: 'network_error' }));
-    req.setTimeout(10000, () => { req.destroy(); resolve({ __error: 'timeout' }); });
+    req.setTimeout(15000, () => { req.destroy(); resolve({ __error: 'timeout' }); });
     req.end();
   });
 }
@@ -142,6 +214,19 @@ async function fetchFlightPosition(faFlightId) {
   const result = await flightAwareRequest(`/aeroapi/flights/${encodeURIComponent(faFlightId)}/position`);
   if (!result.__error) flightAwareCache.set(cacheKey, { data: result, ts: Date.now() });
   return result.__error ? null : result;
+}
+
+async function fetchFlightTrack(faFlightId, { inFlight = false } = {}) {
+  if (!faFlightId) return [];
+  const cacheKey = `track:${faFlightId}`;
+  const ttl = inFlight ? FA_TRACK_ACTIVE_TTL : FA_TRACK_STATIC_TTL;
+  const cached = flightAwareCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < ttl) return cached.data;
+
+  const result = await flightAwareRequest(`/aeroapi/flights/${encodeURIComponent(faFlightId)}/track`);
+  const points = result.__error ? [] : mapTrackPoints(result.positions);
+  flightAwareCache.set(cacheKey, { data: points, ts: Date.now() });
+  return points;
 }
 
 async function fetchAirport(code) {
@@ -184,6 +269,31 @@ async function enrichInFlightPosition(summary) {
   return positionData ? mergePositionSummary(summary, positionData) : summary;
 }
 
+async function enrichWithTracks(tail, summary) {
+  if (!summary?.fa_flight_id) return summary;
+  const inFlight = summary.flight_status === 'in_flight';
+  summary.local_track = recordLocalTrack(tail, summary);
+  summary.fa_track = await fetchFlightTrack(summary.fa_flight_id, { inFlight });
+  if (!summary.last_position && summary.fa_track.length) {
+    summary.last_position = summary.fa_track[summary.fa_track.length - 1];
+  }
+  return summary;
+}
+
+async function enrichHistoryTracks(tail, history) {
+  const enriched = [...history];
+  for (let i = 0; i < Math.min(enriched.length, HISTORY_TRACK_LIMIT); i++) {
+    const item = { ...enriched[i] };
+    item.local_track = getLocalTrack(tail, item.fa_flight_id);
+    item.fa_track = await fetchFlightTrack(item.fa_flight_id, { inFlight: false });
+    if (!item.last_position && item.fa_track.length) {
+      item.last_position = item.fa_track[item.fa_track.length - 1];
+    }
+    enriched[i] = await enrichAirports(item);
+  }
+  return enriched;
+}
+
 // GET /api/flights/tracking — live fleet tracking (all authenticated roles)
 router.get('/tracking', authenticateToken, async (req, res) => {
   try {
@@ -206,9 +316,14 @@ router.get('/tracking', authenticateToken, async (req, res) => {
 
         if (!raw.__error && Array.isArray(raw.flights) && raw.flights.length > 0) {
           history = raw.flights.map((f, idx) => mapFlightSummary(f, { isCurrent: idx === 0 }));
-          flightInfo = await enrichInFlightPosition(history[0]);
+          flightInfo = history[0];
+          if (flightInfo.flight_status === 'in_flight') {
+            flightInfo = await enrichInFlightPosition(flightInfo);
+          }
           flightInfo = await enrichAirports(flightInfo);
+          flightInfo = await enrichWithTracks(ac.tail_number, flightInfo);
           history[0] = flightInfo;
+          history = await enrichHistoryTracks(ac.tail_number, history);
           flightStatus = flightInfo.flight_status;
         } else if (raw.__error) {
           flightStatus = 'unknown';

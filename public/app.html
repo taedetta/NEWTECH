@@ -1856,10 +1856,18 @@
               <h3 style="margin:0;font-size:0.88rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.8px;">&#127760; Aviation Live Map</h3>
               <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
                 <label style="font-size:0.78rem;color:var(--gray-400);display:flex;align-items:center;gap:0.35rem;cursor:pointer;">
+                  <input type="checkbox" id="tracking-show-fa-track" checked onchange="trackingShowFaTrack=this.checked; renderTrackingMap(trackingDataCache);">
+                  FlightAware tracks
+                </label>
+                <label style="font-size:0.78rem;color:var(--gray-400);display:flex;align-items:center;gap:0.35rem;cursor:pointer;">
+                  <input type="checkbox" id="tracking-show-local-track" checked onchange="trackingShowLocalTrack=this.checked; renderTrackingMap(trackingDataCache);">
+                  Our tracks
+                </label>
+                <label style="font-size:0.78rem;color:var(--gray-400);display:flex;align-items:center;gap:0.35rem;cursor:pointer;">
                   <input type="checkbox" id="tracking-follow-toggle" checked onchange="trackingFollowEnabled=this.checked">
                   Auto-follow
                 </label>
-                <span id="tracking-map-legend" style="font-size:0.72rem;color:var(--gray-500);">Terrain · airports marked</span>
+                <span id="tracking-map-legend" style="font-size:0.72rem;color:var(--gray-500);"></span>
               </div>
             </div>
             <div id="tracking-fleet-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;margin-bottom:1.5rem;"></div>
@@ -6753,11 +6761,15 @@ let trackingDataCache = [];
 let trackingHistoryDays = 14;
 let trackingRefreshSeconds = 15;
 let trackingFollowEnabled = true;
-let trackingTrails = {};
+let trackingShowFaTrack = true;
+let trackingShowLocalTrack = true;
+let trackingHistoryFlightByTail = {};
+let trackingFaTrackLayer = null;
+let trackingLocalTrackLayer = null;
 let trackingAirportLayer = null;
-let trackingTrailLayer = null;
 let trackingRouteLayer = null;
 let liveFlightsCache = [];
+const TRACKING_TAIL_COLORS = ['#38BDF8', '#A78BFA', '#34D399', '#FB923C', '#F472B6', '#FACC15'];
 const TRACKING_REFRESH_IDLE = 60;
 const TRACKING_REFRESH_ACTIVE = 15;
 
@@ -6908,6 +6920,7 @@ function renderTrackingFleet(aircraft) {
 
 function selectTrackingAircraft(tailNumber) {
   trackingSelectedTail = tailNumber;
+  delete trackingHistoryFlightByTail[tailNumber];
   // Re-render fleet grid to update selection highlight
   const cards = document.querySelectorAll('#tracking-fleet-grid > div');
   cards.forEach(card => {
@@ -6917,6 +6930,7 @@ function selectTrackingAircraft(tailNumber) {
 
   const entry = trackingDataCache.find(a => a.aircraft.tail_number === tailNumber);
   if (entry) showTrackingDetail(entry);
+  renderTrackingHistory(trackingDataCache);
   if (entry && entry.flight && entry.flight.last_position && trackingMap) {
     const pos = entry.flight.last_position;
     trackingMap.setView([pos.latitude, pos.longitude], 10, { animate: true });
@@ -6939,25 +6953,34 @@ function trackingHistoryStatusBadge(status, faStatus) {
   return `<span style="background:${bg};color:${color};font-size:0.7rem;font-weight:600;padding:0.15rem 0.45rem;border-radius:20px;white-space:nowrap;">${label}</span>`;
 }
 
-function renderTrackingHistoryList(history, limit) {
+function renderTrackingHistoryList(tailNumber, history, limit, aircraft) {
   const rows = (history || []).slice(0, limit);
   if (!rows.length) {
     return '<div style="color:var(--gray-500);font-size:0.82rem;padding:0.35rem 0;">No recent flights from FlightAware.</div>';
   }
+  const color = tailTrackColor(tailNumber, aircraft || trackingDataCache);
   return `<div class="table-card" style="margin:0;">
     <table class="data-table" style="font-size:0.82rem;">
-      <thead><tr><th>Date</th><th>Route</th><th>Departed</th><th>Arrived</th><th>Status</th></tr></thead>
+      <thead><tr><th>Date</th><th>Route</th><th>Track</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows.map(h => {
         const route = `${h.origin?.code || '?'} → ${h.destination?.code || '—'}`;
         const dep = trackingFmtDateTime(h.departure_time);
-        const arr = trackingFmtDateTime(h.arrival_time);
+        const faPts = h.fa_track?.length || 0;
+        const localPts = h.local_track?.length || 0;
         const current = h.is_current ? ' <span style="color:var(--sky);font-size:0.68rem;">(current)</span>' : '';
-        return `<tr${h.is_current ? ' style="background:rgba(56,189,248,0.06);"' : ''}>
+        const selected = trackingHistoryFlightByTail[tailNumber] === h.fa_flight_id;
+        const trackLabel = faPts || localPts
+          ? `<span style="color:${color};font-size:0.72rem;">FA ${faPts}${localPts ? ` · ours ${localPts}` : ''}</span>`
+          : '<span style="color:var(--gray-500);">—</span>';
+        const mapBtn = h.fa_flight_id && (faPts > 1 || localPts > 1)
+          ? `<button type="button" class="btn btn-secondary btn-sm" style="font-size:0.68rem;padding:0.25rem 0.5rem;min-height:auto;" onclick="showHistoryFlightOnMap('${tailNumber}', '${h.fa_flight_id}')">${selected ? 'Showing' : 'Map'}</button>`
+          : '';
+        return `<tr style="${selected ? 'background:rgba(56,189,248,0.1);' : h.is_current ? 'background:rgba(56,189,248,0.06);' : ''}">
           <td>${dep.split(',')[0] || dep}${current}</td>
           <td>${route}</td>
-          <td>${dep}</td>
-          <td>${arr}</td>
+          <td>${trackLabel}</td>
           <td>${trackingHistoryStatusBadge(h.flight_status, h.status)}</td>
+          <td>${mapBtn}</td>
         </tr>`;
       }).join('')}</tbody>
     </table>
@@ -6970,7 +6993,7 @@ function renderTrackingHistory(aircraft) {
   if (!section) return;
 
   if (subtitle) {
-    subtitle.textContent = `(FlightAware · up to ${trackingHistoryDays} days, no extra API calls)`;
+    subtitle.textContent = `(click Map on a flight to view its track · solid = FlightAware, dashed = ours)`;
   }
 
   if (!aircraft.length) {
@@ -6988,9 +7011,12 @@ function renderTrackingHistory(aircraft) {
           <div style="font-weight:700;color:var(--white);">${ac.tail_number}</div>
           <div style="font-size:0.8rem;color:var(--gray-500);">${ac.make_model || ''}</div>
         </div>
-        <div style="font-size:0.78rem;color:var(--gray-500);">${history.length} flight${history.length === 1 ? '' : 's'}${pastCount ? ` · ${pastCount} prior` : ''}</div>
+        <div style="display:flex;align-items:center;gap:0.5rem;">
+          ${trackingHistoryFlightByTail[ac.tail_number] ? `<button type="button" class="btn btn-secondary btn-sm" style="font-size:0.68rem;padding:0.25rem 0.5rem;min-height:auto;" onclick="clearHistoryFlightOnMap('${ac.tail_number}')">Show live</button>` : ''}
+          <div style="font-size:0.78rem;color:var(--gray-500);">${history.length} flight${history.length === 1 ? '' : 's'}${pastCount ? ` · ${pastCount} prior` : ''}</div>
+        </div>
       </div>
-      ${renderTrackingHistoryList(history, 10)}
+      ${renderTrackingHistoryList(ac.tail_number, history, 10, aircraft)}
     </div>`;
   }).join('');
 }
@@ -7090,18 +7116,67 @@ function showTrackingDetail(entry) {
     ${(entry.history && entry.history.length > 1) ? `
     <div style="margin-top:1rem;">
       <div style="font-size:0.72rem;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.5rem;">Recent History</div>
-      ${renderTrackingHistoryList(entry.history.slice(0, 6), 6)}
+      ${renderTrackingHistoryList(ac.tail_number, entry.history.slice(0, 6), 6, trackingDataCache)}
+    </div>` : ''}
+
+    ${(fl.fa_track?.length || fl.local_track?.length) ? `
+    <div style="margin-top:0.75rem;font-size:0.78rem;color:var(--gray-500);">
+      Track: ${fl.fa_track?.length || 0} FlightAware pts · ${fl.local_track?.length || 0} ours
     </div>` : ''}`;
 }
 
-function appendTrackingTrail(tail, lat, lng) {
-  if (!trackingTrails[tail]) trackingTrails[tail] = [];
-  const trail = trackingTrails[tail];
-  const last = trail[trail.length - 1];
-  if (!last || Math.abs(last[0] - lat) > 0.0001 || Math.abs(last[1] - lng) > 0.0001) {
-    trail.push([lat, lng]);
-    if (trail.length > 40) trail.shift();
+function tailTrackColor(tail, aircraft) {
+  const idx = (aircraft || []).findIndex(e => e.aircraft.tail_number === tail);
+  return TRACKING_TAIL_COLORS[idx >= 0 ? idx % TRACKING_TAIL_COLORS.length : 0];
+}
+
+function getFlightForMapDisplay(entry) {
+  const tail = entry.aircraft.tail_number;
+  const histId = trackingHistoryFlightByTail[tail];
+  if (histId && Array.isArray(entry.history)) {
+    const hist = entry.history.find(h => h.fa_flight_id === histId);
+    if (hist) return hist;
   }
+  return entry.flight;
+}
+
+function showHistoryFlightOnMap(tailNumber, faFlightId) {
+  trackingHistoryFlightByTail[tailNumber] = faFlightId;
+  trackingSelectedTail = tailNumber;
+  trackingFollowEnabled = false;
+  const followToggle = document.getElementById('tracking-follow-toggle');
+  if (followToggle) followToggle.checked = false;
+  renderTrackingFleet(trackingDataCache);
+  renderTrackingMap(trackingDataCache);
+  const entry = trackingDataCache.find(e => e.aircraft.tail_number === tailNumber);
+  if (entry) {
+    const hist = entry.history?.find(h => h.fa_flight_id === faFlightId);
+    if (hist) showTrackingDetail({ ...entry, flight: hist });
+  }
+}
+
+function clearHistoryFlightOnMap(tailNumber) {
+  delete trackingHistoryFlightByTail[tailNumber];
+  renderTrackingMap(trackingDataCache);
+}
+
+function trackToLatLngs(track) {
+  return (track || [])
+    .filter(p => p.latitude != null && p.longitude != null)
+    .map(p => [p.latitude, p.longitude]);
+}
+
+function updateTrackingMapLegend(aircraft) {
+  const el = document.getElementById('tracking-map-legend');
+  if (!el) return;
+  if (!aircraft.length) {
+    el.textContent = 'Terrain · airports marked';
+    return;
+  }
+  el.innerHTML = aircraft.map(entry => {
+    const c = tailTrackColor(entry.aircraft.tail_number, aircraft);
+    return `<span style="display:inline-flex;align-items:center;gap:0.25rem;margin-right:0.6rem;"><span style="width:10px;height:3px;background:${c};border-radius:2px;display:inline-block;"></span>${entry.aircraft.tail_number}</span>`;
+  }).join('');
 }
 
 function initTrackingMap() {
@@ -7124,7 +7199,8 @@ function initTrackingMap() {
   L.control.layers({ 'Terrain (sectional-style)': terrain, 'Street map': street }, null, { position: 'topright' }).addTo(trackingMap);
 
   trackingAirportLayer = L.layerGroup().addTo(trackingMap);
-  trackingTrailLayer = L.layerGroup().addTo(trackingMap);
+  trackingFaTrackLayer = L.layerGroup().addTo(trackingMap);
+  trackingLocalTrackLayer = L.layerGroup().addTo(trackingMap);
   trackingRouteLayer = L.layerGroup().addTo(trackingMap);
 }
 
@@ -7147,24 +7223,30 @@ function renderTrackingMap(aircraft) {
   if (!mapEl) return;
 
   initTrackingMap();
+  updateTrackingMapLegend(aircraft);
 
   Object.values(trackingMarkers).forEach(m => trackingMap.removeLayer(m));
   trackingMarkers = {};
   trackingAirportLayer.clearLayers();
-  trackingTrailLayer.clearLayers();
+  trackingFaTrackLayer.clearLayers();
+  trackingLocalTrackLayer.clearLayers();
   trackingRouteLayer.clearLayers();
 
   const positions = [];
+  const boundsPoints = [];
   const airportSeen = new Set();
 
   aircraft.forEach(entry => {
     const ac = entry.aircraft;
-    const fl = entry.flight;
+    const fl = getFlightForMapDisplay(entry);
     if (!fl) return;
+
+    const color = tailTrackColor(ac.tail_number, aircraft);
+    const isHistoryView = !!trackingHistoryFlightByTail[ac.tail_number];
 
     const addAirportMarker = (ap, kind) => {
       if (!ap?.code || ap.latitude == null || ap.longitude == null) return;
-      const key = `${ap.code}:${kind}`;
+      const key = `${ap.code}:${kind}:${ac.tail_number}`;
       if (airportSeen.has(key)) return;
       airportSeen.add(key);
       const marker = L.marker([ap.latitude, ap.longitude], {
@@ -7172,62 +7254,90 @@ function renderTrackingMap(aircraft) {
         zIndexOffset: -100,
       }).addTo(trackingAirportLayer);
       marker.bindPopup(`<strong>${ap.code}</strong><br>${ap.name || ''}<br>${ap.city || ''}<br><em>${kind === 'dest' ? 'Destination' : 'Origin'}</em>`);
+      boundsPoints.push([ap.latitude, ap.longitude]);
     };
 
     addAirportMarker(fl.origin, 'origin');
     addAirportMarker(fl.destination, 'dest');
 
-    if (!fl.last_position) return;
+    const faLatLngs = trackToLatLngs(fl.fa_track);
+    const localLatLngs = trackToLatLngs(fl.local_track);
+
+    if (trackingShowFaTrack && faLatLngs.length > 1) {
+      L.polyline(faLatLngs, {
+        color,
+        weight: 4,
+        opacity: 0.88,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(trackingFaTrackLayer).bindPopup(`<strong>${ac.tail_number}</strong><br>FlightAware track · ${faLatLngs.length} pts`);
+      boundsPoints.push(...faLatLngs);
+    }
+
+    if (trackingShowLocalTrack && localLatLngs.length > 1) {
+      L.polyline(localLatLngs, {
+        color,
+        weight: 3,
+        opacity: 0.75,
+        dashArray: '8 10',
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(trackingLocalTrackLayer).bindPopup(`<strong>${ac.tail_number}</strong><br>Our track · ${localLatLngs.length} pts`);
+      boundsPoints.push(...localLatLngs);
+    }
 
     const pos = fl.last_position;
-    appendTrackingTrail(ac.tail_number, pos.latitude, pos.longitude);
+    if (pos?.latitude != null && pos?.longitude != null && !isHistoryView) {
+      const heading = pos.heading || 0;
+      const isInFlight = fl.flight_status === 'in_flight';
+      const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" style="transform:rotate(${heading}deg);filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7))">
+        <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${isInFlight ? color : '#22C55E'}"/>
+      </svg>`;
 
-    const trail = trackingTrails[ac.tail_number];
-    if (trail && trail.length > 1) {
-      L.polyline(trail, { color: '#38BDF8', weight: 2, opacity: 0.65, dashArray: '4 6' }).addTo(trackingTrailLayer);
+      const icon = L.divIcon({
+        html: `<div style="position:relative;text-align:center;">
+          ${svgIcon}
+          <div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(13,21,37,0.85);color:#F1F5F9;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;margin-top:2px;">${ac.tail_number}</div>
+        </div>`,
+        iconSize: [40, 48],
+        iconAnchor: [20, 16],
+        className: '',
+      });
+
+      const marker = L.marker([pos.latitude, pos.longitude], { icon }).addTo(trackingMap);
+      const destLabel = fl.destination?.code ? ` → ${fl.destination.code}` : '';
+      marker.bindPopup(`<strong>${ac.tail_number}</strong>${destLabel}<br>${ac.make_model || ''}<br>Alt: ${pos.altitude ? pos.altitude.toLocaleString() + ' ft' : '—'}<br>Speed: ${pos.groundspeed ? pos.groundspeed + ' kts' : '—'}`);
+      marker.on('click', () => selectTrackingAircraft(ac.tail_number));
+      trackingMarkers[ac.tail_number] = marker;
+      positions.push([pos.latitude, pos.longitude]);
+      boundsPoints.push([pos.latitude, pos.longitude]);
+
+      if (fl.destination?.latitude != null && fl.flight_status === 'in_flight') {
+        L.polyline(
+          [[pos.latitude, pos.longitude], [fl.destination.latitude, fl.destination.longitude]],
+          { color: '#F59E0B', weight: 2, opacity: 0.55, dashArray: '8 8' }
+        ).addTo(trackingRouteLayer);
+      }
+    } else if (isHistoryView && faLatLngs.length) {
+      const end = faLatLngs[faLatLngs.length - 1];
+      L.circleMarker(end, { radius: 6, color, fillColor: color, fillOpacity: 0.9, weight: 2 })
+        .addTo(trackingMap)
+        .bindPopup(`<strong>${ac.tail_number}</strong><br>History flight end`);
     }
-
-    if (fl.destination?.latitude != null && fl.flight_status === 'in_flight') {
-      L.polyline(
-        [[pos.latitude, pos.longitude], [fl.destination.latitude, fl.destination.longitude]],
-        { color: '#F59E0B', weight: 2, opacity: 0.55, dashArray: '8 8' }
-      ).addTo(trackingRouteLayer);
-    }
-
-    const heading = pos.heading || 0;
-    const isInFlight = fl.flight_status === 'in_flight';
-    const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" style="transform:rotate(${heading}deg);filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7))">
-      <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${isInFlight ? '#38BDF8' : '#22C55E'}"/>
-    </svg>`;
-
-    const icon = L.divIcon({
-      html: `<div style="position:relative;text-align:center;">
-        ${svgIcon}
-        <div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(13,21,37,0.85);color:#F1F5F9;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;margin-top:2px;">${ac.tail_number}</div>
-      </div>`,
-      iconSize: [40, 48],
-      iconAnchor: [20, 16],
-      className: '',
-    });
-
-    const marker = L.marker([pos.latitude, pos.longitude], { icon }).addTo(trackingMap);
-    const destLabel = fl.destination?.code ? ` → ${fl.destination.code}` : '';
-    marker.bindPopup(`<strong>${ac.tail_number}</strong>${destLabel}<br>${ac.make_model || ''}<br>Alt: ${pos.altitude ? pos.altitude.toLocaleString() + ' ft' : '—'}<br>Speed: ${pos.groundspeed ? pos.groundspeed + ' kts' : '—'}`);
-    marker.on('click', () => selectTrackingAircraft(ac.tail_number));
-    trackingMarkers[ac.tail_number] = marker;
-    positions.push([pos.latitude, pos.longitude]);
   });
 
   const overlay = document.getElementById('tracking-map-overlay');
   const anyInFlight = aircraft.some(e => e.flight_status === 'in_flight' || e.flight?.flight_status === 'in_flight');
-  if (positions.length === 0) {
+  const hasMapContent = positions.length > 0 || boundsPoints.length > 0;
+
+  if (!hasMapContent) {
     overlay.classList.remove('hidden');
     overlay.style.display = 'flex';
     const msgEl = document.getElementById('tracking-map-overlay-msg');
     if (msgEl) {
       msgEl.textContent = anyInFlight
         ? 'Fetching live position — map will update automatically'
-        : 'Aircraft positions will appear here when in flight';
+        : 'Select a flight in history below to view its track';
     }
   } else {
     overlay.classList.add('hidden');
@@ -7238,14 +7348,15 @@ function renderTrackingMap(aircraft) {
     const followEntry = followTail
       ? aircraft.find(e => e.aircraft.tail_number === followTail)
       : null;
-    const followPos = followEntry?.flight?.last_position;
+    const followFl = followEntry ? getFlightForMapDisplay(followEntry) : null;
+    const followPos = followFl?.last_position;
 
-    if (trackingFollowEnabled && followPos) {
+    if (trackingFollowEnabled && followPos?.latitude != null) {
       trackingMap.setView([followPos.latitude, followPos.longitude], Math.max(trackingMap.getZoom(), 10), { animate: true });
-    } else if (positions.length === 1) {
-      trackingMap.setView(positions[0], 10);
-    } else {
-      trackingMap.fitBounds(positions, { padding: [40, 40] });
+    } else if (boundsPoints.length === 1) {
+      trackingMap.setView(boundsPoints[0], 11);
+    } else if (boundsPoints.length > 1) {
+      trackingMap.fitBounds(boundsPoints, { padding: [48, 48] });
     }
   }
 
