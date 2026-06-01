@@ -10560,9 +10560,12 @@ async function loadPeople(filter, skipReload) {
       }
 
       var canEditAvail = (u.role === 'instructor' || (u.role === 'admin' && u.has_instructor_availability)) && (isOwner || isSelf || canManageInstructors);
-      var canDelete = !isSelf && !isTargetOwner && (isOwner ||
-        (u.role === 'instructor' && canManageInstructors) ||
-        (['student', 'renter'].includes(u.role) && canManageStudents));
+      var canDelete = !isSelf && (
+        (isOwner && isTargetOwner) ||
+        (!isTargetOwner && (isOwner ||
+          (u.role === 'instructor' && canManageInstructors) ||
+          (['student', 'renter'].includes(u.role) && canManageStudents)))
+      );
 
       var note = isTargetOwner ? '<span class="perm-note">Full access</span>' :
                  isNonMgmtRole ? '<span class="perm-note">No management access</span>' : '';

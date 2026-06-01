@@ -128,13 +128,24 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const targetId = parseInt(req.params.id);
     if (targetId === req.user.id) return res.status(403).json({ error: 'Cannot delete your own account' });
-    const targetResult = await pool.query('SELECT id, role, name, deleted_at FROM users WHERE id = $1', [targetId]);
+    const targetResult = await pool.query(
+      'SELECT id, role, name, email, deleted_at FROM users WHERE id = $1', [targetId]
+    );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (targetResult.rows[0].deleted_at) return res.status(404).json({ error: 'User not found' });
     const target = targetResult.rows[0];
-    if (target.role === 'owner') return res.status(403).json({ error: 'Cannot delete the owner account' });
-    const requesterPerms = await getUserPermissions(req.user.id, req.user.role);
-    const allowed = ['owner', 'admin'].includes(req.user.role) ||
+    if (isPlatformAdminEmail(target.email)) {
+      return res.status(403).json({ error: 'Cannot remove the platform administrator account' });
+    }
+    const requesterResult = await pool.query(
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL', [req.user.id]
+    );
+    const requesterRole = requesterResult.rows[0]?.role;
+    if (target.role === 'owner' && !['owner', 'admin'].includes(requesterRole)) {
+      return res.status(403).json({ error: 'Only owners and admins can remove owner accounts' });
+    }
+    const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
+    const allowed = ['owner', 'admin'].includes(requesterRole) ||
       (target.role === 'instructor' && requesterPerms.can_manage_instructors) ||
       (target.role === 'student' && requesterPerms.can_manage_students);
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to remove this user' });
