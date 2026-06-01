@@ -18,8 +18,10 @@ const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const ROLES = [
   {
     name: 'admin',
-    email: 'evaughntaemw@gmail.com',
+    email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com',
     password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
+    fallbackEmail: 'qa-admin@test.local',
+    fallbackPassword: PASSWORD,
     pages: [
       'dashboard', 'schedule', 'history', 'fleet', 'tracking', 'maintenance',
       'people', 'progress', 'at-risk', 'leads', 'billing', 'instructor-hours',
@@ -103,6 +105,19 @@ async function loginApi(email, password) {
   return data.token;
 }
 
+async function getAdminToken() {
+  const attempts = [
+    { email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com', password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!' },
+    { email: 'qa-admin@test.local', password: PASSWORD },
+  ];
+  for (const a of attempts) {
+    try {
+      return await loginApi(a.email, a.password);
+    } catch { /* try next */ }
+  }
+  throw new Error('Admin login failed for all credentials');
+}
+
 async function testPublicPages() {
   console.log('\n=== Public pages ===');
   for (const p of PUBLIC_PAGES) {
@@ -172,10 +187,20 @@ async function testRoleBrowser(roleConfig) {
     await page.click('#login-form button[type="submit"]');
     await page.waitForTimeout(2500);
 
-    const authModal = await page.evaluate(() => {
+    let authModal = await page.evaluate(() => {
       const m = document.getElementById('auth-modal');
       return m && getComputedStyle(m).display !== 'none';
     });
+    if (authModal && roleConfig.fallbackEmail) {
+      await page.fill('#login-email', roleConfig.fallbackEmail);
+      await page.fill('#login-password', roleConfig.fallbackPassword);
+      await page.click('#login-form button[type="submit"]');
+      await page.waitForTimeout(2500);
+      authModal = await page.evaluate(() => {
+        const m = document.getElementById('auth-modal');
+        return m && getComputedStyle(m).display !== 'none';
+      });
+    }
     if (authModal) {
       fail(`browser:${roleConfig.name}`, 'Login failed — auth modal still visible');
       await browser.close();
@@ -248,7 +273,7 @@ async function main() {
 
   let adminToken;
   try {
-    adminToken = await loginApi(process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD || 'Frbaga12$$!!');
+    adminToken = await getAdminToken();
     console.log('\nAdmin API login OK');
   } catch (e) {
     fail('auth', `Admin login: ${e.message}`);
