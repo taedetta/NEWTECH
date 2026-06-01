@@ -1852,7 +1852,16 @@
 
           <!-- FlightAware map (hidden by default, shown if API key configured) -->
           <div id="tracking-flightaware-section" class="hidden">
-            <h3 style="margin-bottom:0.75rem;font-size:0.88rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.8px;">&#127760; GPS Live Map</h3>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+              <h3 style="margin:0;font-size:0.88rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.8px;">&#127760; Aviation Live Map</h3>
+              <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                <label style="font-size:0.78rem;color:var(--gray-400);display:flex;align-items:center;gap:0.35rem;cursor:pointer;">
+                  <input type="checkbox" id="tracking-follow-toggle" checked onchange="trackingFollowEnabled=this.checked">
+                  Auto-follow
+                </label>
+                <span id="tracking-map-legend" style="font-size:0.72rem;color:var(--gray-500);">Terrain · airports marked</span>
+              </div>
+            </div>
             <div id="tracking-fleet-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;margin-bottom:1.5rem;"></div>
             <div style="display:grid;grid-template-columns:1fr 340px;gap:1rem;min-height:460px;" id="tracking-map-layout">
               <div style="background:var(--slate);border-radius:10px;overflow:hidden;position:relative;">
@@ -6737,11 +6746,20 @@ async function submitStudentSignature() {
 let trackingMap = null;
 let trackingMarkers = {}; // tailNumber → Leaflet marker
 let trackingRefreshTimer = null;
-let trackingCountdown = 60;
+let trackingCountdown = 15;
 let trackingCountdownTimer = null;
 let trackingSelectedTail = null;
 let trackingDataCache = [];
 let trackingHistoryDays = 14;
+let trackingRefreshSeconds = 15;
+let trackingFollowEnabled = true;
+let trackingTrails = {};
+let trackingAirportLayer = null;
+let trackingTrailLayer = null;
+let trackingRouteLayer = null;
+let liveFlightsCache = [];
+const TRACKING_REFRESH_IDLE = 60;
+const TRACKING_REFRESH_ACTIVE = 15;
 
 async function loadTracking() {
   // Lazy-load Leaflet JS from CDN if not yet loaded
@@ -6775,9 +6793,15 @@ async function loadTracking() {
 
     trackingDataCache = data.aircraft || [];
     trackingHistoryDays = data.history_days || 14;
+    trackingRefreshSeconds = data.refresh_seconds || TRACKING_REFRESH_ACTIVE;
+    if (!trackingSelectedTail) {
+      const inflight = trackingDataCache.find(e => e.flight_status === 'in_flight');
+      if (inflight) trackingSelectedTail = inflight.aircraft.tail_number;
+    }
     renderTrackingFleet(trackingDataCache);
     renderTrackingMap(trackingDataCache);
     renderTrackingHistory(trackingDataCache);
+    mergeAndRenderLiveFlights();
     startTrackingRefresh();
   } catch (err) {
     showTrackingLoading(false);
@@ -6793,15 +6817,23 @@ function showTrackingLoading(on) {
   document.getElementById('tracking-error').classList.add('hidden');
 }
 
+function getTrackingRefreshSeconds() {
+  const anyInFlight = trackingDataCache.some(e => e.flight_status === 'in_flight');
+  return anyInFlight ? TRACKING_REFRESH_ACTIVE : TRACKING_REFRESH_IDLE;
+}
+
 function startTrackingRefresh() {
-  trackingCountdown = 60;
+  clearTrackingTimers();
+  trackingRefreshSeconds = getTrackingRefreshSeconds();
+  trackingCountdown = trackingRefreshSeconds;
   updateTrackingLabel();
 
   trackingCountdownTimer = setInterval(() => {
     trackingCountdown--;
     updateTrackingLabel();
     if (trackingCountdown <= 0) {
-      trackingCountdown = 60;
+      trackingRefreshSeconds = getTrackingRefreshSeconds();
+      trackingCountdown = trackingRefreshSeconds;
       refreshTracking();
     }
   }, 1000);
@@ -6809,7 +6841,12 @@ function startTrackingRefresh() {
 
 function updateTrackingLabel() {
   const el = document.getElementById('tracking-last-updated');
-  if (el) el.textContent = `GPS refresh: ${trackingCountdown}s`;
+  if (el) {
+    const inflight = trackingDataCache.some(e => e.flight_status === 'in_flight');
+    el.textContent = inflight
+      ? `Live GPS · next update ${trackingCountdown}s`
+      : `Updated ${new Date().toLocaleTimeString()}`;
+  }
 }
 
 function clearTrackingTimers() {
@@ -6818,15 +6855,16 @@ function clearTrackingTimers() {
 }
 
 async function refreshTracking() {
-  clearTrackingTimers();
   try {
     const data = await api('/api/flights/tracking');
     if (data.api_key_configured) {
       trackingDataCache = data.aircraft || [];
       trackingHistoryDays = data.history_days || 14;
+      trackingRefreshSeconds = data.refresh_seconds || getTrackingRefreshSeconds();
       renderTrackingFleet(trackingDataCache);
       renderTrackingMap(trackingDataCache);
       renderTrackingHistory(trackingDataCache);
+      mergeAndRenderLiveFlights();
       if (trackingSelectedTail) {
         const entry = trackingDataCache.find(a => a.aircraft.tail_number === trackingSelectedTail);
         if (entry) showTrackingDetail(entry);
@@ -7056,41 +7094,108 @@ function showTrackingDetail(entry) {
     </div>` : ''}`;
 }
 
+function appendTrackingTrail(tail, lat, lng) {
+  if (!trackingTrails[tail]) trackingTrails[tail] = [];
+  const trail = trackingTrails[tail];
+  const last = trail[trail.length - 1];
+  if (!last || Math.abs(last[0] - lat) > 0.0001 || Math.abs(last[1] - lng) > 0.0001) {
+    trail.push([lat, lng]);
+    if (trail.length > 40) trail.shift();
+  }
+}
+
+function initTrackingMap() {
+  if (trackingMap) return;
+  trackingMap = L.map('tracking-map', {
+    center: [37.137, -80.678],
+    zoom: 10,
+    zoomControl: true,
+  });
+
+  const terrain = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    maxZoom: 17,
+    attribution: 'Map: &copy; OpenTopoMap | Airports: FlightAware',
+  });
+  const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap',
+  });
+  terrain.addTo(trackingMap);
+  L.control.layers({ 'Terrain (sectional-style)': terrain, 'Street map': street }, null, { position: 'topright' }).addTo(trackingMap);
+
+  trackingAirportLayer = L.layerGroup().addTo(trackingMap);
+  trackingTrailLayer = L.layerGroup().addTo(trackingMap);
+  trackingRouteLayer = L.layerGroup().addTo(trackingMap);
+}
+
+function trackingAirportIcon(code, kind) {
+  const color = kind === 'dest' ? '#F59E0B' : '#94A3B8';
+  return L.divIcon({
+    html: `<div style="text-align:center;">
+      <div style="width:10px;height:10px;border-radius:50%;background:${color};border:2px solid #fff;margin:0 auto;box-shadow:0 1px 4px rgba(0,0,0,0.5);"></div>
+      <div style="font-size:9px;font-weight:700;color:#F1F5F9;background:rgba(13,21,37,0.9);padding:1px 4px;border-radius:3px;margin-top:2px;white-space:nowrap;">${code}</div>
+    </div>`,
+    iconSize: [48, 28],
+    iconAnchor: [24, 10],
+    className: '',
+  });
+}
+
 function renderTrackingMap(aircraft) {
   if (!window.L) return;
-
   const mapEl = document.getElementById('tracking-map');
   if (!mapEl) return;
 
-  // Initialize map once
-  if (!trackingMap) {
-    trackingMap = L.map('tracking-map', {
-      center: [32.7767, -96.7970], // Default: Dallas area (NTA is in TX)
-      zoom: 6,
-      zoomControl: true
-    });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>'
-    }).addTo(trackingMap);
-  }
+  initTrackingMap();
 
-  // Clear existing markers
   Object.values(trackingMarkers).forEach(m => trackingMap.removeLayer(m));
   trackingMarkers = {};
+  trackingAirportLayer.clearLayers();
+  trackingTrailLayer.clearLayers();
+  trackingRouteLayer.clearLayers();
 
   const positions = [];
+  const airportSeen = new Set();
 
   aircraft.forEach(entry => {
     const ac = entry.aircraft;
     const fl = entry.flight;
-    if (!fl || !fl.last_position) return;
+    if (!fl) return;
+
+    const addAirportMarker = (ap, kind) => {
+      if (!ap?.code || ap.latitude == null || ap.longitude == null) return;
+      const key = `${ap.code}:${kind}`;
+      if (airportSeen.has(key)) return;
+      airportSeen.add(key);
+      const marker = L.marker([ap.latitude, ap.longitude], {
+        icon: trackingAirportIcon(ap.code, kind),
+        zIndexOffset: -100,
+      }).addTo(trackingAirportLayer);
+      marker.bindPopup(`<strong>${ap.code}</strong><br>${ap.name || ''}<br>${ap.city || ''}<br><em>${kind === 'dest' ? 'Destination' : 'Origin'}</em>`);
+    };
+
+    addAirportMarker(fl.origin, 'origin');
+    addAirportMarker(fl.destination, 'dest');
+
+    if (!fl.last_position) return;
 
     const pos = fl.last_position;
+    appendTrackingTrail(ac.tail_number, pos.latitude, pos.longitude);
+
+    const trail = trackingTrails[ac.tail_number];
+    if (trail && trail.length > 1) {
+      L.polyline(trail, { color: '#38BDF8', weight: 2, opacity: 0.65, dashArray: '4 6' }).addTo(trackingTrailLayer);
+    }
+
+    if (fl.destination?.latitude != null && fl.flight_status === 'in_flight') {
+      L.polyline(
+        [[pos.latitude, pos.longitude], [fl.destination.latitude, fl.destination.longitude]],
+        { color: '#F59E0B', weight: 2, opacity: 0.55, dashArray: '8 8' }
+      ).addTo(trackingRouteLayer);
+    }
+
     const heading = pos.heading || 0;
     const isInFlight = fl.flight_status === 'in_flight';
-
-    // SVG airplane icon rotated to heading
     const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" style="transform:rotate(${heading}deg);filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7))">
       <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="${isInFlight ? '#38BDF8' : '#22C55E'}"/>
     </svg>`;
@@ -7102,40 +7207,48 @@ function renderTrackingMap(aircraft) {
       </div>`,
       iconSize: [40, 48],
       iconAnchor: [20, 16],
-      className: ''
+      className: '',
     });
 
     const marker = L.marker([pos.latitude, pos.longitude], { icon }).addTo(trackingMap);
-    marker.bindPopup(`<strong>${ac.tail_number}</strong><br>${ac.make_model || ''}<br>Alt: ${pos.altitude ? pos.altitude.toLocaleString() + ' ft' : '—'}<br>Speed: ${pos.groundspeed ? pos.groundspeed + ' kts' : '—'}`);
+    const destLabel = fl.destination?.code ? ` → ${fl.destination.code}` : '';
+    marker.bindPopup(`<strong>${ac.tail_number}</strong>${destLabel}<br>${ac.make_model || ''}<br>Alt: ${pos.altitude ? pos.altitude.toLocaleString() + ' ft' : '—'}<br>Speed: ${pos.groundspeed ? pos.groundspeed + ' kts' : '—'}`);
     marker.on('click', () => selectTrackingAircraft(ac.tail_number));
     trackingMarkers[ac.tail_number] = marker;
     positions.push([pos.latitude, pos.longitude]);
   });
 
-  // Show overlay if no positions — but keep map visible when aircraft are in flight (position may load next refresh)
   const overlay = document.getElementById('tracking-map-overlay');
   const anyInFlight = aircraft.some(e => e.flight_status === 'in_flight' || e.flight?.flight_status === 'in_flight');
   if (positions.length === 0) {
     overlay.classList.remove('hidden');
     overlay.style.display = 'flex';
-    const msg = overlay.querySelector('div > div:last-child');
-    if (msg) {
-      msg.textContent = anyInFlight
-        ? 'Fetching live position — map will update shortly'
+    const msgEl = document.getElementById('tracking-map-overlay-msg');
+    if (msgEl) {
+      msgEl.textContent = anyInFlight
+        ? 'Fetching live position — map will update automatically'
         : 'Aircraft positions will appear here when in flight';
     }
   } else {
     overlay.classList.add('hidden');
     overlay.style.display = 'none';
-    // Fit map to show all aircraft
-    if (positions.length === 1) {
-      trackingMap.setView(positions[0], 9);
+
+    const followTail = trackingSelectedTail
+      || aircraft.find(e => e.flight_status === 'in_flight')?.aircraft?.tail_number;
+    const followEntry = followTail
+      ? aircraft.find(e => e.aircraft.tail_number === followTail)
+      : null;
+    const followPos = followEntry?.flight?.last_position;
+
+    if (trackingFollowEnabled && followPos) {
+      trackingMap.setView([followPos.latitude, followPos.longitude], Math.max(trackingMap.getZoom(), 10), { animate: true });
+    } else if (positions.length === 1) {
+      trackingMap.setView(positions[0], 10);
     } else {
       trackingMap.fitBounds(positions, { padding: [40, 40] });
     }
   }
 
-  // Force map to recalculate size (needed when shown after hidden)
   setTimeout(() => trackingMap && trackingMap.invalidateSize(), 150);
 }
 
@@ -7146,16 +7259,88 @@ let trackFlightsTimer = null;
 async function loadTrackFlights() {
   clearInterval(trackFlightsTimer);
 
-  // Load all three sections in parallel
   await Promise.all([loadLiveFlights(), loadMaintenanceSchedule()]);
-
-  // Also attempt FlightAware GPS if configured
   loadTracking().catch(() => {});
 
-  // Auto-refresh every 60s
+  // Refresh flight board every 60s; GPS map has its own 15s timer when airborne
   trackFlightsTimer = setInterval(loadTrackFlights, 60 * 1000);
-  const lu = document.getElementById('tracking-last-updated');
-  if (lu) lu.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+}
+
+function renderLiveFlightCard(f) {
+  if (f.fa_live) {
+    const elapsed = f.start_time ? Math.round((Date.now() - new Date(f.start_time)) / 60000) : 0;
+    return `
+      <div style="background:var(--dark-blue);border:1px solid rgba(56,189,248,0.35);border-radius:12px;padding:1.25rem;position:relative;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
+          <div style="font-family:'Space Grotesk';font-size:1.1rem;font-weight:700;color:var(--white);">${f.tail_number}</div>
+          <span style="background:rgba(56,189,248,0.12);color:var(--sky);font-size:0.65rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:5px;text-transform:uppercase;letter-spacing:0.4px;">&#x25CF; ADS-B Live</span>
+        </div>
+        <div style="font-size:0.82rem;color:var(--gray-300);margin-bottom:0.15rem;">${f.make_model || ''}</div>
+        <div style="font-size:0.82rem;color:var(--sky);margin-bottom:0.5rem;">${f.route || 'En route'}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.82rem;">
+          <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Altitude</div><div style="color:var(--gray-200);">${f.altitude != null ? f.altitude.toLocaleString() + ' ft' : '—'}</div></div>
+          <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Groundspeed</div><div style="color:var(--gray-200);">${f.groundspeed != null ? f.groundspeed + ' kts' : '—'}</div></div>
+          <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${f.start_time ? new Date(f.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—'}</div></div>
+          <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Elapsed</div><div style="color:var(--gray-200);">${elapsed}m</div></div>
+        </div>
+      </div>`;
+  }
+
+  const elapsed = f.start_time ? Math.round((Date.now() - new Date(f.start_time)) / 60000) : 0;
+  return `
+    <div style="background:var(--dark-blue);border:1px solid rgba(56,189,248,0.2);border-radius:12px;padding:1.25rem;position:relative;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
+        <div style="font-family:'Space Grotesk';font-size:1.1rem;font-weight:700;color:var(--white);">${f.tail_number}</div>
+        <span style="background:rgba(34,197,94,0.12);color:var(--green);font-size:0.65rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:5px;text-transform:uppercase;letter-spacing:0.4px;">&#x25CF; In Flight</span>
+      </div>
+      <div style="font-size:0.82rem;color:var(--gray-300);margin-bottom:0.15rem;">${f.make_model || ''}</div>
+      <div style="height:1px;background:var(--border);margin:0.75rem 0;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.82rem;">
+        <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Student</div><div style="color:var(--gray-200);">${f.student_name}</div></div>
+        <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Instructor</div><div style="color:var(--gray-200);">${f.instructor_name}</div></div>
+        <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${new Date(f.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div></div>
+        <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Elapsed</div><div style="color:var(--gray-200);">${elapsed}m</div></div>
+        ${f.hobbs_start ? `<div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Hobbs Start</div><div style="color:var(--gray-200);">${f.hobbs_start}</div></div>` : ''}
+        ${f.lesson_type ? `<div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Type</div><div style="color:var(--gray-200);">${f.lesson_type}</div></div>` : ''}
+      </div>
+    </div>`;
+}
+
+function mergeAndRenderLiveFlights() {
+  const emptyEl = document.getElementById('live-flights-empty');
+  const gridEl = document.getElementById('live-flights-grid');
+  const loadingEl = document.getElementById('live-flights-loading');
+  if (loadingEl) loadingEl.style.display = 'none';
+
+  const flights = [...(liveFlightsCache || [])];
+  const bookingTails = new Set(flights.map(f => f.tail_number));
+
+  for (const entry of trackingDataCache) {
+    if (entry.flight_status !== 'in_flight') continue;
+    if (bookingTails.has(entry.aircraft.tail_number)) continue;
+    const fl = entry.flight;
+    flights.push({
+      fa_live: true,
+      tail_number: entry.aircraft.tail_number,
+      make_model: entry.aircraft.make_model,
+      start_time: fl?.departure_time || new Date().toISOString(),
+      route: `${fl?.origin?.code || '?'} → ${fl?.destination?.code || 'En route'}`,
+      altitude: fl?.last_position?.altitude,
+      groundspeed: fl?.last_position?.groundspeed,
+    });
+  }
+
+  if (!flights.length) {
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    if (gridEl) gridEl.classList.add('hidden');
+    return;
+  }
+
+  if (emptyEl) emptyEl.classList.add('hidden');
+  if (gridEl) {
+    gridEl.classList.remove('hidden');
+    gridEl.innerHTML = flights.map(renderLiveFlightCard).join('');
+  }
 }
 
 async function loadLiveFlights() {
@@ -7165,44 +7350,19 @@ async function loadLiveFlights() {
 
   try {
     const data = await api('/api/track-flights/live');
-    if (loadingEl) loadingEl.style.display = 'none';
-
-    if (!data.flights || data.flights.length === 0) {
+    liveFlightsCache = data.flights || [];
+    mergeAndRenderLiveFlights();
+    if (!liveFlightsCache.length && !(trackingDataCache.some(e => e.flight_status === 'in_flight'))) {
       if (emptyEl) emptyEl.classList.remove('hidden');
       if (gridEl) gridEl.classList.add('hidden');
-      // Also load recent completed flights
-      loadRecentFlights();
-      return;
-    }
-
-    if (emptyEl) emptyEl.classList.add('hidden');
-    if (gridEl) {
-      gridEl.classList.remove('hidden');
-      gridEl.innerHTML = data.flights.map(f => {
-        const elapsed = f.start_time ? Math.round((Date.now() - new Date(f.start_time)) / 60000) : 0;
-        return `
-          <div style="background:var(--dark-blue);border:1px solid rgba(56,189,248,0.2);border-radius:12px;padding:1.25rem;position:relative;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
-              <div style="font-family:'Space Grotesk';font-size:1.1rem;font-weight:700;color:var(--white);">${f.tail_number}</div>
-              <span style="background:rgba(34,197,94,0.12);color:var(--green);font-size:0.65rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:5px;text-transform:uppercase;letter-spacing:0.4px;">&#x25CF; In Flight</span>
-            </div>
-            <div style="font-size:0.82rem;color:var(--gray-300);margin-bottom:0.15rem;">${f.make_model || ''}</div>
-            <div style="height:1px;background:var(--border);margin:0.75rem 0;"></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.82rem;">
-              <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Student</div><div style="color:var(--gray-200);">${f.student_name}</div></div>
-              <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Instructor</div><div style="color:var(--gray-200);">${f.instructor_name}</div></div>
-              <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${new Date(f.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div></div>
-              <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Elapsed</div><div style="color:var(--gray-200);">${elapsed}m</div></div>
-              ${f.hobbs_start ? `<div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Hobbs Start</div><div style="color:var(--gray-200);">${f.hobbs_start}</div></div>` : ''}
-              ${f.lesson_type ? `<div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Type</div><div style="color:var(--gray-200);">${f.lesson_type}</div></div>` : ''}
-            </div>
-          </div>`;
-      }).join('');
     }
     loadRecentFlights();
   } catch (err) {
     if (loadingEl) loadingEl.style.display = 'none';
-    if (emptyEl) emptyEl.classList.remove('hidden');
+    mergeAndRenderLiveFlights();
+    if (!document.getElementById('live-flights-grid')?.innerHTML && emptyEl) {
+      emptyEl.classList.remove('hidden');
+    }
   }
 }
 

@@ -10,9 +10,12 @@ const router = express.Router();
 // Personal tier: GET /flights/{ident} returns ~14 days of flights in one result set (no extra calls).
 const FA_HISTORY_DAYS = 14;
 
-// In-memory cache (60s TTL — fleet is small, rate limits are generous)
+// In-memory cache — fleet is small; position polls faster when aircraft are airborne.
 const flightAwareCache = new Map();
+const airportCache = new Map();
 const FA_CACHE_TTL = 60 * 1000;
+const FA_POSITION_CACHE_TTL = 15 * 1000;
+const AIRPORT_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function mapPosition(pos) {
   if (!pos || pos.latitude == null || pos.longitude == null) return null;
@@ -28,7 +31,13 @@ function mapPosition(pos) {
 
 function mapAirport(ap) {
   if (!ap) return null;
-  return { code: ap.code, name: ap.name, city: ap.city };
+  return {
+    code: ap.code,
+    name: ap.name,
+    city: ap.city,
+    latitude: ap.latitude ?? null,
+    longitude: ap.longitude ?? null,
+  };
 }
 
 function deriveFlightStatus(f) {
@@ -128,19 +137,51 @@ async function fetchFlightAwareData(tailNumber) {
 async function fetchFlightPosition(faFlightId) {
   const cacheKey = `position:${faFlightId}`;
   const cached = flightAwareCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < FA_CACHE_TTL) return cached.data;
+  if (cached && Date.now() - cached.ts < FA_POSITION_CACHE_TTL) return cached.data;
 
   const result = await flightAwareRequest(`/aeroapi/flights/${encodeURIComponent(faFlightId)}/position`);
   if (!result.__error) flightAwareCache.set(cacheKey, { data: result, ts: Date.now() });
   return result.__error ? null : result;
 }
 
+async function fetchAirport(code) {
+  if (!code) return null;
+  const cacheKey = `airport:${code}`;
+  const cached = airportCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < AIRPORT_CACHE_TTL) return cached.data;
+
+  const result = await flightAwareRequest(`/aeroapi/airports/${encodeURIComponent(code)}`);
+  if (result.__error || result.latitude == null) return null;
+  const data = {
+    code: result.airport_code || result.code_icao || code,
+    name: result.name,
+    city: result.city,
+    latitude: result.latitude,
+    longitude: result.longitude,
+  };
+  airportCache.set(cacheKey, { data, ts: Date.now() });
+  return data;
+}
+
+async function enrichAirports(summary) {
+  if (!summary) return summary;
+  if (summary.origin?.code && summary.origin.latitude == null) {
+    const ap = await fetchAirport(summary.origin.code);
+    if (ap) summary.origin = { ...summary.origin, ...ap };
+  }
+  if (summary.destination?.code && summary.destination.latitude == null) {
+    const ap = await fetchAirport(summary.destination.code);
+    if (ap) summary.destination = { ...summary.destination, ...ap };
+  }
+  return summary;
+}
+
 async function enrichInFlightPosition(summary) {
-  if (!summary || summary.flight_status !== 'in_flight' || summary.last_position || !summary.fa_flight_id) {
+  if (!summary || summary.flight_status !== 'in_flight' || !summary.fa_flight_id) {
     return summary;
   }
   const positionData = await fetchFlightPosition(summary.fa_flight_id);
-  return mergePositionSummary(summary, positionData);
+  return positionData ? mergePositionSummary(summary, positionData) : summary;
 }
 
 // GET /api/flights/tracking — live fleet tracking (all authenticated roles)
@@ -166,6 +207,7 @@ router.get('/tracking', authenticateToken, async (req, res) => {
         if (!raw.__error && Array.isArray(raw.flights) && raw.flights.length > 0) {
           history = raw.flights.map((f, idx) => mapFlightSummary(f, { isCurrent: idx === 0 }));
           flightInfo = await enrichInFlightPosition(history[0]);
+          flightInfo = await enrichAirports(flightInfo);
           history[0] = flightInfo;
           flightStatus = flightInfo.flight_status;
         } else if (raw.__error) {
@@ -185,6 +227,7 @@ router.get('/tracking', authenticateToken, async (req, res) => {
     res.json({
       api_key_configured: true,
       history_days: FA_HISTORY_DAYS,
+      refresh_seconds: FA_POSITION_CACHE_TTL / 1000,
       aircraft: trackingData,
     });
   } catch (err) {

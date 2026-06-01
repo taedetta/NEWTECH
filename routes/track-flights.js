@@ -12,7 +12,7 @@ const { authenticateToken } = require('../middleware/auth');
 const router = express.Router();
 
 // GET /api/track-flights/live — bookings currently in progress
-// "In progress" = confirmed, start_time <= now, end_time >= now OR hobbs_start set but no hobbs_end
+// "In progress" = active booking window OR hobbs started but not ended
 router.get('/live', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -26,20 +26,22 @@ router.get('/live', authenticateToken, async (req, res) => {
          b.hobbs_end,
          b.notes,
          s.id   AS student_id,
-         s.name AS student_name,
+         COALESCE(s.name, 'Student/Renter') AS student_name,
          i.id   AS instructor_id,
-         i.name AS instructor_name,
+         COALESCE(i.name, 'Solo') AS instructor_name,
          a.id         AS aircraft_id,
          a.tail_number,
          a.make_model,
          a.status     AS aircraft_status
        FROM bookings b
-       JOIN users s ON s.id = b.student_id
-       JOIN users i ON i.id = b.instructor_id
+       LEFT JOIN users s ON s.id = b.student_id
+       LEFT JOIN users i ON i.id = b.instructor_id
        JOIN aircraft a ON a.id = b.aircraft_id
-       WHERE b.status = 'confirmed'
-         AND b.start_time <= NOW()
-         AND b.end_time   >= NOW()
+       WHERE b.status NOT IN ('cancelled', 'completed')
+         AND (
+           (b.start_time <= NOW() AND b.end_time >= NOW())
+           OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NULL)
+         )
        ORDER BY b.start_time ASC`
     );
     res.json({ flights: result.rows });
