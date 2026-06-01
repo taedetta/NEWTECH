@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
+const { upsertFullUserPermissions } = require('../lib/user-permissions-db');
 
 // Load .env for local development (same as server.js)
 try {
@@ -24,7 +25,7 @@ try {
 const EMAIL = process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com';
 const NAME = process.env.ADMIN_NAME || 'Evaughntae White';
 const PASSWORD = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
-const ROLE = process.env.ADMIN_ROLE || 'owner';
+const ROLE = process.env.ADMIN_ROLE || 'admin';
 
 async function main() {
   const poolConfig = { connectionString: process.env.DATABASE_URL };
@@ -61,17 +62,7 @@ async function main() {
       console.log(`Created account (${ROLE} + instructor): ${EMAIL}`);
     }
 
-    await pool.query(
-      `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
-       VALUES ($1, TRUE, TRUE, TRUE, TRUE, TRUE)
-       ON CONFLICT (user_id) DO UPDATE SET
-         can_manage_aircraft = TRUE,
-         can_manage_instructors = TRUE,
-         can_manage_permissions = TRUE,
-         can_manage_students = TRUE,
-         can_edit_website = TRUE`,
-      [userId]
-    );
+    await upsertFullUserPermissions(pool, userId);
 
     const row = await pool.query(
       'SELECT id, email, name, role, is_instructor, approval_status FROM users WHERE id = $1',

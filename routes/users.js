@@ -4,6 +4,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../db/index');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
+const { isPlatformAdminEmail } = require('../lib/platform-admin');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const { inviteEmail, sendEmail } = require('../email-templates');
 const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
@@ -185,10 +186,13 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
     }
     const targetResult = await pool.query(
-      'SELECT id, role, name FROM users WHERE id = $1 AND deleted_at IS NULL', [targetId]
+      'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL', [targetId]
     );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const target = targetResult.rows[0];
+    if (isPlatformAdminEmail(target.email) && role === 'owner') {
+      return res.status(403).json({ error: 'This account stays Admin/Instructor in the UI; it already has full management access' });
+    }
     if (target.role === role) {
       return res.json({ ok: true, id: targetId, role, unchanged: true });
     }

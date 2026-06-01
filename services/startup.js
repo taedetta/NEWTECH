@@ -9,6 +9,8 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
+const { getPlatformAdminEmail } = require('../lib/platform-admin');
+const { upsertFullUserPermissions } = require('../lib/user-permissions-db');
 
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
@@ -118,7 +120,7 @@ async function ensureUserIdSequence(pool) {
 }
 
 async function ensureDefaultAdminAccount(pool) {
-  const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
+  const email = getPlatformAdminEmail();
   try {
     const existing = await pool.query(
       'SELECT id, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
@@ -127,13 +129,13 @@ async function ensureDefaultAdminAccount(pool) {
     if (existing.rows.length === 0) return;
 
     const userId = existing.rows[0].id;
-    if (existing.rows[0].role === 'owner') {
+    if (existing.rows[0].role !== 'admin') {
       await pool.query(
         `UPDATE users SET role = 'admin', is_instructor = TRUE, approval_status = 'approved', updated_at = NOW()
          WHERE id = $1`,
         [userId]
       );
-      console.log(`[bootstrap] Corrected ${email} from owner to admin/instructor`);
+      console.log(`[bootstrap] Platform admin ${email} set to admin/instructor (not owner label)`);
     } else {
       await pool.query(
         `UPDATE users SET is_instructor = TRUE, approval_status = 'approved', updated_at = NOW()
@@ -142,18 +144,7 @@ async function ensureDefaultAdminAccount(pool) {
       );
     }
 
-    await pool.query(
-      `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
-       VALUES ($1, TRUE, TRUE, TRUE, TRUE, TRUE)
-       ON CONFLICT (user_id) DO UPDATE SET
-         can_manage_aircraft = TRUE,
-         can_manage_instructors = TRUE,
-         can_manage_permissions = TRUE,
-         can_manage_students = TRUE,
-         can_edit_website = TRUE,
-         updated_at = NOW()`,
-      [userId]
-    );
+    await upsertFullUserPermissions(pool, userId);
   } catch (err) {
     console.error('[bootstrap] ensureDefaultAdminAccount error:', err.message);
   }

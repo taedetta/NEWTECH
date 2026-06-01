@@ -293,3 +293,6 @@ CREATE TABLE IF NOT EXISTS aircraft_documents (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS aircraft_documents_aircraft_id_idx ON aircraft_documents(aircraft_id);
+
+-- user_permissions upsert (some DBs were missing unique on user_id)
+CREATE UNIQUE INDEX IF NOT EXISTS user_permissions_user_id_unique ON user_permissions(user_id);
