@@ -96,6 +96,13 @@ async function listLeads() {
   return result.rows;
 }
 
+async function countNewLeads() {
+  const result = await queryWithSourceFilter(
+    `SELECT COUNT(*)::int AS cnt FROM discovery_flight_leads WHERE status = 'new'`
+  );
+  return result.rows[0]?.cnt || 0;
+}
+
 async function getLeadById(id) {
   const result = await queryWithSourceFilter(
     `SELECT * FROM discovery_flight_leads WHERE id = $1`,
@@ -183,6 +190,7 @@ module.exports = {
   createLead,
   createManualLead,
   listLeads,
+  countNewLeads,
   getLeadById,
   getLeadActivity,
   addLeadNote,

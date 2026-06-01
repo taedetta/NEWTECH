@@ -6,7 +6,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { createLead, createManualLead, listLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus, recordLeadFollowUp, markLeadConverted } = require('../db/leads');
+const { createLead, createManualLead, listLeads, countNewLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus, recordLeadFollowUp, markLeadConverted } = require('../db/leads');
 const { sendEmail } = require('../email-templates');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
@@ -187,6 +187,17 @@ router.post('/manual', authenticateToken, requireRole('owner', 'admin'), async (
   } catch (err) {
     console.error('[leads] manual create error:', err.message);
     return res.status(500).json({ error: 'Could not create lead.' });
+  }
+});
+
+// GET /api/leads/count — badge count for new (uncontacted) leads
+router.get('/count', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const count = await countNewLeads();
+    return res.json({ count });
+  } catch (err) {
+    console.error('[leads] count error:', err.message);
+    return res.status(500).json({ error: 'Could not count leads.' });
   }
 });
 

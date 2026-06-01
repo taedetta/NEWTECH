@@ -1419,7 +1419,7 @@
     .table-scroll-hint { display: none; font-size: 0.72rem; color: var(--gray-500); margin-bottom: 0.5rem; }
     .scroll-x-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
     .scroll-x-wrap .data-table { min-width: 640px; }
-    #page-leads .scroll-x-wrap .data-table { min-width: 720px; }
+    #approvals-panel-leads .scroll-x-wrap .data-table { min-width: 720px; }
 
     /* Touch-friendly controls everywhere */
     .btn, .auth-tab, .portal-tab, .maint-tab, .editor-tab-btn, .prog-tab,
@@ -1458,15 +1458,15 @@
       .lead-detail-header .btn { width: 100%; }
       .leads-toolbar { flex-direction: column; align-items: stretch; }
       .leads-toolbar select, .leads-toolbar .btn { width: 100%; max-width: 100% !important; min-height: 44px; }
-      #page-leads .page-header { flex-direction: column; align-items: stretch; }
-      #page-leads .page-header .btn { width: 100%; justify-content: center; min-height: 44px; }
+      #approvals-panel-leads .page-header { flex-direction: column; align-items: stretch; }
+      #approvals-panel-leads .page-header .btn { width: 100%; justify-content: center; min-height: 44px; }
       /* Hide crowded lead columns on phones — tap row for full detail */
-      #page-leads .data-table th:nth-child(4),
-      #page-leads .data-table td:nth-child(4),
-      #page-leads .data-table th:nth-child(6),
-      #page-leads .data-table td:nth-child(6),
-      #page-leads .data-table th:nth-child(7),
-      #page-leads .data-table td:nth-child(7) { display: none; }
+      #approvals-panel-leads .data-table th:nth-child(4),
+      #approvals-panel-leads .data-table td:nth-child(4),
+      #approvals-panel-leads .data-table th:nth-child(6),
+      #approvals-panel-leads .data-table td:nth-child(6),
+      #approvals-panel-leads .data-table th:nth-child(7),
+      #approvals-panel-leads .data-table td:nth-child(7) { display: none; }
       .table-scroll-hint { display: block; }
       /* All modals: full-width bottom sheet on mobile */
       .modal-overlay .modal {
@@ -1716,7 +1716,6 @@
           <a onclick="openMgmtHistory()" data-page="history-mgmt" id="nav-history-mgmt" class="hidden"><span class="nav-icon">&#128218;</span> Booking History</a>
           <a onclick="navigate('progress')" data-page="progress" id="nav-progress"><span class="nav-icon">&#128200;</span> Progress</a>
           <a onclick="navigate('at-risk')" data-page="at-risk" id="nav-at-risk" class="hidden"><span class="nav-icon">&#9888;</span> At-Risk</a>
-          <a onclick="navigate('leads')" data-page="leads" id="nav-leads" class="hidden"><span class="nav-icon">&#128231;</span> Leads</a>
           <a onclick="navigate('instructor-hours')" data-page="instructor-hours" id="nav-instructor-hours" class="hidden"><span class="nav-icon">&#9997;</span> Instructor Hours</a>
           <a onclick="navigate('cfi-utilization')" data-page="cfi-utilization" id="nav-cfi-utilization" class="hidden"><span class="nav-icon">&#128202;</span> CFI Stats</a>
           <a onclick="navigate('hours-audit')" data-page="hours-audit" id="nav-hours-audit" style="display:none"><span class="nav-icon">&#128221;</span> Hours Audit</a>
@@ -3521,26 +3520,82 @@
           </div>
         </div>
 
-        <!-- ─── APPROVALS PAGE ─── -->
+        <!-- ─── APPROVALS PAGE (accounts + discovery leads) ─── -->
         <div id="page-approvals" class="page hidden">
           <div class="page-header">
             <h1>&#9989; Pending Approvals</h1>
           </div>
-          <div id="approvals-loading" style="text-align:center;padding:3rem;color:var(--gray-500);">
-            <div style="font-size:1.5rem;margin-bottom:0.75rem;">&#9203;</div>
-            <div>Loading approvals&hellip;</div>
+          <div id="approvals-tabs" style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+            <button type="button" id="approvals-tab-accounts" class="btn btn-sm history-period-btn active" onclick="setApprovalsTab('accounts')">
+              Account Approvals <span id="approvals-tab-accounts-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span>
+            </button>
+            <button type="button" id="approvals-tab-leads" class="btn btn-sm history-period-btn hidden" onclick="setApprovalsTab('leads')">
+              Discovery Leads <span id="approvals-tab-leads-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span>
+            </button>
           </div>
-          <div id="approvals-empty" class="empty-state hidden">
-            <div class="empty-icon">&#10003;</div>
-            <h3>No pending approvals</h3>
-            <p>All accounts are approved. New signups will appear here.</p>
+
+          <div id="approvals-panel-accounts">
+            <div id="approvals-loading" style="text-align:center;padding:3rem;color:var(--gray-500);">
+              <div style="font-size:1.5rem;margin-bottom:0.75rem;">&#9203;</div>
+              <div>Loading approvals&hellip;</div>
+            </div>
+            <div id="approvals-empty" class="empty-state hidden">
+              <div class="empty-icon">&#10003;</div>
+              <h3>No pending approvals</h3>
+              <p>All accounts are approved. New signups will appear here.</p>
+            </div>
+            <div id="approvals-list" class="hidden">
+              <div class="table-card">
+                <table class="data-table">
+                  <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Signed Up</th><th>Actions</th></tr></thead>
+                  <tbody id="approvals-tbody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
-          <div id="approvals-list" class="hidden">
-            <div class="table-card">
-              <table class="data-table">
-                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Signed Up</th><th>Actions</th></tr></thead>
-                <tbody id="approvals-tbody"></tbody>
-              </table>
+
+          <div id="approvals-panel-leads" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+              <h2 style="font-size:1.1rem;margin:0;color:var(--white);">&#128231; Discovery Flight Leads</h2>
+              <button class="btn btn-primary btn-sm" onclick="openAddLeadModal()">+ Add Lead</button>
+            </div>
+            <div class="leads-toolbar">
+              <select id="leads-status-filter" class="input-field" style="max-width:200px;padding:0.5rem 0.85rem;font-size:0.85rem" onchange="loadLeads()">
+                <option value="all">All Leads</option>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="booked">Booked</option>
+                <option value="no_show">No Show</option>
+                <option value="converted">Converted</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="loadLeads()">&#8635; Refresh</button>
+            </div>
+            <div id="leads-empty" class="empty-state hidden">
+              <div class="empty-icon">&#128231;</div>
+              <h3>No leads yet</h3>
+              <p>Discovery flight leads will appear here when people submit the form.</p>
+            </div>
+            <div id="leads-list">
+              <p class="table-scroll-hint">Swipe sideways to see all columns, or tap a row for full details.</p>
+              <div class="table-card scroll-x-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Phone</th>
+                      <th>Experience</th>
+                      <th>Program</th>
+                      <th>Preferred Date</th>
+                      <th>Message</th>
+                      <th>Status</th>
+                      <th>Received</th>
+                      <th id="leads-actions-th" style="display:none">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leads-tbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -3582,52 +3637,6 @@
                   </tr>
                 </thead>
                 <tbody id="disc-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- ─── LEADS PAGE (admin/owner) ─── -->
-        <div id="page-leads" class="page hidden">
-          <div class="page-header">
-            <h1>&#128231; Discovery Flight Leads</h1>
-            <button class="btn btn-primary btn-sm" onclick="openAddLeadModal()">+ Add Lead</button>
-          </div>
-          <div class="leads-toolbar">
-            <select id="leads-status-filter" class="input-field" style="max-width:200px;padding:0.5rem 0.85rem;font-size:0.85rem" onchange="loadLeads()">
-              <option value="all">All Leads</option>
-              <option value="new">New</option>
-              <option value="contacted">Contacted</option>
-              <option value="booked">Booked</option>
-              <option value="no_show">No Show</option>
-              <option value="converted">Converted</option>
-            </select>
-            <button class="btn btn-secondary btn-sm" onclick="loadLeads()">&#8635; Refresh</button>
-          </div>
-          <div id="leads-empty" class="empty-state hidden">
-            <div class="empty-icon">&#128231;</div>
-            <h3>No leads yet</h3>
-            <p>Discovery flight leads will appear here when people submit the form.</p>
-          </div>
-          <div id="leads-list">
-            <p class="table-scroll-hint">Swipe sideways to see all columns, or tap a row for full details.</p>
-            <div class="table-card scroll-x-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Phone</th>
-                    <th>Experience</th>
-                    <th>Program</th>
-                    <th>Preferred Date</th>
-                    <th>Message</th>
-                    <th>Status</th>
-                    <th>Received</th>
-                    <th id="leads-actions-th" style="display:none">Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="leads-tbody"></tbody>
               </table>
             </div>
           </div>
@@ -5321,20 +5330,24 @@ async function enterApp() {
     el.style.display = '';
   });
   document.querySelectorAll('.nav-section-label, .nav-divider').forEach(el => { el.style.display = ''; });
-  ['nav-portal', 'nav-approvals', 'nav-discrepancies', 'nav-at-risk', 'nav-leads', 'nav-instructor-hours',
+  ['nav-portal', 'nav-approvals', 'nav-discrepancies', 'nav-at-risk', 'nav-instructor-hours',
     'nav-website-editor', 'nav-programs', 'nav-availability', 'nav-admin-settings', 'nav-billing-mgmt', 'nav-history-mgmt', 'nav-cfi-utilization']
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
     });
 
-  // Show approvals nav for owner/admin/instructor
+  // Show approvals nav for owner/admin/instructor; discovery leads tab for owner/admin only
   const navApprovals = document.getElementById('nav-approvals');
   if (navApprovals) {
     navApprovals.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
     if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
       loadApprovalsBadge();
     }
+  }
+  const approvalsLeadsTab = document.getElementById('approvals-tab-leads');
+  if (approvalsLeadsTab) {
+    approvalsLeadsTab.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
   }
 
   // Discrepancies: owner/admin only
@@ -5354,10 +5367,6 @@ async function enterApp() {
   // At-Risk: visible to owner, admin, instructor — not students
   const navAtRisk = document.getElementById('nav-at-risk');
   if (navAtRisk) navAtRisk.classList.toggle('hidden', currentUser.role === 'student');
-
-  // Leads: owner/admin only
-  const navLeads = document.getElementById('nav-leads');
-  if (navLeads) navLeads.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
 
   // My Portal: visible to students only
   const navPortal = document.getElementById('nav-portal');
@@ -5495,7 +5504,10 @@ function startAppPolling() {
     }
     if (currentPage === 'schedule') loadCalendar();
     else if (currentPage === 'dashboard') loadDashboard();
-    else if (currentPage === 'approvals') loadApprovals();
+    else if (currentPage === 'approvals') {
+      if (approvalsActiveTab === 'leads') loadLeads();
+      else loadApprovals();
+    }
     else if (currentPage === 'tracking') loadTrackFlights();
   }, 45000);
 }
@@ -6073,6 +6085,8 @@ async function createNewProgram() {
 function navigate(page) {
   console.log('[NAV] navigate called with:', page);
   closeSidebar(); // close mobile sidebar on navigation
+  const openApprovalsTab = page === 'leads' ? 'leads' : null;
+  if (page === 'leads') page = 'approvals';
   const wasVisited = visitedPages.has(page);
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
@@ -6135,13 +6149,14 @@ function navigate(page) {
   else if (page === 'website-editor') loadWebsiteEditor();
   else if (page === 'programs') loadProgramsAdmin();
   else if (page === 'tracking') loadTrackFlights();
-  else if (page === 'approvals') loadApprovals();
+  else if (page === 'approvals') {
+    setApprovalsTab(openApprovalsTab || approvalsActiveTab || 'accounts');
+  }
   else if (page === 'discrepancies') loadDiscrepancies();
   else if (page === 'at-risk') loadAtRisk();
   else if (page === 'endorsements') loadEndorsements();
   else if (page === 'portal') loadStudentPortal();
   else if (page === 'availability') loadAvailabilityPage();
-  else if (page === 'leads') loadLeads();
   else if (page === 'phone-app') loadPhoneAppPage();
   else if (page === 'messages') loadMessagesPage();
   else if (page === 'cfi-utilization') loadCfiUtilizationPage();
@@ -7592,6 +7607,37 @@ async function loadMaintenanceSchedule() {
 
 // ─── APPROVALS ───────────────────────────────────────────
 
+let approvalsActiveTab = 'accounts';
+
+function setApprovalsTab(tab) {
+  const canSeeLeads = currentUser && ['owner', 'admin'].includes(currentUser.role);
+  if (tab === 'leads' && !canSeeLeads) tab = 'accounts';
+  approvalsActiveTab = tab;
+
+  const accountsBtn = document.getElementById('approvals-tab-accounts');
+  const leadsBtn = document.getElementById('approvals-tab-leads');
+  const accountsPanel = document.getElementById('approvals-panel-accounts');
+  const leadsPanel = document.getElementById('approvals-panel-leads');
+
+  if (accountsBtn) accountsBtn.classList.toggle('active', tab === 'accounts');
+  if (leadsBtn) leadsBtn.classList.toggle('active', tab === 'leads');
+  if (accountsPanel) accountsPanel.classList.toggle('hidden', tab !== 'accounts');
+  if (leadsPanel) leadsPanel.classList.toggle('hidden', tab !== 'leads');
+
+  if (tab === 'leads') loadLeads();
+  else loadApprovals();
+}
+
+function setInboxBadge(el, count) {
+  if (!el) return;
+  if (count > 0) {
+    el.textContent = count;
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
 async function loadApprovals() {
   const loadingEl = document.getElementById('approvals-loading');
   const emptyEl = document.getElementById('approvals-empty');
@@ -7655,16 +7701,23 @@ async function rejectUser(id) {
 async function loadApprovalsBadge() {
   const badge = document.getElementById('approvals-badge');
   if (!badge) return;
-  // Only load if user can approve (admin/owner/instructor)
   if (!currentUser || !['owner', 'admin', 'instructor'].includes(currentUser.role)) return;
   try {
-    const data = await api('/api/approvals/count');
-    if (data.count > 0) {
-      badge.textContent = data.count;
-      badge.classList.remove('hidden');
-    } else {
-      badge.classList.add('hidden');
+    const approvalsData = await api('/api/approvals/count');
+    let total = approvalsData.count || 0;
+    let leadsCount = 0;
+
+    if (['owner', 'admin'].includes(currentUser.role)) {
+      try {
+        const leadsData = await api('/api/leads/count');
+        leadsCount = leadsData.count || 0;
+        total += leadsCount;
+      } catch { /* suppress */ }
     }
+
+    setInboxBadge(badge, total);
+    setInboxBadge(document.getElementById('approvals-tab-accounts-badge'), approvalsData.count || 0);
+    setInboxBadge(document.getElementById('approvals-tab-leads-badge'), leadsCount);
   } catch { /* suppress */ }
 }
 
@@ -17636,6 +17689,7 @@ async function submitAddLead(e) {
     closeAddLeadModal();
     showToast('Lead added', 'success');
     loadLeads();
+    loadApprovalsBadge();
   } catch (err) {
     errEl.textContent = err.error || 'Could not save lead';
     errEl.classList.remove('hidden');
@@ -17727,6 +17781,7 @@ async function updateLeadStatusFromDetail() {
     renderLeadDetail(data.lead, data.activity || []);
     showToast('Status updated', 'success');
     loadLeads();
+    loadApprovalsBadge();
   } catch (err) {
     showToast(err.error || 'Failed to update status', 'error');
   }
@@ -17819,7 +17874,7 @@ function leadStatusBadge(status) {
 function confirmDeleteLead(id, name) {
   if (!confirm('Delete lead "' + name + '"? This cannot be undone.')) return;
   api('/api/leads/' + id, { method: 'DELETE' })
-    .then(() => { showToast('Lead deleted', 'success'); loadLeads(); })
+    .then(() => { showToast('Lead deleted', 'success'); loadLeads(); loadApprovalsBadge(); })
     .catch(e => showToast(e.error || 'Failed to delete lead', 'error'));
 }
 
