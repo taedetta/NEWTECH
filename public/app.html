@@ -10656,7 +10656,6 @@ async function loadPeople(filter, skipReload) {
           '<span class="toggle-slider"></span></label>';
       }
 
-      var canEditAvail = isInstructorUser(u) && (isOwner || isSelf || canManageInstructors);
       var canDelete = !isSelf && (
         (isOwner && isTargetOwner) ||
         (!isTargetOwner && (isOwner ||
@@ -10698,20 +10697,17 @@ async function loadPeople(filter, skipReload) {
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_manage_permissions', u.can_manage_permissions)) + '</td>' +
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_edit_website', u.can_edit_website)) + '</td>' +
         '<td style="display:flex;gap:0.4rem;flex-wrap:wrap">' +
-          (canEditAvail ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escHtml(u.name).replace(/'/g, "\\'") + '\')">Availability</button>' : '') +
           (canDelete ? '<button class="btn btn-danger btn-sm" onclick="deleteUser(' + u.id + ', \'' + escHtml(u.name) + '\')">Remove</button>' : '') +
         '</td>' +
         '</tr>';
     }).join('');
   } else {
     // Basic view
-    thead.innerHTML = '<tr><th class="people-sticky">Name</th><th class="people-sticky-2">Email</th><th>Phone</th><th>Role</th><th>Students</th><th>Joined</th><th></th></tr>';
+    thead.innerHTML = '<tr><th class="people-sticky">Name</th><th class="people-sticky-2">Email</th><th>Phone</th><th>Role</th><th>Students</th><th>Joined</th></tr>';
     tbody.innerHTML = users.map(function(u) {
       var isDualRole = !!u.is_instructor && ['admin', 'owner'].includes(u.role) && u.role !== 'instructor';
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
       var roleLabel = u.role === 'owner' ? 'Owner' : u.role === 'instructor' ? 'Instructor' : isDualRole ? 'Admin / Instructor' : u.role === 'admin' ? 'Admin' : u.role === 'renter' ? 'Renter' : u.role === 'maintenance' ? 'Maintenance' : 'Student';
-      var isSelf = u.id === currentUser.id;
-      var canEditAvailBasic = isInstructorUser(u) && (isOwner || isSelf || canManageInstructors);
       return '<tr>' +
         '<td class="people-sticky" style="font-weight:600">' + escHtml(u.name) + '</td>' +
         '<td class="people-sticky-2" style="color:var(--gray-300)">' + escHtml(u.email) + '</td>' +
@@ -10719,7 +10715,6 @@ async function loadPeople(filter, skipReload) {
         '<td><span class="tag ' + roleClass + '">' + roleLabel + '</span></td>' +
         '<td style="text-align:center">' + (isInstructorUser(u) ? (u.assigned_students || 0) : '—') + '</td>' +
         '<td style="color:var(--gray-500)">' + new Date(u.created_at).toLocaleDateString() + '</td>' +
-        '<td>' + (canEditAvailBasic ? '<button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(' + u.id + ', \'' + escHtml(u.name).replace(/'/g, "\\'") + '\')">Availability</button>' : '') + '</td>' +
         '</tr>';
     }).join('');
   }
@@ -10947,11 +10942,6 @@ async function saveInstructorRate(userId, inputId) {
   } catch (err) {
     alert(err.error || 'Failed to save rate');
   }
-}
-
-// ─── AVAILABILITY (placeholder) ───
-function openAvailabilityModal(userId, userName) {
-  alert('Availability management for ' + userName + ' is coming soon.');
 }
 
 // ─── INVITE USER ───
