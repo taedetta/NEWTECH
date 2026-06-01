@@ -20,16 +20,30 @@ async function logLeadActivity(client, { leadId, userId, activityType, body, old
 
 async function createLead({ name, email, phone, preferred_date, experience_level, message, program_interest, source_label }) {
   const { source } = buildSourceParam();
-  const result = await pool.query(
-    `INSERT INTO discovery_flight_leads
-       (name, email, phone, preferred_date, experience_level, message, program_interest, source_label, status, created_at, updated_at, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', NOW(), NOW(), $9)
-     RETURNING *`,
-    [
-      name, email, phone, preferred_date || null, experience_level || null,
-      message || null, program_interest || null, source_label || null, source,
-    ]
-  );
+  const scheduling = preferred_date && String(preferred_date).trim() ? String(preferred_date).trim() : null;
+  const params = [
+    name, email, phone, scheduling, experience_level || null,
+    message || null, program_interest || null, source_label || null, source,
+  ];
+  let result;
+  try {
+    result = await pool.query(
+      `INSERT INTO discovery_flight_leads
+         (name, email, phone, preferred_date, experience_level, message, program_interest, source_label, status, created_at, updated_at, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', NOW(), NOW(), $9)
+       RETURNING *`,
+      params
+    );
+  } catch (err) {
+    if (!/preferred_date|program_interest|source_label|experience_level|source/i.test(err.message)) throw err;
+    result = await pool.query(
+      `INSERT INTO discovery_flight_leads
+         (name, email, phone, experience, status, notes, created_at, updated_at, source)
+       VALUES ($1, $2, $3, $4, 'new', $5, NOW(), NOW(), $6)
+       RETURNING *`,
+      [name, email, phone, experience_level || null, [scheduling, message].filter(Boolean).join(' · ') || null, source]
+    );
+  }
   const lead = result.rows[0];
   await logLeadActivity(null, {
     leadId: lead.id,

@@ -23,7 +23,8 @@ ALTER TABLE flight_logs ADD COLUMN IF NOT EXISTS is_solo BOOLEAN DEFAULT false;
 ALTER TABLE flight_logs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ── Discovery flight leads ──
-ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS preferred_date DATE;
+ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS preferred_date VARCHAR(100);
+ALTER TABLE discovery_flight_leads ALTER COLUMN preferred_date TYPE VARCHAR(100) USING preferred_date::text;
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS experience_level VARCHAR(50);
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS message TEXT;
 UPDATE discovery_flight_leads SET experience_level = experience WHERE experience_level IS NULL AND experience IS NOT NULL;

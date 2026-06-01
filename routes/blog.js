@@ -47,7 +47,7 @@ const ARTICLES = [
   {
     slug: 'discovery-flight',
     title: 'What to Expect on Your First Discovery Flight',
-    excerpt: 'A discovery flight is a 30–60 minute introductory lesson where you actually take the controls. Here\'s exactly what happens, what it costs, and how to prepare.',
+    excerpt: 'A discovery flight is a 20-minute introductory lesson where you actually take the controls. Here\'s exactly what happens, what it costs, and how to prepare.',
     readTime: '6 min read',
     published: PUB_DATE_DISCOVERY,
     category: 'Getting Started',
@@ -537,7 +537,7 @@ router.get('/', (req, res) => {
 
     <section class="blog-cta-section">
       <h2>Ready to Start Flying?</h2>
-      <p>Discovery flights are the best way to see if aviation is right for you. 30 minutes in the air, with an instructor by your side.</p>
+      <p>Discovery flights are the best way to see if aviation is right for you. 20 minutes in the air, with an instructor by your side.</p>
       <a href="/book-discovery-flight" class="btn-primary">Book a Discovery Flight</a>
     </section>
   `;
@@ -917,7 +917,7 @@ function articleShell(article, bodyHtml, faqs) {
         <div class="article-inline-cta">
           <div class="article-inline-cta-inner">
             <p class="article-inline-cta-label">✈️ Ready to start?</p>
-            <p class="article-inline-cta-text">Book a no-obligation discovery flight with New Tech Aviation. 30 minutes in the air, all experience levels welcome.</p>
+            <p class="article-inline-cta-text">Book a no-obligation discovery flight with New Tech Aviation. 20 minutes in the air, all experience levels welcome.</p>
             <a href="/book-discovery-flight" class="article-inline-cta-btn">Book a Discovery Flight →</a>
           </div>
         </div>
@@ -925,7 +925,7 @@ function articleShell(article, bodyHtml, faqs) {
       <aside class="article-sidebar">
         <div class="sidebar-card sidebar-cta">
           <h3>Ready to Start?</h3>
-          <p>Book a discovery flight at New Tech Aviation. 30 minutes in the air — no experience needed.</p>
+          <p>Book a discovery flight at New Tech Aviation. 20 minutes in the air — no experience needed.</p>
           <a href="/book-discovery-flight" class="sidebar-btn">Book a Discovery Flight</a>
           <a href="/#programs" class="sidebar-btn-ghost">View Training Programs</a>
         </div>
@@ -1250,7 +1250,7 @@ function renderTimelineArticle(article) {
 
     <div class="inline-cta">
       <h3>Not Sure Where to Start?</h3>
-      <p>A discovery flight is 30 minutes in the air with one of our instructors. No commitment — just find out if flying is for you before planning a timeline.</p>
+      <p>A discovery flight is 20 minutes in the air with one of our instructors. No commitment — just find out if flying is for you before planning a timeline.</p>
       <a href="/#contact">Book Your Discovery Flight →</a>
     </div>
 
@@ -1279,8 +1279,8 @@ function renderTimelineArticle(article) {
 
 function renderDiscoveryFlightArticle(article) {
   const faqs = [
-    { q: 'What is a discovery flight?', a: 'A discovery flight (also called an introductory flight) is a short, instructor-led flight lesson — typically 30 to 60 minutes — designed to give you a real taste of flying before committing to a full training program. You\'ll sit in the left seat, handle the controls during flight, and experience what it\'s like to pilot a small aircraft.' },
-    { q: 'How much does a discovery flight cost?', a: 'Discovery flights typically cost between $150 and $250 depending on the school, aircraft type, and flight duration. At New Tech Aviation, a discovery flight covers aircraft rental and instructor time for a 30–45 minute flight. Some schools offer discounted intro flights as a promotional rate.' },
+    { q: 'What is a discovery flight?', a: 'A discovery flight (also called an introductory flight) is a short, instructor-led flight lesson — typically 20 minutes in the air — designed to give you a real taste of flying before committing to a full training program. You\'ll sit in the left seat, handle the controls during flight, and experience what it\'s like to pilot a small aircraft.' },
+    { q: 'How much does a discovery flight cost?', a: 'Discovery flights typically cost between $150 and $250 depending on the school, aircraft type, and flight duration. At New Tech Aviation, a discovery flight covers aircraft rental and instructor time for a 20-minute flight. Some schools offer discounted intro flights as a promotional rate.' },
     { q: 'Do I need any experience to take a discovery flight?', a: 'None. Discovery flights are specifically designed for people with zero aviation experience. Your instructor handles all the complex tasks — radio communication, takeoff, and landing. You\'ll get to fly straight-and-level, make some turns, and experience the aircraft controls first-hand.' },
     { q: 'What should I wear on a discovery flight?', a: 'Dress comfortably, as you would for a casual outdoor activity. Closed-toe shoes are required. Avoid very bulky clothing that might restrict movement in the cockpit. Sunglasses are helpful. There\'s no special gear required — the school provides headsets.' },
     { q: 'Does a discovery flight count toward a pilot license?', a: 'Yes. The flight time logged during a discovery flight counts toward the 40 hours required for a private pilot license. Your instructor logs the time in your logbook, so you\'re already building hours from day one.' },
@@ -1293,7 +1293,7 @@ function renderDiscoveryFlightArticle(article) {
 
     <div class="callout">
       <strong>Quick overview:</strong>
-      Duration: 60–90 minutes total (30–45 min in the air). Cost: $150–$250. Experience required: None. What you'll do: Pre-flight walk-around, takeoff, fly the aircraft, landing. It counts toward your pilot license logbook hours.
+      Duration: About 1 hour total (20 min in the air). Cost: $150–$250. Experience required: None. What you'll do: Pre-flight walk-around, takeoff, fly the aircraft, landing. It counts toward your pilot license logbook hours.
     </div>
 
     <h2 id="what-is">What Is a Discovery Flight?</h2>
@@ -1302,7 +1302,7 @@ function renderDiscoveryFlightArticle(article) {
     <p>The FAA logs it as actual flight instruction time, so every minute counts toward your <a href="/blog/private-pilot-license-timeline">private pilot training hours</a>.</p>
 
     <h2 id="what-happens">What Happens During a Discovery Flight</h2>
-    <p>Here's the typical sequence for a 90-minute discovery flight block:</p>
+    <p>Here's the typical sequence for a discovery flight visit:</p>
 
     <table class="cost-table">
       <thead>
@@ -1312,7 +1312,7 @@ function renderDiscoveryFlightArticle(article) {
         <tr><td>Ground briefing</td><td>~20 min</td><td>Instructor explains the flight plan, cockpit controls, and what you'll do in the air</td></tr>
         <tr><td>Pre-flight inspection</td><td>~15 min</td><td>Walk-around of the aircraft — fuel, oil, control surfaces, tires</td></tr>
         <tr><td>Taxi and takeoff</td><td>~5 min</td><td>Instructor handles radio and taxi; you may assist on rudder pedals</td></tr>
-        <tr><td>Flight time</td><td>30–45 min</td><td>You take the controls in cruise: straight-and-level, turns, climbs, descents</td></tr>
+        <tr><td>Flight time</td><td>20 min</td><td>You take the controls in cruise: straight-and-level, turns, climbs, descents</td></tr>
         <tr><td>Landing</td><td>~5 min</td><td>Instructor typically handles the landing (some students land with guidance)</td></tr>
         <tr><td>Debrief</td><td>~10 min</td><td>What you did well, what flight training looks like, next steps</td></tr>
       </tbody>
@@ -1345,7 +1345,7 @@ function renderDiscoveryFlightArticle(article) {
     <div class="article-inline-cta">
       <div class="article-inline-cta-inner">
         <p class="article-inline-cta-label">✈️ Book Your Discovery Flight</p>
-        <p class="article-inline-cta-text">30–45 minutes in the air at KPSK in New River Valley, VA. Certified instructor. You take the controls. No experience needed.</p>
+        <p class="article-inline-cta-text">20 minutes in the air at KPSK in New River Valley, VA. Certified instructor. You take the controls. No experience needed.</p>
         <a href="/book-discovery-flight" class="article-inline-cta-btn">Book at New Tech Aviation →</a>
       </div>
     </div>
@@ -1508,7 +1508,7 @@ function renderLearnToFlyVirginiaArticle(article) {
     </ul>
 
     <h2 id="start">How to Start</h2>
-    <p>The right first step is a <a href="/blog/discovery-flight">discovery flight</a>. It's 30–45 minutes in the air with an instructor, you take the controls, and it counts toward your logbook hours. It costs $150–$250 and answers the question "Is this something I actually want to do?" definitively.</p>
+    <p>The right first step is a <a href="/blog/discovery-flight">discovery flight</a>. It's 20 minutes in the air with an instructor, you take the controls, and it counts toward your logbook hours. It costs $150–$250 and answers the question "Is this something I actually want to do?" definitively.</p>
     <p>After that:</p>
     <ol>
       <li>Get your FAA 3rd Class Medical — find an AME at the FAA Designee Locator</li>

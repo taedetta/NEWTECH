@@ -99,7 +99,7 @@ function leadConfirmationHtml(name) {
           <div style="background:#f8f9fc;border-left:4px solid #F5A623;border-radius:4px;padding:20px;text-align:left;margin:0 0 28px;">
             <p style="margin:0 0 8px;font-weight:600;color:#1B2A4A;">What to expect:</p>
             <ul style="margin:0;padding-left:20px;color:#555;line-height:1.8;">
-              <li>30-minute introductory flight with a certified flight instructor</li>
+              <li>20-minute introductory flight with a certified flight instructor</li>
               <li>No obligation — just come and experience flying</li>
               <li>All experience levels welcome, including complete beginners</li>
             </ul>
@@ -159,7 +159,7 @@ router.post('/', async (req, res) => {
       lead.email,
       'Discovery Flight Request Received — New Tech Aviation',
       leadConfirmationHtml(lead.name),
-      `Hi ${lead.name},\n\nThanks for your interest in a discovery flight with New Tech Aviation! We'll reach out within 24 hours to schedule your introductory flight.\n\nWhat to expect:\n- 30-minute introductory flight with a certified instructor\n- No obligation\n- All experience levels welcome\n\nNew Tech Aviation`
+      `Hi ${lead.name},\n\nThanks for your interest in a discovery flight with New Tech Aviation! We'll reach out within 24 hours to schedule your introductory flight.\n\nWhat to expect:\n- 20-minute introductory flight with a certified instructor\n- No obligation\n- All experience levels welcome\n\nNew Tech Aviation`
     ),
   ]);
 
