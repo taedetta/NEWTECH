@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { getAppBuildVersion } = require('../lib/app-build-version');
+const { isCaptchaEnabled, getTurnstileSiteKey } = require('../lib/captcha');
 
 const router = express.Router();
 
@@ -20,6 +21,8 @@ router.get('/', (req, res) => {
     sideEffectsDisabled: staging,
     appUrl: process.env.APP_URL || '',
     version: getAppBuildVersion(),
+    captchaEnabled: isCaptchaEnabled(),
+    turnstileSiteKey: isCaptchaEnabled() ? getTurnstileSiteKey() : '',
   });
 });
 

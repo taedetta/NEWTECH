@@ -11,6 +11,7 @@ const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingAp
 const { getAppUrl } = require('../lib/app-url');
 const { TERMS_VERSION } = require('../lib/terms');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
+const { enforceCaptcha } = require('../lib/captcha');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
@@ -40,6 +41,7 @@ router.use((req, res, next) => {
 
 router.post('/register', async (req, res) => {
   try {
+    if (!(await enforceCaptcha(req, res))) return;
     const { email, password, name, role, phone, acceptedTerms, termsVersion } = req.body;
     if (!email || !password || !name) {
       return res.status(400).json({ error: 'Email, password, and name are required' });
@@ -140,6 +142,7 @@ router.get('/debug-test', (req, res) => {
 
 router.post('/login', async (req, res) => {
   try {
+    if (!(await enforceCaptcha(req, res))) return;
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -188,6 +191,7 @@ router.post('/logout', (req, res) => {
 
 router.post('/forgot-password', async (req, res) => {
   try {
+    if (!(await enforceCaptcha(req, res))) return;
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
     if (!checkPasswordResetRateLimit(email)) return res.status(429).json({ error: 'Too many requests. Please wait before trying again.' });
@@ -231,6 +235,7 @@ router.post('/forgot-password', async (req, res) => {
 
 router.post('/reset-password', async (req, res) => {
   try {
+    if (!(await enforceCaptcha(req, res))) return;
     const { token, password } = req.body;
     if (!token || !password) {
       return res.status(400).json({ error: 'Token and new password are required' });

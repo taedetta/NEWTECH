@@ -7,6 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const { createLead, createManualLead, listLeads, countNewLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus, recordLeadFollowUp, markLeadConverted } = require('../db/leads');
+const { enforceCaptcha } = require('../lib/captcha');
 const { sendEmail } = require('../email-templates');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
@@ -123,6 +124,8 @@ router.post('/', async (req, res) => {
   if (!checkIpRateLimit(ip)) {
     return res.status(429).json({ error: 'Too many requests. Please try again later.' });
   }
+
+  if (!(await enforceCaptcha(req, res))) return;
 
   const { name, email, phone, preferred_date, experience_level, message, program_interest, source, experience } = req.body;
 

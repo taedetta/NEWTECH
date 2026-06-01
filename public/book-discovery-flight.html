@@ -319,6 +319,7 @@
     .btn-submit:hover { background: var(--amber-dark); }
     .btn-submit:active { transform: scale(0.99); }
     .btn-submit:disabled { opacity: 0.65; cursor: not-allowed; }
+    .captcha-wrap { margin: 0.5rem 0 1rem; min-height: 65px; }
 
     .form-footnote {
       text-align: center;
@@ -518,6 +519,8 @@
               <textarea id="message" name="message" placeholder="Tell us anything you'd like us to know — questions, scheduling constraints, goals…"></textarea>
             </div>
 
+            <div id="lead-captcha" class="captcha-wrap"></div>
+
             <button type="submit" class="btn-submit" id="submitBtn">Request Your Discovery Flight ✈️</button>
 
             <p class="form-footnote">
@@ -601,12 +604,19 @@
     </p>
   </footer>
 
+  <script src="/js/captcha.js"></script>
   <script>
     const form = document.getElementById('leadForm');
     const submitBtn = document.getElementById('submitBtn');
     const formSection = document.getElementById('formSection');
     const successSection = document.getElementById('successSection');
     const errorBanner = document.getElementById('errorBanner');
+
+    if (window.FSCaptcha) {
+      FSCaptcha.init().then(function () {
+        if (FSCaptcha.isEnabled()) FSCaptcha.mount('lead-captcha');
+      });
+    }
 
     function showError(id, show) {
       const el = document.getElementById(id);
@@ -648,11 +658,25 @@
       submitBtn.disabled = true;
       submitBtn.textContent = 'Sending…';
 
+      let captchaToken = null;
+      try {
+        if (window.FSCaptcha) {
+          await FSCaptcha.init();
+          if (FSCaptcha.isEnabled()) captchaToken = await FSCaptcha.requireToken('lead-captcha');
+        }
+      } catch (captchaErr) {
+        errorBanner.textContent = captchaErr.message || 'Please complete the security check.';
+        errorBanner.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Request Your Discovery Flight ✈️';
+        return;
+      }
+
       try {
         const res = await fetch('/api/leads', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, phone, preferred_date, experience_level, program_interest, message, source: 'discovery-flight-page' }),
+          body: JSON.stringify({ name, email, phone, preferred_date, experience_level, program_interest, message, source: 'discovery-flight-page', captchaToken }),
         });
         const data = await res.json();
 
@@ -662,12 +686,14 @@
         } else {
           errorBanner.textContent = data.error || 'Something went wrong. Please try again.';
           errorBanner.style.display = 'block';
+          if (window.FSCaptcha) FSCaptcha.reset('lead-captcha');
           submitBtn.disabled = false;
           submitBtn.textContent = 'Request Your Discovery Flight ✈️';
         }
       } catch (err) {
         errorBanner.textContent = 'Network error. Please check your connection and try again.';
         errorBanner.style.display = 'block';
+        if (window.FSCaptcha) FSCaptcha.reset('lead-captcha');
         submitBtn.disabled = false;
         submitBtn.textContent = 'Request Your Discovery Flight ✈️';
       }

@@ -194,6 +194,7 @@
     .auth-tab-panel.active { display: block; }
     .forgot-back-link { display: block; text-align: center; margin-top: 1rem; font-size: 0.84rem; color: var(--gray-500); cursor: pointer; }
     .forgot-back-link:hover { color: var(--gray-300); }
+    .captcha-wrap { margin: 0.75rem 0 1rem; min-height: 65px; }
     .field-error { color: var(--red); font-size: 0.8rem; margin-top: 0.25rem; display: none; }
     .field-error.visible { display: block; }
 
@@ -1573,6 +1574,7 @@
               <label>Password</label>
               <input type="password" id="login-password" required placeholder="Your password" autocomplete="current-password">
             </div>
+            <div id="login-captcha" class="captcha-wrap"></div>
             <button type="submit" class="btn btn-primary">Sign In</button>
           </form>
           <div class="auth-switch">Don't have an account? <a onclick="switchAuthTab('register')">Create one</a></div>
@@ -1620,6 +1622,7 @@
                 <span>I agree to the <a href="/terms-of-service" target="_blank" rel="noopener">Terms of Service</a> and <a href="/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a>. I understand this website and scheduling software are <strong>supplemental tools only</strong> — not a substitute for official weather, airworthiness checks, or compliance with FAR/AIM and FAA requirements.</span>
               </label>
             </div>
+            <div id="register-captcha" class="captcha-wrap"></div>
             <button type="submit" class="btn btn-primary">Create Account</button>
           </form>
           <div class="auth-switch">Already have an account? <a onclick="switchAuthTab('signin')">Sign in</a></div>
@@ -1635,6 +1638,7 @@
               <label>Email address</label>
               <input type="email" id="forgot-email" required placeholder="you@flightschool.com" autocomplete="email">
             </div>
+            <div id="forgot-captcha" class="captcha-wrap"></div>
             <button type="submit" class="btn btn-primary" id="forgot-btn">Send Reset Link</button>
           </form>
           <div class="auth-switch"><a onclick="switchAuthTab('signin')">&#8592; Back to sign in</a></div>
@@ -1660,6 +1664,7 @@
           <label>Confirm new password</label>
           <input type="password" id="reset-confirm" required minlength="6" placeholder="Repeat your new password">
         </div>
+        <div id="reset-captcha" class="captcha-wrap"></div>
         <button type="submit" class="btn btn-primary" id="reset-btn">Set New Password</button>
       </form>
     </div>
@@ -4871,6 +4876,25 @@ function closeSidebar() {
 }
 
 // ─── AUTH MODAL ───
+const AUTH_CAPTCHA_MAP = { signin: 'login-captcha', register: 'register-captcha', forgot: 'forgot-captcha' };
+
+function mountAuthCaptcha(tab) {
+  if (!window.FSCaptcha) return;
+  FSCaptcha.init().then(function () {
+    if (!FSCaptcha.isEnabled()) return;
+    var id = AUTH_CAPTCHA_MAP[tab];
+    if (id) FSCaptcha.mount(id);
+  });
+}
+
+async function getAuthCaptchaToken(tab) {
+  if (!window.FSCaptcha) return null;
+  await FSCaptcha.init();
+  var id = AUTH_CAPTCHA_MAP[tab];
+  if (!id || !FSCaptcha.isEnabled()) return null;
+  return FSCaptcha.requireToken(id);
+}
+
 function openAuthModal(tab) {
   const modal = document.getElementById('auth-modal');
   modal.style.display = 'flex';
@@ -4901,6 +4925,7 @@ function switchAuthTab(tab) {
     if (err) { err.classList.remove('visible'); err.textContent = ''; }
     if (suc) { suc.classList.remove('visible'); suc.textContent = ''; }
   });
+  mountAuthCaptcha(tab);
 }
 
 // Sync sidebar user section: show guest sign-in or user info based on auth state
@@ -4942,10 +4967,21 @@ document.getElementById('forgot-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
+    let captchaToken = null;
+    try {
+      captchaToken = await getAuthCaptchaToken('forgot');
+    } catch (captchaErr) {
+      errEl.textContent = captchaErr.message || 'Please complete the security check.';
+      errEl.classList.add('visible');
+      return;
+    }
     const resp = await fetch('/api/auth/forgot-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: document.getElementById('forgot-email').value }),
+      body: JSON.stringify({
+        email: document.getElementById('forgot-email').value,
+        captchaToken,
+      }),
     });
     const data = await resp.json();
     if (resp.status === 429) {
@@ -4961,6 +4997,7 @@ document.getElementById('forgot-form').addEventListener('submit', async (e) => {
     errEl.textContent = 'Something went wrong. Please try again.';
     errEl.classList.add('visible');
   } finally {
+    if (window.FSCaptcha) FSCaptcha.reset('forgot-captcha');
     btn.disabled = false;
     btn.textContent = 'Send Reset Link';
   }
@@ -4986,10 +5023,19 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
+    let captchaToken = null;
+    try {
+      await FSCaptcha.init();
+      if (FSCaptcha.isEnabled()) captchaToken = await FSCaptcha.requireToken('reset-captcha');
+    } catch (captchaErr) {
+      errEl.textContent = captchaErr.message || 'Please complete the security check.';
+      errEl.classList.remove('hidden');
+      return;
+    }
     const resp = await fetch('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: resetToken, password }),
+      body: JSON.stringify({ token: resetToken, password, captchaToken }),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -5007,6 +5053,7 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
     errEl.textContent = 'Something went wrong. Please try again.';
     errEl.classList.remove('hidden');
   } finally {
+    if (window.FSCaptcha) FSCaptcha.reset('reset-captcha');
     btn.disabled = false;
     btn.textContent = 'Set New Password';
   }
@@ -5019,6 +5066,9 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
   if (token) {
     resetToken = token;
     showScreen('reset');
+    if (window.FSCaptcha) {
+      FSCaptcha.init().then(function () { FSCaptcha.mount('reset-captcha'); });
+    }
   }
 })();
 
@@ -5033,6 +5083,12 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
   enterApp();
 })();
 
+if (window.FSCaptcha) {
+  FSCaptcha.init().then(function () {
+    if (FSCaptcha.isEnabled() && !resetToken) mountAuthCaptcha('signin');
+  });
+}
+
 // ─── AUTH ───
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -5040,11 +5096,20 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
   errEl.classList.remove('visible');
   errEl.textContent = '';
   try {
+    let captchaToken = null;
+    try {
+      captchaToken = await getAuthCaptchaToken('signin');
+    } catch (captchaErr) {
+      errEl.textContent = captchaErr.message || 'Please complete the security check.';
+      errEl.classList.add('visible');
+      return;
+    }
     const data = await api('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({
         email: document.getElementById('login-email').value,
         password: document.getElementById('login-password').value,
+        captchaToken,
       })
     });
     token = data.token;
@@ -5062,6 +5127,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     }
     errEl.textContent = err.error || 'Login failed';
     errEl.classList.add('visible');
+    if (window.FSCaptcha) FSCaptcha.reset('login-captcha');
   }
 });
 
@@ -5112,6 +5178,15 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
   }
 
   try {
+    let captchaToken = null;
+    try {
+      captchaToken = await getAuthCaptchaToken('register');
+    } catch (captchaErr) {
+      errEl.textContent = captchaErr.message || 'Please complete the security check.';
+      errEl.classList.add('visible');
+      return;
+    }
+
     let termsVersion = '2026-05-27';
     try {
       const ti = await api('/api/auth/terms-info');
@@ -5128,6 +5203,7 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
         role: document.getElementById('register-role').value,
         acceptedTerms: true,
         termsVersion,
+        captchaToken,
       })
     });
     // All new signups require approval — show pending screen instead of entering app
@@ -5150,6 +5226,7 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
   } catch (err) {
     errEl.textContent = err.error || 'Registration failed';
     errEl.classList.add('visible');
+    if (window.FSCaptcha) FSCaptcha.reset('register-captcha');
   }
 });
 
@@ -19632,6 +19709,7 @@ init();
   </div>
 </div>
 
+<script src="/js/captcha.js"></script>
 <script src="/js/app-features.js?v=7"></script>
 </body>
 </html>
