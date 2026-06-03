@@ -10,6 +10,7 @@
  */
 const express = require('express');
 const { getCachedWeather, setCachedWeather, normalizeStation } = require('../db/weather');
+const { getTafFallbackStation } = require('../lib/weather-taf');
 
 const router = express.Router();
 
@@ -59,29 +60,58 @@ function normalizeMetar(metar, station) {
   return metar;
 }
 
+async function fetchTafForStation(station) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`https://aviationweather.gov/api/data/taf?ids=${station}&format=json`, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'FlightSlate/1.0 (weather@newtechaviation.com)' },
+    });
+    const tafArr = await safeJson(res, `adds-taf-${station}`);
+    if (Array.isArray(tafArr) && tafArr.length > 0) {
+      return { taf: tafArr[0], tafStation: station };
+    }
+    return { taf: null, tafStation: station };
+  } catch (err) {
+    console.warn(`[weather] TAF fetch failed (${station}): ${err.message}`);
+    return { taf: null, tafStation: station };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Primary source: aviationweather.gov (ADDS API).
- * Returns { metar, taf } or null on failure.
+ * Returns { metar, taf, tafStation } or null on failure.
  */
 async function fetchFromAviationWeather(station) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
 
   try {
-    const [metarRes, tafRes] = await Promise.all([
-      fetch(`https://aviationweather.gov/api/data/metar?ids=${station}&format=json`, { signal: controller.signal }),
-      fetch(`https://aviationweather.gov/api/data/taf?ids=${station}&format=json`, { signal: controller.signal }),
-    ]);
+    const metarRes = await fetch(`https://aviationweather.gov/api/data/metar?ids=${station}&format=json`, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'FlightSlate/1.0 (weather@newtechaviation.com)' },
+    });
 
-    const [metarArr, tafArr] = await Promise.all([
-      safeJson(metarRes, 'adds-metar'),
-      safeJson(tafRes, 'adds-taf'),
-    ]);
-
+    const metarArr = await safeJson(metarRes, 'adds-metar');
     const metar = Array.isArray(metarArr) && metarArr.length > 0 ? normalizeMetar(metarArr[0], station) : null;
-    const taf = Array.isArray(tafArr) && tafArr.length > 0 ? tafArr[0] : null;
 
-    if (metar || taf) return { metar, taf };
+    let { taf, tafStation } = await fetchTafForStation(station);
+    if (!taf) {
+      const fallback = getTafFallbackStation(station);
+      if (fallback && fallback !== station) {
+        console.log(`[weather] No TAF for ${station} — using ${fallback}`);
+        const fb = await fetchTafForStation(fallback);
+        if (fb.taf) {
+          taf = fb.taf;
+          tafStation = fallback;
+        }
+      }
+    }
+
+    if (metar || taf) return { metar, taf, tafStation };
     return null;
   } catch (err) {
     console.warn(`[weather] aviationweather.gov failed (${station}): ${err.message}`);
@@ -184,6 +214,7 @@ router.get('/', async (req, res) => {
     if (result) {
       const payload = {
         station,
+        tafStation: result.tafStation || station,
         metar: result.metar,
         taf: result.taf,
         fetchedAt: new Date().toISOString(),

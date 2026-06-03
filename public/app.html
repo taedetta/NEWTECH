@@ -273,7 +273,7 @@
     .wx-detail-row td { padding: 0 !important; }
     .wx-detail-row:hover td { background: transparent !important; }
     .wx-detail-panel { background: rgba(8,14,26,0.7); border-top: 1px solid var(--border); padding: 0 1.25rem; max-height: 0; overflow: hidden; transition: max-height 0.28s ease, padding 0.28s ease; }
-    .wx-detail-panel.open { max-height: 540px; padding: 1rem 1.25rem; }
+    .wx-detail-panel.open { max-height: 820px; padding: 1rem 1.25rem; }
     .wx-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 0.6rem; margin-bottom: 0.8rem; }
     .wx-dl { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--gray-500); font-weight: 600; margin-bottom: 0.15rem; }
     .wx-dv { font-size: 0.84rem; color: var(--gray-100); font-family: 'Space Grotesk'; font-weight: 500; }
@@ -288,6 +288,10 @@
     .wx-cat-badge.wx-unknown { background: rgba(100,116,139,0.1); color: var(--gray-500); }
     .wx-close-btn { float: right; background: none; border: none; color: var(--gray-500); cursor: pointer; font-size: 0.95rem; padding: 0; line-height: 1; }
     .wx-close-btn:hover { color: var(--gray-200); }
+    .wx-section-divider { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+    .wx-section-title { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.7px; color: var(--gray-500); font-weight: 700; margin-bottom: 0.55rem; }
+    .wx-flight-time { font-size: 0.78rem; color: var(--sky); font-family: 'Space Grotesk'; font-weight: 600; margin-bottom: 0.65rem; }
+    .wx-forecast-note { font-size: 0.68rem; color: var(--gray-500); margin-top: 0.55rem; line-height: 1.45; }
 
     /* ─── TOGGLE SWITCH ─── */
     .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
@@ -7994,20 +7998,185 @@ async function loadBookings(start, end) {
 }
 
 // ─── WEATHER HELPERS ───
+function wxParseVisibMiles(visib) {
+  if (visib == null || visib === '') return 99;
+  const raw = String(visib).trim().toUpperCase().replace('+', '');
+  if (raw.startsWith('P')) return wxParseVisibMiles(raw.slice(1));
+  if (raw.includes('/')) {
+    const parts = raw.split('/');
+    return parseFloat(parts[0]) / parseFloat(parts[1]) || 99;
+  }
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : 99;
+}
+
+function wxCeilingFt(clouds) {
+  let ceil = 99999;
+  for (const c of clouds || []) {
+    if ((c.cover === 'BKN' || c.cover === 'OVC') && c.base != null) ceil = Math.min(ceil, c.base);
+  }
+  return ceil;
+}
+
+function wxCategoryFromConditions(visib, clouds) {
+  const vis = wxParseVisibMiles(visib);
+  const ceil = wxCeilingFt(clouds);
+  if (vis < 1 || ceil < 500) return 'LIFR';
+  if (vis < 3 || ceil < 1000) return 'IFR';
+  if (vis <= 5 || ceil <= 3000) return 'MVFR';
+  return 'VFR';
+}
+
+function wxCatRank(cat) {
+  return { VFR: 1, MVFR: 2, IFR: 3, LIFR: 4 }[cat] || 0;
+}
+
+function wxTafPeriodsForWindow(taf, flightStart, flightEnd) {
+  if (!taf?.fcsts?.length) return [];
+  const startTs = new Date(flightStart).getTime() / 1000;
+  const endTs = new Date(flightEnd).getTime() / 1000;
+  return taf.fcsts.filter(f => {
+    const from = f.timeFrom || 0;
+    const to = f.timeTo || 0;
+    return to > startTs && from < endTs;
+  });
+}
+
+function wxSummarizeFlightForecast(taf, flightStart, flightEnd) {
+  const periods = wxTafPeriodsForWindow(taf, flightStart, flightEnd);
+  if (!periods.length) return null;
+  const startTs = new Date(flightStart).getTime() / 1000;
+  const endTs = new Date(flightEnd).getTime() / 1000;
+  const midTs = (startTs + endTs) / 2;
+  const enriched = periods.map(p => ({
+    ...p,
+    flightCategory: wxCategoryFromConditions(p.visib, p.clouds),
+  }));
+  const primary =
+    enriched.find(p => midTs >= p.timeFrom && midTs <= p.timeTo) ||
+    enriched.find(p => startTs >= p.timeFrom && startTs <= p.timeTo) ||
+    enriched[0];
+  const worst = enriched.reduce(
+    (acc, p) => (wxCatRank(p.flightCategory) > wxCatRank(acc) ? p.flightCategory : acc),
+    'VFR'
+  );
+  return { periods: enriched, primary, category: worst };
+}
+
+function wxFormatPeriodWind(p) {
+  const wdir = p.wdir === 'VRB' ? 'VRB' : (p.wdir != null ? String(p.wdir).padStart(3, '0') + '°' : '—');
+  const wspd = p.wspd != null ? `${p.wspd}kt` : '—';
+  const wgst = p.wgst ? ` G${p.wgst}kt` : '';
+  return `${wdir} ${wspd}${wgst}`;
+}
+
+function wxFormatPeriodCeiling(clouds) {
+  const layer = (clouds || []).find(c => c.cover === 'BKN' || c.cover === 'OVC');
+  if (layer) return `${layer.cover} ${layer.base}ft`;
+  const sky = (clouds || []).map(c => `${c.cover}${c.base || ''}`).join(' ');
+  return sky || 'CLR';
+}
+
+function wxFormatPeriodVis(visib) {
+  if (visib == null) return '—';
+  const v = wxParseVisibMiles(visib);
+  if (v >= 6) return `${String(visib).replace('+', '')}+ SM`;
+  return `${v} SM`;
+}
+
+function wxFormatPeriodTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function wxChipCategory(wxData, flightStart, flightEnd) {
+  const now = Date.now();
+  const startMs = new Date(flightStart).getTime();
+  const forecast = wxData?.taf ? wxSummarizeFlightForecast(wxData.taf, flightStart, flightEnd) : null;
+  if (forecast && startMs > now + 30 * 60 * 1000) return forecast.category;
+  if (forecast && startMs > now) return forecast.category;
+  return wxData?.metar?.flightCategory || null;
+}
+
 function wxCatClass(cat) {
   if (!cat) return 'wx-unknown';
   return { VFR: 'wx-vfr', MVFR: 'wx-mvfr', IFR: 'wx-ifr', LIFR: 'wx-lifr' }[cat] || 'wx-unknown';
 }
 
-function wxBuildChip(cat, detailId, isStale) {
+function wxBuildChip(cat, detailId, isStale, title) {
   const dot = { VFR: '🟢', MVFR: '🟡', IFR: '🔴', LIFR: '⛔' }[cat] || '⚪';
   const cls = wxCatClass(cat);
   if (!cat) return `<span class="wx-chip wx-unknown">⚪ —</span>`;
   const staleTag = isStale ? '<span style="font-size:0.55rem;color:var(--gray-500);margin-left:3px" title="Stale data — weather API temporarily unavailable">⏳</span>' : '';
-  return `<span class="wx-chip ${cls}" onclick="document.getElementById('${detailId}').classList.toggle('open')">${dot} ${cat}${staleTag}</span>`;
+  const tip = title ? ` title="${escHtml(title)}"` : '';
+  return `<span class="wx-chip ${cls}"${tip} onclick="document.getElementById('${detailId}').classList.toggle('open')">${dot} ${cat}${staleTag}</span>`;
 }
 
-function wxBuildDetail(wxData, flightStart, flightEnd, detailId) {
+function wxBuildFlightForecastSection(wxData, flightStart, flightEnd, flightLabel) {
+  const now = Date.now();
+  const startMs = new Date(flightStart).getTime();
+  const endMs = new Date(flightEnd).getTime();
+
+  if (endMs < now) {
+    return `<div class="wx-forecast-note">This flight has already ended.</div>`;
+  }
+
+  if (!wxData?.taf) {
+    return `<div class="wx-forecast-note">No TAF forecast is available for this airport. Use current METAR conditions and official briefings before flight.</div>`;
+  }
+
+  if (wxData.taf.validTimeTo && startMs > wxData.taf.validTimeTo * 1000) {
+    return `<div class="wx-forecast-note">This flight is beyond the current TAF forecast window. Check again closer to your scheduled time.</div>`;
+  }
+
+  const forecast = wxSummarizeFlightForecast(wxData.taf, flightStart, flightEnd);
+  if (!forecast) {
+    const raw = wxData.taf.rawTAF ? escHtml(wxData.taf.rawTAF.substring(0, 220)) : '—';
+    return `<div class="wx-forecast-note">No TAF period exactly matches this flight window.</div>
+      <div class="wx-taf-box"><div class="wx-taf-label">Nearest TAF (raw)</div><div class="wx-taf-raw">${raw}</div></div>`;
+  }
+
+  const p = forecast.primary;
+  const cat = forecast.category;
+  const catCls = wxCatClass(cat);
+  const tafStation = wxData.tafStation || wxData.taf.icaoId || 'nearest station';
+  const metarStation = wxData.station || 'KPSK';
+  const sourceNote = tafStation !== metarStation
+    ? `${metarStation} has no TAF — forecast from ${tafStation} (nearest issuing station).`
+    : `Forecast from ${tafStation} TAF.`;
+
+  const periodLines = forecast.periods.length > 1
+    ? forecast.periods.map(f => {
+        const from = wxFormatPeriodTime(f.timeFrom);
+        const to = wxFormatPeriodTime(f.timeTo);
+        const sky = (f.clouds || []).map(c => `${c.cover}${c.base || ''}`).join(' ') || 'CLR';
+        return `${from} – ${to}: ${f.flightCategory} · ${wxFormatPeriodWind(f)} · Vis ${wxFormatPeriodVis(f.visib)} · ${sky}`;
+      }).join('\n')
+    : '';
+
+  const inProgress = startMs <= now && endMs >= now;
+  const sectionTitle = inProgress ? 'During Your Flight (TAF forecast)' : 'Scheduled Flight Weather';
+
+  return `
+    <hr class="wx-section-divider">
+    <div class="wx-section-title">${sectionTitle}</div>
+    <div class="wx-flight-time">${escHtml(flightLabel)}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">
+      <span class="wx-cat-badge ${catCls}">● ${cat} — forecast at flight time</span>
+    </div>
+    <div class="wx-detail-grid">
+      <div><div class="wx-dl">Wind</div><div class="wx-dv">${wxFormatPeriodWind(p)}</div></div>
+      <div><div class="wx-dl">Visibility</div><div class="wx-dv">${wxFormatPeriodVis(p.visib)}</div></div>
+      <div><div class="wx-dl">Ceiling / Sky</div><div class="wx-dv">${wxFormatPeriodCeiling(p.clouds)}</div></div>
+      <div><div class="wx-dl">Period</div><div class="wx-dv" style="font-size:0.75rem">${wxFormatPeriodTime(p.timeFrom)} – ${wxFormatPeriodTime(p.timeTo)}</div></div>
+    </div>
+    ${periodLines ? `<div class="wx-taf-box"><div class="wx-taf-label">All periods during your flight</div><div class="wx-taf-raw">${escHtml(periodLines)}</div></div>` : ''}
+    <div class="wx-forecast-note">${sourceNote} Supplemental only — obtain an official weather briefing before flight.</div>`;
+}
+
+function wxBuildDetail(wxData, flightStart, flightEnd, detailId, flightLabel) {
   if (!wxData || wxData.unavailable || !wxData.metar) {
     return `<div id="${detailId}" class="wx-detail-panel"><p style="color:var(--gray-500);font-size:0.82rem;padding:0.4rem 0">Weather data temporarily unavailable. Check back shortly.</p></div>`;
   }
@@ -8015,7 +8184,6 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId) {
   const cat = m.flightCategory || '—';
   const catCls = wxCatClass(m.flightCategory);
 
-  // Stale data indicator
   let staleNote = '';
   if (wxData.stale && wxData.fetchedAt) {
     const ago = Math.round((Date.now() - new Date(wxData.fetchedAt).getTime()) / 60000);
@@ -8023,56 +8191,25 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId) {
     staleNote = `<div style="font-size:0.68rem;color:var(--amber);margin-bottom:0.5rem">⏳ Last updated ${agoText} — live data temporarily unavailable</div>`;
   }
 
-  // Wind
   const wdir = m.wdir === 'VRB' ? 'VRB' : (m.wdir != null ? String(m.wdir).padStart(3,'0') + '°' : '—');
   const wspd = m.wspd != null ? `${m.wspd}kt` : '—';
   const wgst = m.wgst ? ` G${m.wgst}kt` : '';
   const wind = `${wdir} ${wspd}${wgst}`;
-
-  // Visibility
   const vis = m.visib != null ? `${m.visib} SM` : '—';
-
-  // Ceiling — lowest BKN or OVC layer
   const ceilLayer = (m.clouds || []).find(c => c.cover === 'BKN' || c.cover === 'OVC');
   const ceiling = ceilLayer ? `${ceilLayer.cover} ${ceilLayer.base}ft` : 'CLR';
-
-  // Temp / dewpoint
   const temp = m.temp != null ? `${m.temp}°C` : '—';
   const dewp = m.dewp != null ? `${m.dewp}°C` : '—';
-
-  // Altimeter
   const altim = m.altim != null ? `${parseFloat(m.altim).toFixed(2)}"` : '—';
+  const metarStation = wxData.station || m.icaoId || 'KPSK';
 
-  // TAF for flight window
-  let tafHtml = '';
-  if (wxData.taf) {
-    const startTs = new Date(flightStart).getTime() / 1000;
-    const endTs   = new Date(flightEnd).getTime()   / 1000;
-    const periods = (wxData.taf.fcsts || []).filter(f => {
-      const from = f.timeFrom || f.fcstTimeFrom || 0;
-      const to   = f.timeTo   || f.fcstTimeTo   || 0;
-      return to > startTs && from < endTs;
-    });
-    if (periods.length > 0) {
-      const summary = periods.map(f => {
-        const pw = f.wdir === 'VRB' ? 'VRB' : (f.wdir != null ? String(f.wdir).padStart(3,'0') + '°' : '—');
-        const ps = f.wspd != null ? `${f.wspd}kt` : '—';
-        const pg = f.wgst ? ` G${f.wgst}kt` : '';
-        const pv = f.visib != null ? `${f.visib}SM` : '—';
-        const sky = (f.clouds || []).map(c => `${c.cover}${c.base}`).join(' ') || 'CLR';
-        return `${pw} ${ps}${pg}  Vis:${pv}  ${sky}`;
-      }).join('\n');
-      tafHtml = `<div class="wx-taf-box"><div class="wx-taf-label">TAF — Flight Window Forecast</div><div class="wx-taf-raw">${escHtml(summary)}</div></div>`;
-    } else if (wxData.taf.rawTAF) {
-      const raw = wxData.taf.rawTAF.substring(0, 200);
-      tafHtml = `<div class="wx-taf-box"><div class="wx-taf-label">TAF (full raw — no exact period match)</div><div class="wx-taf-raw">${escHtml(raw)}</div></div>`;
-    }
-  }
+  const flightSection = wxBuildFlightForecastSection(wxData, flightStart, flightEnd, flightLabel);
 
   return `<div id="${detailId}" class="wx-detail-panel">
     ${staleNote}
+    <div class="wx-section-title">Current Conditions (METAR)</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">
-      <span class="wx-cat-badge ${catCls}">● ${cat} — KPSK Current</span>
+      <span class="wx-cat-badge ${catCls}">● ${cat} — ${escHtml(metarStation)} now</span>
       <button class="wx-close-btn" onclick="document.getElementById('${detailId}').classList.remove('open')">✕</button>
     </div>
     <div class="wx-detail-grid">
@@ -8082,7 +8219,7 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId) {
       <div><div class="wx-dl">Temp / Dew</div><div class="wx-dv">${temp} / ${dewp}</div></div>
       <div><div class="wx-dl">Altimeter</div><div class="wx-dv">${altim}</div></div>
     </div>
-    ${tafHtml}
+    ${flightSection}
   </div>`;
 }
 
@@ -8213,8 +8350,15 @@ async function loadDashboard() {
     const soloLabel = b.booking_type === 'student_solo' ? '<span style="font-size:0.7rem;color:var(--amber)"> ✈solo</span>' :
                       b.booking_type === 'instructor_solo' ? '<span style="font-size:0.7rem;color:var(--amber)"> ✈solo</span>' : '';
     const detailId = `wx-detail-${i}`;
-    const chip   = wxBuildChip(wxData?.metar?.flightCategory, detailId, wxData?.stale);
-    const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId);
+    const flightLabel = `${dateStr} · ${timeStr}`;
+    const chipCat = wxChipCategory(wxData, b.start_time, b.end_time);
+    const chipTitle = chipCat && wxData?.taf
+      ? (new Date(b.start_time).getTime() > Date.now() + 30 * 60 * 1000
+        ? 'Forecast for scheduled flight time (click for details)'
+        : 'Current / forecast conditions (click for details)')
+      : 'Current METAR (click for details)';
+    const chip   = wxBuildChip(chipCat, detailId, wxData?.stale, chipTitle);
+    const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
     return `<tr>
       <td><div style="font-size:0.8rem;color:var(--gray-500)">${dateStr}</div><div style="font-family:'Space Grotesk';color:var(--sky);font-weight:600">${timeStr}</div></td>
       <td><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span></td>
