@@ -1800,6 +1800,10 @@
               <h3 style="margin:0;">Upcoming Flights</h3>
               <div id="dashboard-flights-tabs" class="portal-tabs hidden" style="margin:0;border-bottom:none;"></div>
             </div>
+            <div id="dashboard-aircraft-filter-wrap" class="hidden" style="margin-top:0.85rem;">
+              <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:0.65px;color:var(--gray-500);font-weight:700;margin-bottom:0.45rem;">Planes</div>
+              <div id="dashboard-aircraft-filter" class="schedule-ac-chips"></div>
+            </div>
           </div>
           <div class="table-card hidden" id="dashboard-table-card">
             <table class="data-table">
@@ -4846,6 +4850,7 @@ let visitedPages = new Set(); // tracks which pages have been visited for skelet
 let calendarDate = new Date();
 let scheduleAircraftFilter = localStorage.getItem('fs_schedule_aircraft_filter') || 'all';
 let dashboardFlightsScope = 'mine';
+let dashboardAircraftFilter = localStorage.getItem('fs_dashboard_aircraft_filter') || 'all';
 let _dashboardBookingsCache = null;
 
 function getScheduleFilteredBookings(bookings) {
@@ -8233,9 +8238,80 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId, flightLabel) {
 // ─── DASHBOARD ───
 function dashboardShowsFlightTabs() {
   if (!currentUser) return false;
-  if (['student', 'renter', 'instructor'].includes(currentUser.role)) return true;
-  if (['admin', 'owner'].includes(currentUser.role) && isBookableInstructor(currentUser)) return true;
-  return false;
+  return ['student', 'renter', 'instructor', 'admin', 'owner'].includes(currentUser.role);
+}
+
+function dashboardBookingMatchesAircraft(b) {
+  if (!dashboardAircraftFilter || dashboardAircraftFilter === 'all') return true;
+  const acId = parseInt(dashboardAircraftFilter, 10);
+  if (isNaN(acId)) return true;
+  return b.aircraft_id === acId;
+}
+
+function getDashboardFilteredBookings(cache) {
+  const { bookings, now } = cache;
+  const showTabs = dashboardShowsFlightTabs();
+  const scope = showTabs ? dashboardFlightsScope : 'all';
+  return bookings
+    .filter(b => new Date(b.start_time) >= now)
+    .filter(b => dashboardBookingMatchesScope(b, scope))
+    .filter(b => dashboardBookingMatchesAircraft(b));
+}
+
+function renderDashboardAircraftFilter() {
+  const wrap = document.getElementById('dashboard-aircraft-filter-wrap');
+  const el = document.getElementById('dashboard-aircraft-filter');
+  if (!wrap || !el) return;
+  if (!dashboardShowsFlightTabs()) {
+    wrap.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  wrap.classList.remove('hidden');
+  const aircraft = (allAircraft || []).slice().sort((a, b) => (a.tail_number || '').localeCompare(b.tail_number || ''));
+  if (!aircraft.length) {
+    el.innerHTML = '<span style="font-size:0.78rem;color:var(--gray-500)">Loading fleet…</span>';
+    return;
+  }
+  const active = String(dashboardAircraftFilter || 'all');
+  let html = `<button type="button" class="schedule-ac-chip${active === 'all' ? ' active' : ''}" onclick="setDashboardAircraftFilter('all')">All planes</button>`;
+  html += aircraft.map(a => {
+    const id = String(a.id);
+    const label = escHtml(a.tail_number) + (a.status && a.status !== 'available' ? ' ⚠' : '');
+    return `<button type="button" class="schedule-ac-chip${active === id ? ' active' : ''}" onclick="setDashboardAircraftFilter(${a.id})" title="${escHtml(a.make_model || '')}">${label}</button>`;
+  }).join('');
+  el.innerHTML = html;
+}
+
+function setDashboardAircraftFilter(id) {
+  dashboardAircraftFilter = id === 'all' ? 'all' : String(id);
+  localStorage.setItem('fs_dashboard_aircraft_filter', dashboardAircraftFilter);
+  if (_dashboardBookingsCache) {
+    refreshDashboardFlightsView(_dashboardBookingsCache);
+  } else {
+    loadDashboard();
+  }
+}
+
+function refreshDashboardFlightStats(cache) {
+  const now = cache.now;
+  const filtered = getDashboardFilteredBookings(cache);
+  const todayCount = filtered.filter(b => new Date(b.start_time).toDateString() === now.toDateString()).length;
+  const stats = document.getElementById('dashboard-stats');
+  if (!stats) return;
+  const cards = stats.querySelectorAll('.stat-card');
+  if (cards[0]) {
+    const val = cards[0].querySelector('.stat-value');
+    const sub = cards[0].querySelector('.stat-sub');
+    if (val) val.textContent = todayCount;
+    if (sub) sub.textContent = `${filtered.length} this week`;
+  }
+}
+
+function refreshDashboardFlightsView(cache) {
+  renderDashboardAircraftFilter();
+  refreshDashboardFlightStats(cache);
+  renderDashboardUpcomingTable(cache);
 }
 
 function isDashboardOwnBooking(b) {
@@ -8243,7 +8319,7 @@ function isDashboardOwnBooking(b) {
   if (['student', 'renter'].includes(currentUser.role)) {
     return b.student_id === uid;
   }
-  if (currentUser.role === 'instructor' || isBookableInstructor(currentUser)) {
+  if (['instructor', 'admin', 'owner'].includes(currentUser.role) || isBookableInstructor(currentUser)) {
     return b.instructor_id === uid || b.student_id === uid;
   }
   return false;
@@ -8257,7 +8333,7 @@ function dashboardBookingMatchesScope(b, scope) {
 function setDashboardFlightsScope(scope) {
   dashboardFlightsScope = scope === 'all' ? 'all' : 'mine';
   if (_dashboardBookingsCache) {
-    renderDashboardUpcomingTable(_dashboardBookingsCache);
+    refreshDashboardFlightsView(_dashboardBookingsCache);
   } else {
     loadDashboard();
   }
@@ -8282,10 +8358,10 @@ function renderDashboardUpcomingTable(cache) {
     }
   }
 
+  renderDashboardAircraftFilter();
+
   const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
-  const upcoming = upcomingAll
-    .filter(b => dashboardBookingMatchesScope(b, scope))
-    .slice(0, 10);
+  const upcoming = getDashboardFilteredBookings(cache).slice(0, 10);
 
   const tbody = document.getElementById('upcoming-bookings-list');
   const actualHeader = document.getElementById('dashboard-bookings-header');
@@ -8317,9 +8393,16 @@ function renderDashboardUpcomingTable(cache) {
       const p = emptyEl.querySelector('p');
       if (h3) h3.textContent = 'No upcoming flights in this view';
       if (p) {
-        p.textContent = scope === 'mine'
-          ? 'You have no upcoming flights in this view. Try All Flights to see the full schedule.'
-          : 'Head to the Schedule to book your next lesson';
+        const planeLabel = dashboardAircraftFilter && dashboardAircraftFilter !== 'all'
+          ? (allAircraft || []).find(a => String(a.id) === String(dashboardAircraftFilter))?.tail_number
+          : null;
+        if (scope === 'mine') {
+          p.textContent = 'You have no upcoming flights in this view. Try All Flights to see the full schedule.';
+        } else if (planeLabel) {
+          p.textContent = `No upcoming flights for ${planeLabel} this week. Try All planes or another filter.`;
+        } else {
+          p.textContent = 'Head to the Schedule to book your next lesson';
+        }
       }
     }
     return;
@@ -8381,27 +8464,23 @@ async function loadDashboard() {
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const bookings = await loadBookings(now.toISOString(), weekEnd.toISOString());
-  const showTabs = dashboardShowsFlightTabs();
-  const scope = showTabs ? dashboardFlightsScope : 'all';
-  const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
-  const scopedUpcoming = upcomingAll.filter(b => dashboardBookingMatchesScope(b, scope));
-  const upcoming = scopedUpcoming.slice(0, 10);
 
-  const todayBookings = bookings.filter(b => {
+  try {
+    const meData = await api('/api/auth/me');
+    currentUser = meData.user;
+  } catch {}
+
+  const filteredUpcoming = getDashboardFilteredBookings({ bookings, now });
+  const upcoming = filteredUpcoming.slice(0, 10);
+
+  const todayBookings = filteredUpcoming.filter(b => {
     const d = new Date(b.start_time);
-    if (d.toDateString() !== now.toDateString()) return false;
-    return dashboardBookingMatchesScope(b, scope);
+    return d.toDateString() === now.toDateString();
   });
 
   const instructorCount = allUsers.filter(isInstructorUser).length;
   const studentCount = allUsers.filter(u => u.role === 'student').length;
   const availableAircraft = allAircraft.filter(a => a.status === 'available').length;
-
-  // Refresh user to get latest hours
-  try {
-    const meData = await api('/api/auth/me');
-    currentUser = meData.user;
-  } catch {}
 
   const hobbsHrs = parseFloat(currentUser.total_hobbs_hours || 0).toFixed(1);
   const tachHrs = parseFloat(currentUser.total_tach_hours || 0).toFixed(1);
@@ -8413,7 +8492,7 @@ async function loadDashboard() {
     <div class="stat-card">
       <div class="stat-label">Today's Flights</div>
       <div class="stat-value">${todayBookings.length}</div>
-      <div class="stat-sub">${upcoming.length} this week</div>
+      <div class="stat-sub">${filteredUpcoming.length} this week</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Active Aircraft</div>
@@ -8461,7 +8540,7 @@ async function loadDashboard() {
   try { wxData = await api('/api/weather?station=KPSK'); } catch {}
 
   _dashboardBookingsCache = { bookings, now, wxData };
-  renderDashboardUpcomingTable(_dashboardBookingsCache);
+  refreshDashboardFlightsView(_dashboardBookingsCache);
 
   // Show pending hours banner for instructors/owners
   if (currentUser.role !== 'student') {
