@@ -1795,7 +1795,12 @@
             </div>
           </div>
           <div class="stat-grid" id="dashboard-stats"></div>
-          <h3 id="dashboard-bookings-header" style="margin-bottom:1rem;" class="hidden">Upcoming Flights</h3>
+          <div id="dashboard-bookings-header" class="hidden" style="margin-bottom:1rem;">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+              <h3 style="margin:0;">Upcoming Flights</h3>
+              <div id="dashboard-flights-tabs" class="portal-tabs hidden" style="margin:0;border-bottom:none;"></div>
+            </div>
+          </div>
           <div class="table-card hidden" id="dashboard-table-card">
             <table class="data-table">
               <thead><tr><th>Time</th><th>Type</th><th>Student</th><th>Instructor</th><th>Aircraft</th><th>Status</th><th>Weather</th></tr></thead>
@@ -4840,6 +4845,8 @@ let currentPage = 'dashboard';
 let visitedPages = new Set(); // tracks which pages have been visited for skeleton loading
 let calendarDate = new Date();
 let scheduleAircraftFilter = localStorage.getItem('fs_schedule_aircraft_filter') || 'all';
+let dashboardFlightsScope = 'mine';
+let _dashboardBookingsCache = null;
 
 function getScheduleFilteredBookings(bookings) {
   if (!scheduleAircraftFilter || scheduleAircraftFilter === 'all') return bookings;
@@ -8224,6 +8231,121 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId, flightLabel) {
 }
 
 // ─── DASHBOARD ───
+function dashboardBookingMatchesScope(b, scope, isSelfService) {
+  if (isSelfService) return b.student_id === currentUser.id;
+  if (currentUser.role === 'instructor' && scope === 'mine') {
+    return b.instructor_id === currentUser.id;
+  }
+  return true;
+}
+
+function setDashboardFlightsScope(scope) {
+  dashboardFlightsScope = scope === 'all' ? 'all' : 'mine';
+  if (_dashboardBookingsCache) {
+    renderDashboardUpcomingTable(_dashboardBookingsCache);
+  } else {
+    loadDashboard();
+  }
+}
+
+function renderDashboardUpcomingTable(cache) {
+  const { bookings, now, wxData } = cache;
+  const isSelfService = ['student', 'renter'].includes(currentUser.role);
+  const isInstructorDash = currentUser.role === 'instructor';
+  const scope = isInstructorDash ? dashboardFlightsScope : 'all';
+
+  const tabsEl = document.getElementById('dashboard-flights-tabs');
+  if (tabsEl) {
+    if (isInstructorDash) {
+      tabsEl.classList.remove('hidden');
+      tabsEl.innerHTML = `
+        <button class="portal-tab${scope === 'mine' ? ' active' : ''}" type="button" onclick="setDashboardFlightsScope('mine')">Your Upcoming Flights</button>
+        <button class="portal-tab${scope === 'all' ? ' active' : ''}" type="button" onclick="setDashboardFlightsScope('all')">All Flights</button>
+      `;
+    } else {
+      tabsEl.classList.add('hidden');
+      tabsEl.innerHTML = '';
+    }
+  }
+
+  const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
+  const upcoming = upcomingAll
+    .filter(b => dashboardBookingMatchesScope(b, scope, isSelfService))
+    .slice(0, 10);
+
+  const tbody = document.getElementById('upcoming-bookings-list');
+  const actualHeader = document.getElementById('dashboard-bookings-header');
+  const actualTableCard = document.getElementById('dashboard-table-card');
+  const emptyEl = document.getElementById('dashboard-empty');
+  if (!tbody) return;
+
+  if (upcomingAll.length === 0) {
+    tbody.innerHTML = '';
+    if (actualHeader) actualHeader.classList.add('hidden');
+    if (actualTableCard) actualTableCard.classList.add('hidden');
+    if (emptyEl) {
+      emptyEl.classList.remove('hidden');
+      const h3 = emptyEl.querySelector('h3');
+      const p = emptyEl.querySelector('p');
+      if (h3) h3.textContent = 'No upcoming flights';
+      if (p) p.textContent = 'Head to the Schedule to book your next lesson';
+    }
+    return;
+  }
+
+  if (upcoming.length === 0) {
+    tbody.innerHTML = '';
+    if (actualHeader) actualHeader.classList.remove('hidden');
+    if (actualTableCard) actualTableCard.classList.add('hidden');
+    if (emptyEl) {
+      emptyEl.classList.remove('hidden');
+      const h3 = emptyEl.querySelector('h3');
+      const p = emptyEl.querySelector('p');
+      if (h3) h3.textContent = 'No upcoming flights in this view';
+      if (p) {
+        p.textContent = isInstructorDash && scope === 'mine'
+          ? 'You have no flights assigned to you this week. Try All Flights to see the full schedule.'
+          : 'Head to the Schedule to book your next lesson';
+      }
+    }
+    return;
+  }
+
+  if (emptyEl) emptyEl.classList.add('hidden');
+  if (actualHeader) actualHeader.classList.remove('hidden');
+  if (actualTableCard) actualTableCard.classList.remove('hidden');
+
+  tbody.innerHTML = upcoming.map((b, i) => {
+    const start = new Date(b.start_time);
+    const end = new Date(b.end_time);
+    const startDateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const endDateStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const dateStr = startDateStr === endDateStr ? startDateStr : `${startDateStr} – ${endDateStr}`;
+    const timeStr = `${formatTime(start)} - ${formatTime(end)}`;
+    const typeClass = getTypeClass(b.lesson_type);
+    const detailId = `wx-detail-${i}`;
+    const flightLabel = `${dateStr} · ${timeStr}`;
+    const chipCat = wxChipCategory(wxData, b.start_time, b.end_time);
+    const chipTitle = chipCat && wxData?.taf
+      ? (new Date(b.start_time).getTime() > Date.now() + 30 * 60 * 1000
+        ? 'Forecast for scheduled flight time (click for details)'
+        : 'Current / forecast conditions (click for details)')
+      : 'Current METAR (click for details)';
+    const chip = wxBuildChip(chipCat, detailId, wxData?.stale, chipTitle);
+    const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
+    return `<tr>
+      <td><div style="font-size:0.8rem;color:var(--gray-500)">${dateStr}</div><div style="font-family:'Space Grotesk';color:var(--sky);font-weight:600">${timeStr}</div></td>
+      <td><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span></td>
+      <td>${escHtml(b.student_name)}</td>
+      <td>${escHtml(b.instructor_name)}</td>
+      <td style="font-family:'Space Grotesk';font-weight:500">${escHtml(b.tail_number)}</td>
+      <td><span class="tag tag-green">${b.status}</span></td>
+      <td>${chip}</td>
+    </tr>
+    <tr class="wx-detail-row"><td colspan="7">${detail}</td></tr>`;
+  }).join('');
+}
+
 async function loadDashboard() {
   // Hide skeleton, show actual content shell (or wait for data)
   const skeletonStats = document.getElementById('dashboard-skeleton-stats');
@@ -8246,20 +8368,17 @@ async function loadDashboard() {
 
   const bookings = await loadBookings(now.toISOString(), weekEnd.toISOString());
   const isSelfService = ['student', 'renter'].includes(currentUser.role);
+  const isInstructorDash = currentUser.role === 'instructor';
+  const scope = isInstructorDash ? dashboardFlightsScope : 'all';
   const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
-  const upcoming = isSelfService
-    ? upcomingAll.filter(b => b.student_id === currentUser.id).slice(0, 10)
-    : upcomingAll.slice(0, 10);
+  const scopedUpcoming = upcomingAll.filter(b => dashboardBookingMatchesScope(b, scope, isSelfService));
+  const upcoming = scopedUpcoming.slice(0, 10);
 
-  const todayBookings = isSelfService
-    ? bookings.filter(b => {
-        const d = new Date(b.start_time);
-        return d.toDateString() === now.toDateString() && b.student_id === currentUser.id;
-      })
-    : bookings.filter(b => {
-        const d = new Date(b.start_time);
-        return d.toDateString() === now.toDateString();
-      });
+  const todayBookings = bookings.filter(b => {
+    const d = new Date(b.start_time);
+    if (d.toDateString() !== now.toDateString()) return false;
+    return dashboardBookingMatchesScope(b, scope, isSelfService);
+  });
 
   const instructorCount = allUsers.filter(isInstructorUser).length;
   const studentCount = allUsers.filter(u => u.role === 'student').length;
@@ -8325,51 +8444,11 @@ async function loadDashboard() {
   const tbody = document.getElementById('upcoming-bookings-list');
   if (!tbody) return;
 
-  if (upcoming.length === 0) {
-    tbody.innerHTML = '';
-    if (emptyEl) emptyEl.classList.remove('hidden');
-    return;
-  }
-
-  if (emptyEl) emptyEl.classList.add('hidden');
-  if (actualHeader) actualHeader.classList.remove('hidden');
-  if (actualTableCard) actualTableCard.classList.remove('hidden');
-
-  // Fetch weather for default station — non-blocking, fails gracefully
   let wxData = null;
   try { wxData = await api('/api/weather?station=KPSK'); } catch {}
 
-  tbody.innerHTML = upcoming.map((b, i) => {
-    const start = new Date(b.start_time);
-    const end = new Date(b.end_time);
-    const startDateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const endDateStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const dateStr = startDateStr === endDateStr ? startDateStr : `${startDateStr} – ${endDateStr}`;
-    const timeStr = `${formatTime(start)} - ${formatTime(end)}`;
-    const typeClass = getTypeClass(b.lesson_type);
-    const soloLabel = b.booking_type === 'student_solo' ? '<span style="font-size:0.7rem;color:var(--amber)"> ✈solo</span>' :
-                      b.booking_type === 'instructor_solo' ? '<span style="font-size:0.7rem;color:var(--amber)"> ✈solo</span>' : '';
-    const detailId = `wx-detail-${i}`;
-    const flightLabel = `${dateStr} · ${timeStr}`;
-    const chipCat = wxChipCategory(wxData, b.start_time, b.end_time);
-    const chipTitle = chipCat && wxData?.taf
-      ? (new Date(b.start_time).getTime() > Date.now() + 30 * 60 * 1000
-        ? 'Forecast for scheduled flight time (click for details)'
-        : 'Current / forecast conditions (click for details)')
-      : 'Current METAR (click for details)';
-    const chip   = wxBuildChip(chipCat, detailId, wxData?.stale, chipTitle);
-    const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
-    return `<tr>
-      <td><div style="font-size:0.8rem;color:var(--gray-500)">${dateStr}</div><div style="font-family:'Space Grotesk';color:var(--sky);font-weight:600">${timeStr}</div></td>
-      <td><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span></td>
-      <td>${escHtml(b.student_name)}</td>
-      <td>${escHtml(b.instructor_name)}</td>
-      <td style="font-family:'Space Grotesk';font-weight:500">${escHtml(b.tail_number)}</td>
-      <td><span class="tag tag-green">${b.status}</span></td>
-      <td>${chip}</td>
-    </tr>
-    <tr class="wx-detail-row"><td colspan="7">${detail}</td></tr>`;
-  }).join('');
+  _dashboardBookingsCache = { bookings, now, wxData };
+  renderDashboardUpcomingTable(_dashboardBookingsCache);
 
   // Show pending hours banner for instructors/owners
   if (currentUser.role !== 'student') {
