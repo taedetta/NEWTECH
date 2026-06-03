@@ -67,6 +67,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <link rel="stylesheet" href="/css/mobile-responsive.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     .hidden { display: none !important; }
@@ -1714,7 +1715,10 @@
   <div id="staging-env-banner">⚠ STAGING — test environment only. Changes here do not affect the live site.</div>
 
   <div id="app-screen" class="hidden">
-    <button class="mobile-toggle" onclick="toggleSidebar()">&#9776;</button>
+    <button class="mobile-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
+    <header class="mobile-top-bar" id="mobile-top-bar" aria-hidden="true">
+      <span class="mobile-top-bar-title" id="mobile-top-bar-title">Dashboard</span>
+    </header>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <div class="app-layout">
       <aside class="sidebar">
@@ -1818,6 +1822,7 @@
               <tbody id="upcoming-bookings-list"></tbody>
             </table>
           </div>
+          <div id="dashboard-bookings-cards" class="dash-cards-wrap hidden" aria-label="Upcoming flights"></div>
           <div id="dashboard-empty" class="empty-state hidden">
             <div class="empty-icon">&#9992;</div>
             <h3>No upcoming flights</h3>
@@ -1865,12 +1870,13 @@
             <button class="btn btn-primary btn-sm" id="add-aircraft-btn" onclick="openAircraftModal()">+ Add Aircraft</button>
           <button class="btn btn-secondary btn-sm hidden" id="schedule-downtime-btn" onclick="openDowntimeModal()">Schedule Downtime</button>
           </div>
-          <div class="table-card">
+          <div class="table-card" id="fleet-table-card">
             <table class="data-table">
               <thead><tr><th>Tail #</th><th>Make/Model</th><th>Type</th><th>Year</th><th>Rate/hr</th><th>Hobbs Hrs</th><th>Tach Hrs</th><th>Status</th><th></th><th></th></tr></thead>
               <tbody id="fleet-table"></tbody>
             </table>
           </div>
+          <div id="fleet-cards" class="fleet-cards-wrap" aria-label="Fleet aircraft"></div>
           <div id="fleet-empty" class="empty-state hidden">
             <div class="empty-icon">&#9992;</div>
             <h3>No aircraft yet</h3>
@@ -3719,6 +3725,20 @@
 
       </main>
     </div>
+    <nav id="mobile-bottom-nav" class="mobile-bottom-nav" aria-label="Quick navigation">
+      <button type="button" class="mbn-item active" data-page="dashboard" onclick="navigate('dashboard')">
+        <span class="mbn-icon" aria-hidden="true">&#9632;</span><span class="mbn-label">Home</span>
+      </button>
+      <button type="button" class="mbn-item" data-page="schedule" onclick="navigate('schedule')">
+        <span class="mbn-icon" aria-hidden="true">&#128197;</span><span class="mbn-label">Schedule</span>
+      </button>
+      <button type="button" class="mbn-item" id="mbn-third" data-page="messages" onclick="navigate('messages')">
+        <span class="mbn-icon" id="mbn-third-icon" aria-hidden="true">&#128172;</span><span class="mbn-label" id="mbn-third-label">Messages</span>
+      </button>
+      <button type="button" class="mbn-item" data-page="menu" onclick="toggleSidebar()">
+        <span class="mbn-icon" aria-hidden="true">&#9776;</span><span class="mbn-label">Menu</span>
+      </button>
+    </nav>
   </div>
 
   <!-- ─── ADD LEAD MODAL ─── -->
@@ -4962,6 +4982,85 @@ function toggleSidebar() {
 function closeSidebar() {
   document.querySelector('.sidebar').classList.remove('open');
   document.getElementById('sidebar-overlay').classList.remove('active');
+}
+
+// ─── MOBILE CHROME (top bar + bottom nav) ───
+const MOBILE_PAGE_TITLES = {
+  dashboard: 'Dashboard',
+  schedule: 'Schedule',
+  fleet: 'Fleet',
+  tracking: 'Track Flights',
+  maintenance: 'Maintenance',
+  people: 'People',
+  progress: 'Progress',
+  portal: 'My Portal',
+  programs: 'Programs',
+  endorsements: 'Endorsements',
+  'at-risk': 'At-Risk Students',
+  billing: 'Billing',
+  'instructor-hours': 'Instructor Hours',
+  'flight-log': 'Flight Log',
+  history: 'Booking History',
+  'hours-audit': 'Hours Audit',
+  'website-editor': 'Website Editor',
+  'admin-settings': 'Admin Settings',
+  availability: 'My Availability',
+  approvals: 'Pending Approvals',
+  leads: 'Leads',
+  discrepancies: 'Discrepancies',
+  'phone-app': 'Phone App',
+  messages: 'Messages',
+  'cfi-utilization': 'CFI Stats',
+};
+
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function updateMobileChrome(page) {
+  const appScreen = document.getElementById('app-screen');
+  const onApp = appScreen && !appScreen.classList.contains('hidden');
+  const mobile = onApp && isMobileViewport();
+  document.body.classList.toggle('mobile-app-active', mobile);
+
+  const topBar = document.getElementById('mobile-top-bar');
+  const titleEl = document.getElementById('mobile-top-bar-title');
+  const bottomNav = document.getElementById('mobile-bottom-nav');
+  if (topBar) topBar.setAttribute('aria-hidden', mobile ? 'false' : 'true');
+  if (bottomNav) bottomNav.style.display = mobile ? '' : 'none';
+
+  const activePage = page || currentPage || 'dashboard';
+  if (titleEl) titleEl.textContent = MOBILE_PAGE_TITLES[activePage] || 'FlightSlate';
+
+  const thirdBtn = document.getElementById('mbn-third');
+  const thirdIcon = document.getElementById('mbn-third-icon');
+  const thirdLabel = document.getElementById('mbn-third-label');
+  if (thirdBtn && currentUser) {
+    const showPortal = ['student', 'renter'].includes(currentUser.role);
+    const thirdPage = showPortal ? 'portal' : 'messages';
+    thirdBtn.dataset.page = thirdPage;
+    thirdBtn.onclick = function () { navigate(thirdPage); };
+    if (thirdIcon) thirdIcon.innerHTML = showPortal ? '&#127775;' : '&#128172;';
+    if (thirdLabel) thirdLabel.textContent = showPortal ? 'Portal' : 'Messages';
+    if (currentUser.role === 'maintenance') {
+      thirdBtn.dataset.page = 'messages';
+      thirdBtn.onclick = function () { navigate('messages'); };
+      if (thirdIcon) thirdIcon.innerHTML = '&#128172;';
+      if (thirdLabel) thirdLabel.textContent = 'Messages';
+    }
+  }
+
+  document.querySelectorAll('.mbn-item[data-page]').forEach(function (btn) {
+    const p = btn.dataset.page;
+    btn.classList.toggle('active', p === activePage);
+  });
+}
+
+if (!window._mobileChromeResizeBound) {
+  window._mobileChromeResizeBound = true;
+  window.addEventListener('resize', function () {
+    updateMobileChrome(currentPage);
+  });
 }
 
 // ─── AUTH MODAL ───
@@ -6284,6 +6383,8 @@ function navigate(page) {
       document.getElementById('dashboard-stats').innerHTML = '';
       document.getElementById('dashboard-bookings-header').classList.add('hidden');
       document.getElementById('dashboard-table-card').classList.add('hidden');
+      const dashCards = document.getElementById('dashboard-bookings-cards');
+      if (dashCards) dashCards.classList.add('hidden');
       document.getElementById('dashboard-empty').classList.add('hidden');
     }
   }
@@ -6315,6 +6416,8 @@ function navigate(page) {
   else if (page === 'cfi-utilization') loadCfiUtilizationPage();
   // admin-settings has no async data to load — static page
   else if (page === 'admin-settings') loadLocationsAdmin();
+
+  updateMobileChrome(page);
 }
 
 // ─── DIGITAL ENDORSEMENTS ────────────────────────────────
@@ -8365,13 +8468,14 @@ function renderDashboardUpcomingTable(cache) {
   const { bookings, now, wxData } = cache;
   const showTabs = dashboardShowsFlightTabs();
   const scope = showTabs ? dashboardFlightsScope : 'all';
+  const shortTabs = isMobileViewport();
 
   const tabsEl = document.getElementById('dashboard-flights-tabs');
   if (tabsEl) {
     if (showTabs) {
       tabsEl.classList.remove('hidden');
       tabsEl.innerHTML = `
-        <button class="portal-tab${scope === 'mine' ? ' active' : ''}" type="button" onclick="setDashboardFlightsScope('mine')">Your Upcoming Flights</button>
+        <button class="portal-tab${scope === 'mine' ? ' active' : ''}" type="button" onclick="setDashboardFlightsScope('mine')">${shortTabs ? 'Your Flights' : 'Your Upcoming Flights'}</button>
         <button class="portal-tab${scope === 'all' ? ' active' : ''}" type="button" onclick="setDashboardFlightsScope('all')">All Flights</button>
       `;
     } else {
@@ -8386,15 +8490,24 @@ function renderDashboardUpcomingTable(cache) {
   const upcoming = getDashboardFilteredBookings(cache).slice(0, 10);
 
   const tbody = document.getElementById('upcoming-bookings-list');
+  const cardsEl = document.getElementById('dashboard-bookings-cards');
   const actualHeader = document.getElementById('dashboard-bookings-header');
   const actualTableCard = document.getElementById('dashboard-table-card');
   const emptyEl = document.getElementById('dashboard-empty');
   if (!tbody) return;
 
-  if (upcomingAll.length === 0) {
+  function hideBookingsViews() {
     tbody.innerHTML = '';
+    if (cardsEl) {
+      cardsEl.innerHTML = '';
+      cardsEl.classList.add('hidden');
+    }
     if (actualHeader) actualHeader.classList.add('hidden');
     if (actualTableCard) actualTableCard.classList.add('hidden');
+  }
+
+  if (upcomingAll.length === 0) {
+    hideBookingsViews();
     if (emptyEl) {
       emptyEl.classList.remove('hidden');
       const h3 = emptyEl.querySelector('h3');
@@ -8406,9 +8519,8 @@ function renderDashboardUpcomingTable(cache) {
   }
 
   if (upcoming.length === 0) {
-    tbody.innerHTML = '';
+    hideBookingsViews();
     if (actualHeader) actualHeader.classList.remove('hidden');
-    if (actualTableCard) actualTableCard.classList.add('hidden');
     if (emptyEl) {
       emptyEl.classList.remove('hidden');
       const h3 = emptyEl.querySelector('h3');
@@ -8433,30 +8545,77 @@ function renderDashboardUpcomingTable(cache) {
   if (emptyEl) emptyEl.classList.add('hidden');
   if (actualHeader) actualHeader.classList.remove('hidden');
   if (actualTableCard) actualTableCard.classList.remove('hidden');
+  if (cardsEl) cardsEl.classList.remove('hidden');
 
-  tbody.innerHTML = upcoming.map((b, i) => {
-    const start = new Date(b.start_time);
-    const end = new Date(b.end_time);
-    const startDateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const endDateStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const dateStr = startDateStr === endDateStr ? startDateStr : `${startDateStr} – ${endDateStr}`;
-    const timeStr = `${formatTime(start)} - ${formatTime(end)}`;
-    const typeClass = getTypeClass(b.lesson_type);
-    const detailId = `wx-detail-${i}`;
-    const flightLabel = `${dateStr} · ${timeStr}`;
-    const weatherCell = wxBuildDashboardWeatherCell(wxData, detailId, wxData?.stale);
-    const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
-    return `<tr>
-      <td><div style="font-size:0.8rem;color:var(--gray-500)">${dateStr}</div><div style="font-family:'Space Grotesk';color:var(--sky);font-weight:600">${timeStr}</div></td>
-      <td><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span></td>
-      <td>${escHtml(b.student_name)}</td>
-      <td>${escHtml(b.instructor_name)}</td>
-      <td style="font-family:'Space Grotesk';font-weight:500">${escHtml(b.tail_number)}</td>
-      <td><span class="tag tag-green">${b.status}</span></td>
-      <td>${weatherCell}</td>
-    </tr>
-    <tr class="wx-detail-row"><td colspan="7">${detail}</td></tr>`;
-  }).join('');
+  tbody.innerHTML = upcoming.map((b, i) => renderDashboardBookingTableRows(b, i, wxData)).join('');
+  if (cardsEl) {
+    cardsEl.innerHTML = upcoming.map((b, i) => renderDashboardBookingCard(b, i, wxData)).join('');
+  }
+}
+
+function renderDashboardBookingTableRows(b, i, wxData) {
+  const start = new Date(b.start_time);
+  const end = new Date(b.end_time);
+  const startDateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const endDateStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const dateStr = startDateStr === endDateStr ? startDateStr : `${startDateStr} – ${endDateStr}`;
+  const timeStr = `${formatTime(start)} - ${formatTime(end)}`;
+  const typeClass = getTypeClass(b.lesson_type);
+  const detailId = `wx-detail-${i}`;
+  const flightLabel = `${dateStr} · ${timeStr}`;
+  const weatherCell = wxBuildDashboardWeatherCell(wxData, detailId, wxData?.stale);
+  const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
+  return `<tr>
+    <td><div style="font-size:0.8rem;color:var(--gray-500)">${dateStr}</div><div style="font-family:'Space Grotesk';color:var(--sky);font-weight:600">${timeStr}</div></td>
+    <td><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span></td>
+    <td>${escHtml(b.student_name)}</td>
+    <td>${escHtml(b.instructor_name)}</td>
+    <td style="font-family:'Space Grotesk';font-weight:500">${escHtml(b.tail_number)}</td>
+    <td><span class="tag tag-green">${b.status}</span></td>
+    <td>${weatherCell}</td>
+  </tr>
+  <tr class="wx-detail-row"><td colspan="7">${detail}</td></tr>`;
+}
+
+function renderDashboardBookingCard(b, i, wxData) {
+  const start = new Date(b.start_time);
+  const end = new Date(b.end_time);
+  const startDateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const endDateStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const dateStr = startDateStr === endDateStr ? startDateStr : `${startDateStr} – ${endDateStr}`;
+  const timeStr = `${formatTime(start)} - ${formatTime(end)}`;
+  const typeClass = getTypeClass(b.lesson_type);
+  const detailId = `wx-detail-m-${i}`;
+  const flightLabel = `${dateStr} · ${timeStr}`;
+  const cat = wxData?.metar?.flightCategory;
+  const chip = wxBuildChip(
+    cat,
+    detailId,
+    wxData?.stale,
+    'Current conditions at the airport right now'
+  );
+  const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
+  return `<article class="dash-card">
+    <div class="dash-card-hdr">
+      <div>
+        <div class="dash-card-date">${dateStr}</div>
+        <div class="dash-card-time">${timeStr}</div>
+      </div>
+      <span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span>
+    </div>
+    <div class="dash-card-meta">
+      <span><span class="meta-label">Aircraft</span> ${escHtml(b.tail_number)}</span>
+      <span><span class="meta-label">Student</span> ${escHtml(b.student_name || '—')}</span>
+      <span><span class="meta-label">CFI</span> ${escHtml(b.instructor_name || '—')}</span>
+      <span class="tag tag-green">${b.status}</span>
+    </div>
+    <div class="dash-card-weather">
+      <span class="dash-card-weather-label">Weather — current now</span>
+      ${chip}
+      <button type="button" class="btn btn-secondary btn-sm dash-card-forecast-btn" onclick="wxToggleWeatherDetail('${detailId}')">Forecast ↓</button>
+    </div>
+    ${detail}
+  </article>`;
 }
 
 async function loadDashboard() {
@@ -10573,10 +10732,12 @@ document.getElementById('edit-hours-form').addEventListener('submit', async (e) 
 async function loadFleet() {
   await loadAircraft();
   const tbody = document.getElementById('fleet-table');
+  const cardsEl = document.getElementById('fleet-cards');
   const emptyEl = document.getElementById('fleet-empty');
 
   if (allAircraft.length === 0) {
     tbody.innerHTML = '';
+    if (cardsEl) cardsEl.innerHTML = '';
     emptyEl.classList.remove('hidden');
     return;
   }
@@ -10587,34 +10748,12 @@ async function loadFleet() {
   const canEditHours = ['owner', 'instructor', 'admin', 'maintenance'].includes(currentUser.role);
   const canDelete = ['owner', 'admin', 'maintenance'].includes(currentUser.role);
 
-  // Show/hide Schedule Downtime button based on permission
   document.getElementById('schedule-downtime-btn').classList.toggle('hidden', !canEdit);
 
-  tbody.innerHTML = allAircraft.map(a => {
-    const statusClass = a.status === 'available' ? 'tag-green' : a.status === 'maintenance' ? 'tag-amber' : 'tag-red';
-    return `<tr>
-      <td style="font-family:'Space Grotesk';font-weight:600">${a.tail_number}</td>
-      <td>${a.make_model}</td>
-      <td>${a.type.replace('_', ' ')}</td>
-      <td>${a.year || '-'}</td>
-      <td>${a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) : '-'}</td>
-      <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">
-        ${a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : '0.0'}
-        ${canEditHours ? `<button class="btn btn-secondary btn-sm" style="margin-left:0.4rem;padding:2px 7px;font-size:0.7rem" onclick="openInspectionModalHoursOnly(${a.id}, '${escHtml(a.tail_number)}')">Edit</button>` : ''}
-      </td>
-      <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">${a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : '0.0'}</td>
-      <td><span class="tag ${statusClass}">${a.status}</span></td>
-      <td style="white-space:nowrap">
-        ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
-        <button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}" title="Aircraft documents">Docs</button>
-        <button class="btn btn-secondary btn-sm" onclick="openHoursHistory(${a.id}, '${escHtml(a.tail_number)}')" title="Hours history" style="margin-left:0.25rem">History</button>
-        ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="openDeleteAircraftModal(${a.id}, '${escHtml(a.tail_number)}')" style="margin-left:0.25rem" title="Delete aircraft">Delete</button>` : ''}
-      </td>
-      <td>
-        ${canEdit ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem" onclick="openDowntimeModal(${a.id})">Downtime</button>` : ''}
-      </td>
-    </tr>`;
-  }).join('');
+  tbody.innerHTML = allAircraft.map(a => renderFleetTableRow(a, canEdit, canEditHours, canDelete)).join('');
+  if (cardsEl) {
+    cardsEl.innerHTML = allAircraft.map(a => renderFleetCard(a, canEdit, canEditHours, canDelete)).join('');
+  }
 
   if (!window._fleetDocsClickBound) {
     window._fleetDocsClickBound = true;
@@ -10624,7 +10763,69 @@ async function loadFleet() {
       e.preventDefault();
       openAircraftDocsModal(btn.getAttribute('data-aircraft-docs-id'));
     });
+    if (cardsEl) {
+      cardsEl.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-aircraft-docs-id]');
+        if (!btn) return;
+        e.preventDefault();
+        openAircraftDocsModal(btn.getAttribute('data-aircraft-docs-id'));
+      });
+    }
   }
+}
+
+function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
+  const statusClass = a.status === 'available' ? 'tag-green' : a.status === 'maintenance' ? 'tag-amber' : 'tag-red';
+  return `<tr>
+    <td style="font-family:'Space Grotesk';font-weight:600">${a.tail_number}</td>
+    <td>${a.make_model}</td>
+    <td>${a.type.replace('_', ' ')}</td>
+    <td>${a.year || '-'}</td>
+    <td>${a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) : '-'}</td>
+    <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">
+      ${a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : '0.0'}
+      ${canEditHours ? `<button class="btn btn-secondary btn-sm" style="margin-left:0.4rem;padding:2px 7px;font-size:0.7rem" onclick="openInspectionModalHoursOnly(${a.id}, '${escHtml(a.tail_number)}')">Edit</button>` : ''}
+    </td>
+    <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">${a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : '0.0'}</td>
+    <td><span class="tag ${statusClass}">${a.status}</span></td>
+    <td style="white-space:nowrap">
+      ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
+      <button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}" title="Aircraft documents">Docs</button>
+      <button class="btn btn-secondary btn-sm" onclick="openHoursHistory(${a.id}, '${escHtml(a.tail_number)}')" title="Hours history" style="margin-left:0.25rem">History</button>
+      ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="openDeleteAircraftModal(${a.id}, '${escHtml(a.tail_number)}')" style="margin-left:0.25rem" title="Delete aircraft">Delete</button>` : ''}
+    </td>
+    <td>
+      ${canEdit ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem" onclick="openDowntimeModal(${a.id})">Downtime</button>` : ''}
+    </td>
+  </tr>`;
+}
+
+function renderFleetCard(a, canEdit, canEditHours, canDelete) {
+  const statusClass = a.status === 'available' ? 'tag-green' : a.status === 'maintenance' ? 'tag-amber' : 'tag-red';
+  const hobbs = a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : '0.0';
+  const tach = a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : '0.0';
+  const rate = a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) + '/hr' : '—';
+  return `<article class="fleet-card">
+    <div class="fleet-card-hdr">
+      <span class="fleet-card-tail">${escHtml(a.tail_number)}</span>
+      <span class="tag ${statusClass}">${a.status}</span>
+    </div>
+    <div class="fleet-card-model">${escHtml(a.make_model)} · ${escHtml(a.type.replace('_', ' '))}${a.year ? ' · ' + a.year : ''}</div>
+    <div class="fleet-card-stats">
+      <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Rate</div><div class="fleet-card-stat-val">${rate}</div></div>
+      <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Hobbs</div><div class="fleet-card-stat-val">${hobbs}</div></div>
+      <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Tach</div><div class="fleet-card-stat-val">${tach}</div></div>
+      <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Year</div><div class="fleet-card-stat-val" style="font-size:0.78rem;color:var(--gray-200)">${a.year || '—'}</div></div>
+    </div>
+    <div class="fleet-card-actions">
+      ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
+      <button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}">Docs</button>
+      <button class="btn btn-secondary btn-sm" onclick="openHoursHistory(${a.id}, '${escHtml(a.tail_number)}')">History</button>
+      ${canEditHours ? `<button class="btn btn-secondary btn-sm" onclick="openInspectionModalHoursOnly(${a.id}, '${escHtml(a.tail_number)}')">Edit Hours</button>` : ''}
+      ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="openDowntimeModal(${a.id})">Downtime</button>` : ''}
+      ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="openDeleteAircraftModal(${a.id}, '${escHtml(a.tail_number)}')">Delete</button>` : ''}
+    </div>
+  </article>`;
 }
 
 // ─── AIRCRAFT DOCUMENTS (Fleet Docs modal) ───
