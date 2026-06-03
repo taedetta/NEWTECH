@@ -2069,7 +2069,10 @@
         <div id="page-people" class="page hidden">
           <div class="page-header">
             <h1 id="people-title">People</h1>
-            <button class="btn btn-primary btn-sm hidden" id="add-user-btn" onclick="openInviteModal()">+ Add User</button>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm hidden" id="fsp-export-btn" onclick="openFspExportModal()">Export for Flight Schedule Pro</button>
+              <button class="btn btn-primary btn-sm hidden" id="add-user-btn" onclick="openInviteModal()">+ Add User</button>
+            </div>
           </div>
           <div id="claim-owner-banner" style="display:none;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);border-radius:12px;padding:1rem 1.5rem;margin-bottom:1.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
             <div>
@@ -4416,6 +4419,42 @@
           <button type="submit" class="btn btn-primary">Add User</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ─── FSP PEOPLE EXPORT MODAL ─── -->
+  <div id="fsp-export-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeFspExportModal()">
+    <div class="modal" style="max-width:480px">
+      <h3>Export for Flight Schedule Pro</h3>
+      <p style="color:var(--gray-400);font-size:0.85rem;margin-bottom:1rem;line-height:1.5">
+        Downloads an Excel file matching FSP&apos;s People Import Template. Submit the file to FSP Support to import users into your FSP account.
+      </p>
+      <div id="fsp-export-error" class="error-msg hidden"></div>
+      <div class="form-group">
+        <label>FSP Location <span style="color:var(--amber)">*</span></label>
+        <input type="text" id="fsp-export-location" required placeholder="e.g. New Tech Aviation" maxlength="100">
+        <small style="color:var(--gray-500);display:block;margin-top:0.35rem">Must exactly match a Location name in your Flight Schedule Pro account.</small>
+      </div>
+      <div class="form-group">
+        <label>Default Location <span style="color:var(--gray-500)">(optional)</span></label>
+        <input type="text" id="fsp-export-default-location" placeholder="Same as Location if blank" maxlength="100">
+      </div>
+      <div class="form-group">
+        <label>Company Name <span style="color:var(--gray-500)">(optional)</span></label>
+        <input type="text" id="fsp-export-company" value="New Tech Aviation" maxlength="100">
+      </div>
+      <div class="form-group">
+        <label>Format</label>
+        <select id="fsp-export-format">
+          <option value="xlsx" selected>Excel (.xlsx) — recommended for FSP</option>
+          <option value="csv">CSV (.csv)</option>
+        </select>
+      </div>
+      <p id="fsp-export-filter-note" style="color:var(--gray-400);font-size:0.8rem;margin-bottom:1rem"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeFspExportModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="fsp-export-submit" onclick="downloadFspPeopleExport()">Download Export</button>
+      </div>
     </div>
   </div>
 
@@ -11202,6 +11241,7 @@ async function loadPeople(filter, skipReload) {
   const canManageInstructors = isOwner || perms.can_manage_instructors;
   const canManageStudents = isOwner || perms.can_manage_students;
   const canAddUsers = isOwner || canManageInstructors || canManageStudents;
+  const canExportPeople = isOwner || canManagePerms || canManageInstructors || canManageStudents;
 
   const users = filter === 'all'
     ? allUsers
@@ -11211,6 +11251,7 @@ async function loadPeople(filter, skipReload) {
 
   // Show/hide Add User button
   document.getElementById('add-user-btn').classList.toggle('hidden', !canAddUsers);
+  document.getElementById('fsp-export-btn').classList.toggle('hidden', !canExportPeople);
 
   // Show claim-owner banner if no owner exists
   var banner = document.getElementById('claim-owner-banner');
@@ -11575,6 +11616,79 @@ function openInviteModal() {
 
 function closeInviteModal() {
   document.getElementById('invite-modal').classList.add('hidden');
+}
+
+function openFspExportModal() {
+  document.getElementById('fsp-export-error').classList.add('hidden');
+  document.getElementById('fsp-export-location').value = '';
+  document.getElementById('fsp-export-default-location').value = '';
+  document.getElementById('fsp-export-company').value = 'New Tech Aviation';
+  document.getElementById('fsp-export-format').value = 'xlsx';
+  const filterLabels = { all: 'all people', instructor: 'instructors only', student: 'students only', renter: 'renters only' };
+  document.getElementById('fsp-export-filter-note').textContent =
+    'Exporting: ' + (filterLabels[currentPeopleFilter] || 'all people') + ' (matches current filter).';
+  document.getElementById('fsp-export-modal').classList.remove('hidden');
+}
+
+function closeFspExportModal() {
+  document.getElementById('fsp-export-modal').classList.add('hidden');
+}
+
+async function downloadFspPeopleExport() {
+  const errEl = document.getElementById('fsp-export-error');
+  const btn = document.getElementById('fsp-export-submit');
+  errEl.classList.add('hidden');
+
+  const location = document.getElementById('fsp-export-location').value.trim();
+  if (!location) {
+    errEl.textContent = 'FSP Location is required — it must match a Location in your Flight Schedule Pro account.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const defaultLocation = document.getElementById('fsp-export-default-location').value.trim();
+  const companyName = document.getElementById('fsp-export-company').value.trim();
+  const format = document.getElementById('fsp-export-format').value;
+  const role = currentPeopleFilter === 'all' ? '' : currentPeopleFilter;
+
+  const params = new URLSearchParams({ location, format });
+  if (defaultLocation) params.set('default_location', defaultLocation);
+  if (companyName) params.set('company_name', companyName);
+  if (role) params.set('role', role);
+
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+
+  try {
+    const res = await fetch('/api/users/export/fsp?' + params.toString(), {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    if (!res.ok) {
+      let msg = 'Export failed';
+      try {
+        const data = await res.json();
+        msg = data.error || msg;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const ext = format === 'csv' ? 'csv' : 'xlsx';
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const filterSuffix = role ? '-' + role : '';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'fsp-people-import' + filterSuffix + '-' + dateStamp + '.' + ext;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    closeFspExportModal();
+    showToast('Flight Schedule Pro export downloaded', 'success');
+  } catch (err) {
+    errEl.textContent = err.message || 'Failed to export people';
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Download Export';
+  }
 }
 
 document.getElementById('invite-form').addEventListener('submit', async (e) => {

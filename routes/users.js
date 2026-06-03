@@ -8,6 +8,7 @@ const { isPlatformAdminEmail } = require('../lib/platform-admin');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const { inviteEmail, sendEmail } = require('../email-templates');
 const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
+const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
 const router = express.Router();
 
@@ -56,6 +57,72 @@ router.get('/', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Users list error:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// GET /api/users/export/fsp — Flight Schedule Pro people import file
+router.get('/export/fsp', authenticateToken, async (req, res) => {
+  try {
+    const requesterRole = req.user.role;
+    if (['student', 'renter'].includes(requesterRole)) {
+      return res.status(403).json({ error: 'Not authorized to export users' });
+    }
+    const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
+    const canExport = ['owner', 'admin'].includes(requesterRole)
+      || requesterPerms.can_manage_permissions
+      || requesterPerms.can_manage_students
+      || requesterPerms.can_manage_instructors;
+    if (!canExport) {
+      return res.status(403).json({ error: 'You need user management permissions to export people' });
+    }
+
+    const location = String(req.query.location || '').trim();
+    if (!location) {
+      return res.status(400).json({
+        error: 'Location is required — it must exactly match a Location name in your Flight Schedule Pro account.',
+      });
+    }
+    const defaultLocation = String(req.query.default_location || '').trim();
+    const companyName = String(req.query.company_name || 'New Tech Aviation').trim();
+    const format = String(req.query.format || 'xlsx').toLowerCase() === 'csv' ? 'csv' : 'xlsx';
+    const { role } = req.query;
+
+    let query = `
+      SELECT u.id, u.email, u.name, u.role, u.is_instructor, u.phone_number, u.approval_status
+      FROM users u
+      WHERE u.deleted_at IS NULL
+    `;
+    const params = [];
+    if (role === 'instructor') {
+      query += ` AND (u.is_instructor = TRUE OR u.role = 'instructor')`;
+    } else if (role && role !== 'all') {
+      params.push(role);
+      query += ` AND u.role = $${params.length}`;
+    }
+    query += ' ORDER BY u.name';
+
+    const result = await pool.query(query, params);
+    const users = result.rows.filter(u => u.approval_status !== 'rejected');
+
+    const exportOptions = { location, defaultLocation, companyName };
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const filterSuffix = role && role !== 'all' ? `-${role}` : '';
+    const baseName = `fsp-people-import${filterSuffix}-${dateStamp}`;
+
+    if (format === 'csv') {
+      const buf = buildFspCsv(users, exportOptions);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${baseName}.csv"`);
+      return res.send(buf);
+    }
+
+    const buf = buildFspWorkbook(users, exportOptions);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
+    return res.send(buf);
+  } catch (err) {
+    console.error('FSP people export error:', err);
+    res.status(500).json({ error: 'Failed to export users for Flight Schedule Pro' });
   }
 });
 
