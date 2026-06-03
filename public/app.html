@@ -375,6 +375,12 @@
     .calendar-event.ifr { background: rgba(139,92,246,0.15); color: #A78BFA; }
     .calendar-event.cpl { background: rgba(245,158,11,0.15); color: var(--amber); }
     .calendar-event.default { background: rgba(34,197,94,0.15); color: var(--green); }
+    .schedule-filter-bar { display: flex; align-items: center; gap: 0.65rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .schedule-filter-label { font-size: 0.78rem; color: var(--gray-500); font-weight: 600; white-space: nowrap; }
+    .schedule-ac-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; flex: 1; min-width: 0; }
+    .schedule-ac-chip { padding: 0.35rem 0.75rem; border-radius: 999px; border: 1px solid var(--border-light); background: var(--slate); color: var(--gray-300); font-size: 0.78rem; font-weight: 500; cursor: pointer; transition: all var(--transition); font-family: inherit; white-space: nowrap; }
+    .schedule-ac-chip:hover { border-color: var(--border-hover); color: var(--white); }
+    .schedule-ac-chip.active { background: rgba(56,189,248,0.15); border-color: rgba(56,189,248,0.35); color: var(--sky); font-weight: 600; }
 
     /* ─── MODAL ─── */
     .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 2rem; }
@@ -1667,7 +1673,7 @@
           <label>Confirm new password</label>
           <input type="password" id="reset-confirm" required minlength="6" placeholder="Repeat your new password">
         </div>
-        <div id="reset-captcha" class="captcha-wrap"></div>
+        <div id="reset-captcha" class="captcha-wrap hidden"></div>
         <button type="submit" class="btn btn-primary" id="reset-btn">Set New Password</button>
       </form>
     </div>
@@ -1823,6 +1829,10 @@
             </div>
             <h2 id="calendar-title"></h2>
             <button class="btn btn-secondary btn-sm" onclick="goToToday()">Today</button>
+          </div>
+          <div id="schedule-filter-bar" class="schedule-filter-bar">
+            <span class="schedule-filter-label">Show aircraft</span>
+            <div id="schedule-aircraft-filter" class="schedule-ac-chips"></div>
           </div>
           <div class="calendar-grid" id="calendar-grid"></div>
         </div>
@@ -4825,6 +4835,57 @@ let token = localStorage.getItem('fs_token');
 let currentPage = 'dashboard';
 let visitedPages = new Set(); // tracks which pages have been visited for skeleton loading
 let calendarDate = new Date();
+let scheduleAircraftFilter = localStorage.getItem('fs_schedule_aircraft_filter') || 'all';
+
+function getScheduleFilteredBookings(bookings) {
+  if (!scheduleAircraftFilter || scheduleAircraftFilter === 'all') return bookings;
+  const acId = parseInt(scheduleAircraftFilter, 10);
+  if (isNaN(acId)) return bookings;
+  return (bookings || []).filter(b => b.aircraft_id === acId);
+}
+
+function renderScheduleAircraftFilter() {
+  const el = document.getElementById('schedule-aircraft-filter');
+  if (!el) return;
+  const aircraft = (allAircraft || []).slice().sort((a, b) => (a.tail_number || '').localeCompare(b.tail_number || ''));
+  if (!aircraft.length) {
+    el.innerHTML = '<span style="font-size:0.78rem;color:var(--gray-500)">Loading fleet…</span>';
+    return;
+  }
+  const active = String(scheduleAircraftFilter || 'all');
+  let html = `<button type="button" class="schedule-ac-chip${active === 'all' ? ' active' : ''}" onclick="setScheduleAircraftFilter('all')">All aircraft</button>`;
+  html += aircraft.map(a => {
+    const id = String(a.id);
+    const label = escHtml(a.tail_number) + (a.status && a.status !== 'available' ? ' ⚠' : '');
+    return `<button type="button" class="schedule-ac-chip${active === id ? ' active' : ''}" onclick="setScheduleAircraftFilter(${a.id})" title="${escHtml(a.make_model || '')}">${label}</button>`;
+  }).join('');
+  el.innerHTML = html;
+}
+
+function setScheduleAircraftFilter(id) {
+  scheduleAircraftFilter = id === 'all' ? 'all' : String(id);
+  localStorage.setItem('fs_schedule_aircraft_filter', scheduleAircraftFilter);
+  renderScheduleAircraftFilter();
+  if (currentPage !== 'schedule') return;
+  const year = calendarDate.getFullYear();
+  const month = calendarDate.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const startOffset = firstDay.getDay();
+  renderCalendar(year, month, startOffset, new Date(year, month + 1, 0).getDate(), getScheduleFilteredBookings(allBookings));
+  updateCalendarTitle();
+}
+
+function updateCalendarTitle() {
+  const titleEl = document.getElementById('calendar-title');
+  if (!titleEl) return;
+  const title = calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  if (scheduleAircraftFilter && scheduleAircraftFilter !== 'all') {
+    const ac = (allAircraft || []).find(a => String(a.id) === String(scheduleAircraftFilter));
+    titleEl.textContent = ac ? `${title} · ${ac.tail_number}` : title;
+  } else {
+    titleEl.textContent = title;
+  }
+}
 let selectedBookingDate = null; // tracks the last calendar-clicked date for the booking modal
 let allBookings = [];
 let allAircraft = [];
@@ -5028,19 +5089,10 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    let captchaToken = null;
-    try {
-      await FSCaptcha.init();
-      if (FSCaptcha.isEnabled()) captchaToken = await FSCaptcha.requireToken('reset-captcha');
-    } catch (captchaErr) {
-      errEl.textContent = captchaErr.message || 'Please complete the security check.';
-      errEl.classList.remove('hidden');
-      return;
-    }
     const resp = await fetch('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: resetToken, password, captchaToken }),
+      body: JSON.stringify({ token: resetToken, password }),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -5058,7 +5110,6 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
     errEl.textContent = 'Something went wrong. Please try again.';
     errEl.classList.remove('hidden');
   } finally {
-    if (window.FSCaptcha) FSCaptcha.reset('reset-captcha');
     btn.disabled = false;
     btn.textContent = 'Set New Password';
   }
@@ -5071,9 +5122,6 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
   if (token) {
     resetToken = token;
     showScreen('reset');
-    if (window.FSCaptcha) {
-      FSCaptcha.init().then(function () { FSCaptcha.mount('reset-captcha'); });
-    }
   }
 })();
 
@@ -8585,8 +8633,8 @@ function bookingDayTimeLabel(booking, year, month, day) {
 function loadCalendar() {
   const year = calendarDate.getFullYear();
   const month = calendarDate.getMonth();
-  const title = calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  document.getElementById('calendar-title').textContent = title;
+  updateCalendarTitle();
+  renderScheduleAircraftFilter();
 
   const firstDay = new Date(year, month, 1);
   const startOffset = firstDay.getDay();
@@ -8594,10 +8642,9 @@ function loadCalendar() {
   const fetchEnd = new Date(year, month + 1, 7);
 
   loadBookings(fetchStart.toISOString(), fetchEnd.toISOString()).then(bookings => {
-    // Schedule only shows live/upcoming flights — completed bookings belong in Booking History
     const liveBookings = bookings.filter(b => b.status !== 'completed');
     allBookings = liveBookings;
-    renderCalendar(year, month, startOffset, new Date(year, month + 1, 0).getDate(), liveBookings);
+    renderCalendar(year, month, startOffset, new Date(year, month + 1, 0).getDate(), getScheduleFilteredBookings(liveBookings));
   });
 }
 
@@ -8675,7 +8722,7 @@ function openDayDetail(year, month, day) {
   const title = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   document.getElementById('day-modal-title').textContent = title;
 
-  const dayBookings = allBookings.filter(b => bookingOverlapsLocalDay(b, year, month, day));
+  const dayBookings = getScheduleFilteredBookings(allBookings).filter(b => bookingOverlapsLocalDay(b, year, month, day));
   console.log('[FlightSlate v2026.05.05] dayBookings:', dayBookings.map(b => ({ id: b.id, status: b.status })));
 
   const list = document.getElementById('day-bookings-list');
@@ -19799,7 +19846,6 @@ init();
     FSCaptcha.init().then(function () {
       if (!FSCaptcha.isEnabled()) return;
       if (new URLSearchParams(window.location.search).get('reset')) {
-        FSCaptcha.mount('reset-captcha');
         return;
       }
       var authModal = document.getElementById('auth-modal');

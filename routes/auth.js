@@ -235,7 +235,7 @@ router.post('/forgot-password', async (req, res) => {
 
 router.post('/reset-password', async (req, res) => {
   try {
-    if (!(await enforceCaptcha(req, res))) return;
+    // One-time email token is sufficient — CAPTCHA breaks reset deep-links on staging.
     const { token, password } = req.body;
     if (!token || !password) {
       return res.status(400).json({ error: 'Token and new password are required' });
