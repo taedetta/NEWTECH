@@ -378,6 +378,7 @@
 
     /* ─── MODAL ─── */
     .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 2rem; }
+    #booking-alert-modal { z-index: 350; }
     .modal { background: var(--dark-blue); border: 1px solid var(--border-light); border-radius: var(--radius-xl); padding: 2rem; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); -webkit-overflow-scrolling: touch; }
     .modal-md { max-width: 520px; }
     .modal-lg { max-width: 640px; }
@@ -9287,7 +9288,9 @@ async function duplicateBooking(id) {
     showToast('Booking duplicated (+7 days)', 'success');
     closeDayModal();
     if (currentPage === 'schedule') loadCalendar();
-  } catch (e) { alert(e.error || 'Could not duplicate booking'); }
+  } catch (e) {
+    if (!handleBookingConflictError(e)) alert(e.error || 'Could not duplicate booking');
+  }
 }
 
 // Re-filter aircraft dropdown when date changes — maintains downtime window filtering
@@ -9485,54 +9488,8 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     else if (currentPage === 'dashboard') loadDashboard();
     else loadCalendar();
   } catch (err) {
-    const bottomConflictEl = document.getElementById('booking-conflicts-bottom');
-    bottomConflictEl.classList.add('hidden');
-    if (err.conflicts) {
-      const html = formatConflictMessages(err.conflicts);
-      // Show conflicts ONLY near submit button (always visible)
-      bottomConflictEl.innerHTML = html;
-      bottomConflictEl.classList.remove('hidden');
-      // Auto-scroll modal so the conflict is visible
-      bottomConflictEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } else if (err.availability_conflict) {
-      let html = `<strong>🚫 ${escHtml(err.instructor_name)} is not available</strong><br><span style="font-size:0.85rem;">${escHtml(err.reason)}</span>`;
-      if (err.next_slots && err.next_slots.length > 0) {
-        html += `<div style="margin-top:0.5rem;font-size:0.82rem;color:var(--gray-300);">Next available slots:</div>`;
-        html += err.next_slots.map(s => {
-          const sd = new Date(s.start_time);
-          const ed = new Date(s.end_time);
-          const dl = sd.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'});
-          const tl = `${formatTimeStr(sd.getUTCHours(),sd.getUTCMinutes())}–${formatTimeStr(ed.getUTCHours(),ed.getUTCMinutes())}`;
-          return `<span style="display:inline-block;margin:0.2rem 0.3rem 0 0;font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:5px;background:rgba(56,189,248,0.1);color:var(--sky);cursor:pointer;border:1px solid rgba(56,189,248,0.15);" onclick="applyBookingSlot('${s.start_time}','${s.end_time}')">${dl} ${tl}</span>`;
-        }).join('');
-      }
-      if (err.alternative_instructors && err.alternative_instructors.length > 0) {
-        html += `<div style="margin-top:0.4rem;font-size:0.82rem;">Available instructors: `;
-        html += err.alternative_instructors.map(i =>
-          `<span style="color:var(--green);cursor:pointer;text-decoration:underline;" onclick="document.getElementById('booking-instructor').value=${i.id};refreshBookingAvailability()">${escHtml(i.name)}</span>`
-        ).join(', ');
-        html += '</div>';
-      }
-      if (err.can_force) {
-        html += `<div style="margin-top:0.5rem;"><button class="btn btn-sm btn-secondary" onclick="forceBookingSubmit()" style="width:auto;font-size:0.78rem;">Override — Book Anyway</button></div>`;
-      }
-      bottomConflictEl.innerHTML = html;
-      bottomConflictEl.classList.remove('hidden');
-      bottomConflictEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      showBookingAlertModal(
-        `${err.instructor_name || 'Instructor'} is not available`,
-        err.reason || 'This instructor is not scheduled to be available during the time you selected.',
-        html
-      );
-    } else if (err.error && (err.error.includes('maintenance') || err.error.includes('Maintenance'))) {
-      // Specific handling for aircraft maintenance errors — include reason
-      const reasonText = err.reason ? ` Reason: ${escHtml(err.reason)}` : '';
-      errEl.innerHTML = `<span style="color:#f87171;">Aircraft is in maintenance for this date.</span>${reasonText}<br><span style="font-size:0.85rem;color:var(--gray-300);">Please select a different aircraft or date.</span>`;
-      errEl.classList.remove('hidden');
-      // Auto-scroll modal so the error is visible
-      errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } else {
-      errEl.textContent = err.error || 'Failed to create booking';
+    if (!handleBookingConflictError(err)) {
+      errEl.textContent = err.error || err.message || 'Failed to create booking';
       errEl.classList.remove('hidden');
     }
   }
@@ -9611,12 +9568,7 @@ async function forceBookingSubmit() {
     if (currentPage === 'schedule') loadCalendar();
     else if (currentPage === 'dashboard') loadDashboard();
   } catch (e2) {
-    if (e2.conflicts) {
-      const html = formatConflictMessages(e2.conflicts);
-      bottomConflictEl.innerHTML = html;
-      bottomConflictEl.classList.remove('hidden');
-      bottomConflictEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } else {
+    if (!handleBookingConflictError(e2)) {
       errEl.textContent = e2.error || 'Failed to create booking';
       errEl.classList.remove('hidden');
     }
@@ -11046,6 +10998,115 @@ function escHtml(str) {
 
 function formatTime(d) {
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function formatConflictSummaryText(conflicts) {
+  if (!conflicts || !conflicts.length) return 'Another reservation overlaps the time you selected.';
+  return conflicts.map(c => {
+    if (typeof c === 'string') return c;
+    const timeRange = `${formatTime(new Date(c.start_time))}\u2013${formatTime(new Date(c.end_time))}`;
+    if (c.type === 'aircraft') {
+      return `Aircraft ${c.entity} is already booked ${timeRange}${c.booked_by ? ` by ${c.booked_by}` : ''}.`;
+    }
+    if (c.type === 'instructor') {
+      return `Instructor ${c.entity} is already booked ${timeRange}.`;
+    }
+    if (c.type === 'student') {
+      return `${c.entity} already has a booking ${timeRange}.`;
+    }
+    return 'This time slot conflicts with an existing reservation.';
+  }).join(' ');
+}
+
+function buildAvailabilityConflictHtml(err) {
+  let html = `<strong>🚫 ${escHtml(err.instructor_name || 'Instructor')} is not available</strong><br><span style="font-size:0.85rem;">${escHtml(err.reason || '')}</span>`;
+  if (err.next_slots && err.next_slots.length > 0) {
+    html += `<div style="margin-top:0.5rem;font-size:0.82rem;color:var(--gray-300);">Next available slots:</div>`;
+    html += err.next_slots.map(s => {
+      const sd = new Date(s.start_time);
+      const ed = new Date(s.end_time);
+      const dl = sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+      const tl = `${formatTimeStr(sd.getUTCHours(), sd.getUTCMinutes())}\u2013${formatTimeStr(ed.getUTCHours(), ed.getUTCMinutes())}`;
+      return `<span style="display:inline-block;margin:0.2rem 0.3rem 0 0;font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:5px;background:rgba(56,189,248,0.1);color:var(--sky);cursor:pointer;border:1px solid rgba(56,189,248,0.15);" onclick="applyBookingSlot('${s.start_time}','${s.end_time}')">${dl} ${tl}</span>`;
+    }).join('');
+  }
+  if (err.alternative_instructors && err.alternative_instructors.length > 0) {
+    html += `<div style="margin-top:0.4rem;font-size:0.82rem;">Available instructors: `;
+    html += err.alternative_instructors.map(i =>
+      `<span style="color:var(--green);cursor:pointer;text-decoration:underline;" onclick="document.getElementById('booking-instructor').value=${i.id};refreshBookingAvailability()">${escHtml(i.name)}</span>`
+    ).join(', ');
+    html += '</div>';
+  }
+  if (err.can_force) {
+    html += `<div style="margin-top:0.5rem;"><button class="btn btn-sm btn-secondary" onclick="forceBookingSubmit()" style="width:auto;font-size:0.78rem;">Override \u2014 Book Anyway</button></div>`;
+  }
+  return html;
+}
+
+/** Show inline conflict details and a popup for any booking scheduling conflict. Returns true if handled. */
+function handleBookingConflictError(err) {
+  if (!err) return false;
+  const errEl = document.getElementById('booking-error');
+  const bottomConflictEl = document.getElementById('booking-conflicts-bottom');
+  const topConflictEl = document.getElementById('booking-conflicts');
+
+  function showInline(html) {
+    if (bottomConflictEl) {
+      bottomConflictEl.innerHTML = html;
+      bottomConflictEl.classList.remove('hidden');
+      bottomConflictEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    if (topConflictEl) {
+      topConflictEl.innerHTML = html;
+      topConflictEl.classList.remove('hidden');
+    }
+  }
+
+  if (err.conflicts && err.conflicts.length) {
+    const html = formatConflictMessages(err.conflicts);
+    showInline(html);
+    showBookingAlertModal('Scheduling Conflict', formatConflictSummaryText(err.conflicts), html);
+    return true;
+  }
+
+  if (err.availability_conflict) {
+    const html = buildAvailabilityConflictHtml(err);
+    showInline(html);
+    showBookingAlertModal(
+      `${err.instructor_name || 'Instructor'} is not available`,
+      err.reason || 'This instructor is not scheduled to be available during the time you selected.',
+      html
+    );
+    return true;
+  }
+
+  const errText = err.error || err.message || '';
+  if (errText && (/maintenance|grounded|unavailable/i.test(errText) || err.reason)) {
+    const isMaintenance = /maintenance/i.test(errText);
+    const html = `<span style="color:#f87171;">${escHtml(errText)}</span>${err.reason ? `<br><span style="font-size:0.85rem;color:var(--gray-300);">${escHtml(err.reason)}</span>` : ''}<br><span style="font-size:0.85rem;color:var(--gray-300);">Please select a different aircraft, instructor, or date.</span>`;
+    if (errEl) {
+      errEl.innerHTML = html;
+      errEl.classList.remove('hidden');
+      errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    showBookingAlertModal(
+      isMaintenance ? 'Aircraft in Maintenance' : 'Unable to Book',
+      errText + (err.reason ? ` — ${err.reason}` : ''),
+      html
+    );
+    return true;
+  }
+
+  if (err.status === 409 || (errText && /scheduling conflict|already booked|not available|conflict/i.test(errText))) {
+    if (errEl) {
+      errEl.textContent = errText || 'This time slot is not available.';
+      errEl.classList.remove('hidden');
+    }
+    showBookingAlertModal('Unable to Book', errText || 'This time slot is not available.');
+    return true;
+  }
+
+  return false;
 }
 
 // Format structured conflict objects into labeled HTML with local-timezone times
