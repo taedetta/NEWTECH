@@ -1546,6 +1546,8 @@
     }
 
   </style>
+  <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin>
+  <script src="/js/captcha.js"></script>
 </head>
 <body>
   <!-- ─── AUTH MODAL ─── -->
@@ -5082,12 +5084,6 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
   }
   enterApp();
 })();
-
-if (window.FSCaptcha) {
-  FSCaptcha.init().then(function () {
-    if (FSCaptcha.isEnabled() && !resetToken) mountAuthCaptcha('signin');
-  });
-}
 
 // ─── AUTH ───
 document.getElementById('login-form').addEventListener('submit', async (e) => {
@@ -19709,7 +19705,30 @@ init();
   </div>
 </div>
 
-<script src="/js/captcha.js"></script>
+<script>
+(function () {
+  function ensureAuthCaptcha() {
+    if (!window.FSCaptcha || typeof mountAuthCaptcha !== 'function') return;
+    FSCaptcha.init().then(function () {
+      if (!FSCaptcha.isEnabled()) return;
+      if (new URLSearchParams(window.location.search).get('reset')) {
+        FSCaptcha.mount('reset-captcha');
+        return;
+      }
+      var authModal = document.getElementById('auth-modal');
+      if (!authModal || authModal.style.display === 'none') return;
+      var active = document.querySelector('.auth-tab.active');
+      var tab = active && active.dataset.tab ? active.dataset.tab : 'signin';
+      mountAuthCaptcha(tab);
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensureAuthCaptcha);
+  } else {
+    ensureAuthCaptcha();
+  }
+})();
+</script>
 <script src="/js/app-features.js?v=7"></script>
 </body>
 </html>
