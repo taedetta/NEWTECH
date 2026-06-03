@@ -15,9 +15,9 @@ const { sendMail } = require('./lib/mailer');
 /**
  * Send an email via SMTP (Brevo, Gmail, etc.).
  */
-async function sendEmail(to, subject, html, text, attachments) {
+async function sendEmail(to, subject, html, text, attachments, options = {}) {
   try {
-    return await sendMail({ to, subject, html, text, attachments });
+    return await sendMail({ to, subject, html, text, attachments, ...options });
   } catch (err) {
     console.error('[email] sendEmail error:', err.message);
     return false;

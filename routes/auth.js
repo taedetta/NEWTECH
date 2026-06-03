@@ -225,7 +225,8 @@ router.post('/forgot-password', async (req, res) => {
     );
     const resetUrl = `${getAppUrl(req)}/app?reset=${rawToken}`;
     const { subject, html, text } = passwordResetEmail({ name: user.name, resetUrl });
-    sendEmail(user.email, subject, html, text).catch(err => console.error('[forgot-password] sendEmail error:', err.message));
+    sendEmail(user.email, subject, html, text, undefined, { deliverToRecipientOnStaging: true })
+      .catch(err => console.error('[forgot-password] sendEmail error:', err.message));
     res.json({ ok: true });
   } catch (err) {
     console.error('[forgot-password] error:', err.message);

@@ -5055,6 +5055,11 @@ document.getElementById('forgot-form').addEventListener('submit', async (e) => {
       errEl.classList.add('visible');
       return;
     }
+    if (!resp.ok) {
+      errEl.textContent = data.error || 'Something went wrong. Please try again.';
+      errEl.classList.add('visible');
+      return;
+    }
     // Always show success — don't reveal whether email exists (security)
     successEl.textContent = "If an account with that email exists, we've sent a password reset link. Check your inbox.";
     successEl.classList.add('visible');
