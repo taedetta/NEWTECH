@@ -1715,24 +1715,26 @@
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <a onclick="navigate('phone-app')" data-page="phone-app" id="nav-phone-app"><span class="nav-icon">&#128241;</span> Phone App</a>
           <a onclick="navigate('messages')" data-page="messages" id="nav-messages"><span class="nav-icon">&#128172;</span> Messages</a>
-          <div class="nav-divider"></div>
-          <div class="nav-section-label">Management</div>
+          <a onclick="navigate('progress')" data-page="progress" id="nav-progress"><span class="nav-icon">&#128200;</span> Progress</a>
+          <a onclick="navigate('endorsements')" data-page="endorsements" id="nav-endorsements"><span class="nav-icon">&#9997;&#65039;</span> Endorsements</a>
+          <div id="nav-management-block">
+          <div class="nav-divider" id="nav-mgmt-divider"></div>
+          <div class="nav-section-label" id="nav-mgmt-label">Management</div>
           <a onclick="navigate('approvals')" data-page="approvals" id="nav-approvals" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128100;</span> Pending Approvals <span id="approvals-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('leads')" data-page="leads" id="nav-leads" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#128231;</span> Leads <span id="leads-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('discrepancies')" data-page="discrepancies" id="nav-discrepancies" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#9888;&#65039;</span> Discrepancies <span id="discrepancies-badge" class="hidden" style="display:inline-block;background:#F59E0B;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('people')" data-page="people" id="nav-people"><span class="nav-icon">&#128100;</span> People</a>
           <a onclick="openMgmtBilling()" data-page="billing-mgmt" id="nav-billing-mgmt" class="hidden"><span class="nav-icon">&#128176;</span> Billing</a>
           <a onclick="openMgmtHistory()" data-page="history-mgmt" id="nav-history-mgmt" class="hidden"><span class="nav-icon">&#128218;</span> Booking History</a>
-          <a onclick="navigate('progress')" data-page="progress" id="nav-progress"><span class="nav-icon">&#128200;</span> Progress</a>
           <a onclick="navigate('at-risk')" data-page="at-risk" id="nav-at-risk" class="hidden"><span class="nav-icon">&#9888;</span> At-Risk</a>
           <a onclick="navigate('instructor-hours')" data-page="instructor-hours" id="nav-instructor-hours" class="hidden"><span class="nav-icon">&#9997;</span> Instructor Hours</a>
           <a onclick="navigate('cfi-utilization')" data-page="cfi-utilization" id="nav-cfi-utilization" class="hidden"><span class="nav-icon">&#128202;</span> CFI Stats</a>
           <a onclick="navigate('hours-audit')" data-page="hours-audit" id="nav-hours-audit" style="display:none"><span class="nav-icon">&#128221;</span> Hours Audit</a>
           <a onclick="navigate('website-editor')" data-page="website-editor" id="nav-website-editor" class="hidden"><span class="nav-icon">&#127760;</span> Website Editor</a>
           <a onclick="navigate('programs')" data-page="programs" id="nav-programs" class="hidden"><span class="nav-icon">&#128203;</span> Programs</a>
-          <a onclick="navigate('endorsements')" data-page="endorsements" id="nav-endorsements"><span class="nav-icon">&#9997;&#65039;</span> Endorsements</a>
           <a onclick="navigate('availability')" data-page="availability" id="nav-availability" class="hidden"><span class="nav-icon">&#128197;</span> My Availability</a>
           <a onclick="navigate('admin-settings')" data-page="admin-settings" id="nav-admin-settings" class="hidden"><span class="nav-icon">&#9881;&#65039;</span> Admin Settings</a>
+          </div>
         </nav>
         <div class="sidebar-user">
           <button id="guest-signin-btn" class="btn btn-secondary" onclick="openAuthModal('signin')" style="width:100%;font-size:0.85rem;">Sign In</button>
@@ -3661,7 +3663,7 @@
         <!-- ─── MESSAGES ─── -->
         <div id="page-messages" class="page hidden">
           <div class="page-header"><h1>&#128172; Messages</h1></div>
-          <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:1rem;max-width:720px">Instructors and students can message each other. Owners and admins can read all conversations.</p>
+          <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:1rem;max-width:720px">Students, renters, and instructors can message each other. Owners and admins can read all conversations.</p>
           <div class="messages-layout">
             <div id="messages-thread-list" class="messages-sidebar"></div>
             <div id="messages-chat" class="messages-main"></div>
@@ -5273,6 +5275,33 @@ function logout() {
 }
 
 // ─── APP INIT ───
+function applyStudentRenterNavLayout() {
+  const role = currentUser?.role;
+  const isLimited = role === 'student' || role === 'renter';
+  const mgmtBlock = document.getElementById('nav-management-block');
+  if (mgmtBlock) mgmtBlock.style.display = isLimited ? 'none' : '';
+
+  if (!isLimited) return;
+
+  // Renters: hide tracking and maintenance (not part of renter workflow)
+  if (role === 'renter') {
+    ['tracking', 'maintenance'].forEach(function (page) {
+      const el = document.querySelector('.sidebar-nav a[data-page="' + page + '"]');
+      if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
+    });
+  }
+
+  ['progress', 'endorsements', 'messages', 'portal', 'dashboard', 'schedule',
+    'history', 'fleet', 'billing', 'phone-app', 'flight-log'].forEach(function (page) {
+    const el = document.querySelector('.sidebar-nav a[data-page="' + page + '"]');
+    if (el) { el.classList.remove('hidden'); el.style.display = ''; }
+  });
+
+  // Never show hours audit to students/renters
+  const navAudit = document.getElementById('nav-hours-audit');
+  if (navAudit) { navAudit.classList.add('hidden'); navAudit.style.display = 'none'; }
+}
+
 async function enterApp() {
   document.getElementById('nav-documents')?.remove();
   const appEl = document.getElementById('app-screen');
@@ -5360,34 +5389,7 @@ async function enterApp() {
   }
   // ── End maintenance role ──
 
-  // ── Renter role: limited nav (Dashboard, Schedule, Fleet, My Portal, Flight Log, History, Billing) ──
-  if (currentUser.role === 'renter') {
-    const allowed = new Set(['dashboard', 'schedule', 'fleet', 'portal', 'flight-log', 'history', 'billing', 'phone-app', 'messages']);
-    document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
-      const page = el.dataset.page || el.id.replace('nav-', '');
-      el.classList.toggle('hidden', !allowed.has(page));
-      if (!allowed.has(page)) el.style.display = 'none';
-      else { el.classList.remove('hidden'); el.style.display = ''; }
-    });
-    // My Portal nav: show for renter
-    const navPortalR = document.getElementById('nav-portal');
-    if (navPortalR) { navPortalR.style.display = ''; navPortalR.classList.remove('hidden'); }
-    // Load user + aircraft data in parallel with fresh auth check (faster startup)
-  const [freshData] = await Promise.all([
-    api('/api/auth/me'),
-    loadUsers(),
-    loadAircraft(),
-  ]);
-  // Use fresh user data (role may have changed since login)
-    currentUser = freshData.user;
-    hasOwnerAccount = freshData.hasOwner;
-    syncSidebarAuth(true);
-    navigate('portal');
-    if (appEl) appEl.classList.remove('app-booting');
-    initPWA();
-    return;
-  }
-  // ── End renter role ──
+  // ── Renter role: use unified student/renter nav (no separate early return) ──
 
   // Restore nav from boot-time hide, then apply role rules below
   document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
@@ -5435,11 +5437,20 @@ async function enterApp() {
 
   // At-Risk: visible to owner, admin, instructor — not students
   const navAtRisk = document.getElementById('nav-at-risk');
-  if (navAtRisk) navAtRisk.classList.toggle('hidden', currentUser.role === 'student');
+  if (navAtRisk) navAtRisk.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
 
-  // My Portal: visible to students only
+  // My Portal: visible to students and renters
   const navPortal = document.getElementById('nav-portal');
-  if (navPortal) navPortal.classList.toggle('hidden', currentUser.role !== 'student');
+  if (navPortal) navPortal.classList.toggle('hidden', !['student', 'renter'].includes(currentUser.role));
+
+  // Progress + Endorsements: students/renters see under Operations; staff see both sections
+  const navProgress = document.getElementById('nav-progress');
+  if (navProgress) navProgress.classList.remove('hidden');
+  const navEndorse = document.getElementById('nav-endorsements');
+  if (navEndorse) navEndorse.classList.remove('hidden');
+
+  // Students/renters: hide entire Management block (no separate Management section)
+  applyStudentRenterNavLayout();
 
   // Website Editor: visible to owner or anyone with can_edit_website permission
   const navWebsiteEditor = document.getElementById('nav-website-editor');
@@ -5448,10 +5459,11 @@ async function enterApp() {
     navWebsiteEditor.classList.toggle('hidden', !canEditWebsite);
   }
 
-  // Hours Audit: owner/admin only
+  // Hours Audit: owner/admin only — never students or renters
   const navAudit = document.getElementById('nav-hours-audit');
   if (navAudit) {
     navAudit.style.display = ['owner', 'admin'].includes(currentUser.role) ? '' : 'none';
+    navAudit.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
   }
 
   // Programs: visible to owner, admin, and instructor
@@ -5463,7 +5475,7 @@ async function enterApp() {
   // Instructor Hours: visible to instructors, admins, owners — NOT students
   const navIH = document.getElementById('nav-instructor-hours');
   if (navIH) {
-    navIH.classList.toggle('hidden', currentUser.role === 'student');
+    navIH.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
   }
 
   // Booking History: visible to students, renters, instructors, admin, owner
@@ -5486,13 +5498,11 @@ async function enterApp() {
   const rosterBtn = document.getElementById('schedule-roster-btn');
   if (rosterBtn) rosterBtn.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
 
-  // Endorsements: visible to all roles
-  const navEndorse = document.getElementById('nav-endorsements');
-  if (navEndorse) navEndorse.classList.remove('hidden');
+  // Endorsements: visible to all roles (already ensured above)
 
-  // Availability: visible to instructors, admins, owners — NOT students
+  // Availability: visible to instructors, admins, owners — NOT students/renters
   const navAvail = document.getElementById('nav-availability');
-  if (navAvail) navAvail.classList.toggle('hidden', currentUser.role === 'student');
+  if (navAvail) navAvail.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
 
   // CFI Utilization: owner, admin, instructor
   const navCfiUtil = document.getElementById('nav-cfi-utilization');
@@ -5556,7 +5566,7 @@ async function enterApp() {
   document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
     el.style.display = el.classList.contains('hidden') ? 'none' : '';
   });
-  navigate(currentUser.role === 'student' ? 'portal' : 'dashboard');
+  navigate(['student', 'renter'].includes(currentUser.role) ? 'portal' : 'dashboard');
   if (appEl) appEl.classList.remove('app-booting');
   initPWA();
   startAppPolling();
@@ -11946,7 +11956,7 @@ async function loadProgress() {
   // Load programs (always needed)
   try { allPrograms = await api('/api/training/programs'); } catch { allPrograms = []; }
 
-  if (role === 'student') {
+  if (role === 'student' || role === 'renter') {
     await loadMyProgress();
   } else {
     await loadProgressStudentList();
@@ -19790,6 +19800,6 @@ init();
   }
 })();
 </script>
-<script src="/js/app-features.js?v=7"></script>
+<script src="/js/app-features.js?v=8"></script>
 </body>
 </html>

@@ -2,7 +2,41 @@
 
 const pool = require('./index');
 
+let schemaPromise = null;
+
+async function ensureMessagesSchema() {
+  if (schemaPromise) return schemaPromise;
+  schemaPromise = pool.query(`
+    CREATE TABLE IF NOT EXISTS message_threads (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL REFERENCES users(id),
+      instructor_id INTEGER NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(student_id, instructor_id)
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      thread_id INTEGER NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
+      sender_id INTEGER NOT NULL REFERENCES users(id),
+      body TEXT NOT NULL,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS messages_thread_id_idx ON messages(thread_id);
+  `).catch((err) => {
+    schemaPromise = null;
+    throw err;
+  });
+  return schemaPromise;
+}
+
+function isStudentSideRole(role) {
+  return role === 'student' || role === 'renter';
+}
+
 async function getOrCreateThread(studentId, instructorId) {
+  await ensureMessagesSchema();
   const existing = await pool.query(
     `SELECT * FROM message_threads WHERE student_id = $1 AND instructor_id = $2`,
     [studentId, instructorId]
@@ -16,10 +50,10 @@ async function getOrCreateThread(studentId, instructorId) {
 }
 
 async function listThreadsForUser(userId, role) {
+  await ensureMessagesSchema();
   let query;
   const params = [userId];
-  if (['owner', 'admin'].includes(role)) {
-    query = `
+  const selectCols = `
       SELECT t.*,
              s.name AS student_name, i.name AS instructor_name,
              (SELECT body FROM messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
@@ -27,41 +61,30 @@ async function listThreadsForUser(userId, role) {
              (SELECT COUNT(*)::int FROM messages m WHERE m.thread_id = t.id AND m.read_at IS NULL AND m.sender_id != $1) AS unread_count
       FROM message_threads t
       JOIN users s ON s.id = t.student_id
-      JOIN users i ON i.id = t.instructor_id
+      JOIN users i ON i.id = t.instructor_id`;
+  if (['owner', 'admin'].includes(role)) {
+    query = `${selectCols}
       ORDER BY t.updated_at DESC
     `;
   } else if (role === 'instructor') {
-    query = `
-      SELECT t.*,
-             s.name AS student_name, i.name AS instructor_name,
-             (SELECT body FROM messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
-             (SELECT created_at FROM messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at,
-             (SELECT COUNT(*)::int FROM messages m WHERE m.thread_id = t.id AND m.read_at IS NULL AND m.sender_id != $1) AS unread_count
-      FROM message_threads t
-      JOIN users s ON s.id = t.student_id
-      JOIN users i ON i.id = t.instructor_id
+    query = `${selectCols}
       WHERE t.instructor_id = $1
       ORDER BY t.updated_at DESC
     `;
-  } else {
-    query = `
-      SELECT t.*,
-             s.name AS student_name, i.name AS instructor_name,
-             (SELECT body FROM messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
-             (SELECT created_at FROM messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at,
-             (SELECT COUNT(*)::int FROM messages m WHERE m.thread_id = t.id AND m.read_at IS NULL AND m.sender_id != $1) AS unread_count
-      FROM message_threads t
-      JOIN users s ON s.id = t.student_id
-      JOIN users i ON i.id = t.instructor_id
+  } else if (isStudentSideRole(role)) {
+    query = `${selectCols}
       WHERE t.student_id = $1
       ORDER BY t.updated_at DESC
     `;
+  } else {
+    return [];
   }
   const result = await pool.query(query, params);
   return result.rows;
 }
 
 async function getThreadMessages(threadId, userId, role) {
+  await ensureMessagesSchema();
   const thread = await pool.query(
     `SELECT t.*, s.name AS student_name, i.name AS instructor_name
      FROM message_threads t
@@ -111,6 +134,7 @@ async function startThreadAndMessage({ studentId, instructorId, senderId, body }
 }
 
 module.exports = {
+  ensureMessagesSchema,
   getOrCreateThread,
   listThreadsForUser,
   getThreadMessages,

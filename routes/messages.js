@@ -37,7 +37,7 @@ router.post('/threads', authenticateToken, async (req, res) => {
     let studentId = parseInt(student_id, 10);
     let instructorId = parseInt(instructor_id, 10);
 
-    if (req.user.role === 'student') {
+    if (req.user.role === 'student' || req.user.role === 'renter') {
       studentId = req.user.id;
       if (!instructorId) return res.status(400).json({ error: 'instructor_id required' });
     } else if (req.user.role === 'instructor') {

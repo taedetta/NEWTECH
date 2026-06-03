@@ -61,7 +61,7 @@ async function openMessageThread(threadId) {
     var data = await api('/api/messages/threads/' + threadId);
     var t = data.thread;
     var isAdmin = ['owner', 'admin'].includes(currentUser.role);
-    var canReply = !isAdmin || currentUser.role === 'instructor' || currentUser.role === 'student';
+    var canReply = ['student', 'renter', 'instructor'].includes(currentUser.role);
     chatEl.innerHTML = '<div class="msg-chat-hdr"><strong>' + escHtml(t.student_name) + '</strong> &harr; <strong>' + escHtml(t.instructor_name) + '</strong>' + (isAdmin ? ' <span style="color:var(--amber);font-size:0.72rem">(admin view)</span>' : '') + '</div><div class="msg-chat-msgs" id="msg-chat-msgs">' +
       (data.messages || []).map(function(m) {
         return '<div class="msg-bubble ' + (m.sender_id === currentUser.id ? 'mine' : '') + '"><div class="msg-bubble-meta">' + escHtml(m.sender_name) + '</div><div>' + escHtml(m.body) + '</div></div>';
@@ -102,10 +102,20 @@ function populateMessageNewForm() {
   var stSel = document.getElementById('msg-new-student');
   var iSel = document.getElementById('msg-new-instructor');
   if (!stSel || !allUsers) return;
-  stSel.innerHTML = allUsers.filter(function(u) { return u.role === 'student'; }).map(function(u) { return '<option value="' + u.id + '">' + escHtml(u.name) + '</option>'; }).join('');
+  stSel.innerHTML = allUsers.filter(function(u) { return u.role === 'student' || u.role === 'renter'; }).map(function(u) { return '<option value="' + u.id + '">' + escHtml(u.name) + (u.role === 'renter' ? ' (Renter)' : '') + '</option>'; }).join('');
   iSel.innerHTML = allUsers.filter(function(u) { return u.role === 'instructor' || u.is_instructor; }).map(function(u) { return '<option value="' + u.id + '">' + escHtml(u.name) + '</option>'; }).join('');
-  if (currentUser.role === 'student') stSel.value = currentUser.id;
-  if (currentUser.role === 'instructor') iSel.value = currentUser.id;
+  if (currentUser.role === 'student' || currentUser.role === 'renter') {
+    stSel.value = currentUser.id;
+    stSel.disabled = true;
+  } else {
+    stSel.disabled = false;
+  }
+  if (currentUser.role === 'instructor') {
+    iSel.value = currentUser.id;
+    iSel.disabled = true;
+  } else {
+    iSel.disabled = false;
+  }
 }
 
 async function loadCfiUtilizationPage() {
