@@ -5357,7 +5357,7 @@ async function enterApp() {
 
   // ── Maintenance role: show ONLY 5 tabs, hide everything else ──
   if (currentUser.role === 'maintenance') {
-    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages']);
+    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages', 'schedule']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -8055,12 +8055,21 @@ async function loadDashboard() {
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const bookings = await loadBookings(now.toISOString(), weekEnd.toISOString());
-  const upcoming = bookings.filter(b => new Date(b.start_time) >= now).slice(0, 10);
+  const isSelfService = ['student', 'renter'].includes(currentUser.role);
+  const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
+  const upcoming = isSelfService
+    ? upcomingAll.filter(b => b.student_id === currentUser.id).slice(0, 10)
+    : upcomingAll.slice(0, 10);
 
-  const todayBookings = bookings.filter(b => {
-    const d = new Date(b.start_time);
-    return d.toDateString() === now.toDateString();
-  });
+  const todayBookings = isSelfService
+    ? bookings.filter(b => {
+        const d = new Date(b.start_time);
+        return d.toDateString() === now.toDateString() && b.student_id === currentUser.id;
+      })
+    : bookings.filter(b => {
+        const d = new Date(b.start_time);
+        return d.toDateString() === now.toDateString();
+      });
 
   const instructorCount = allUsers.filter(isInstructorUser).length;
   const studentCount = allUsers.filter(u => u.role === 'student').length;
@@ -8620,7 +8629,10 @@ function renderCalendar(year, month, startOffset, daysInMonth, bookings) {
                   b.student_name ? `${b.student_name} (solo)` :
                   b.instructor_name ? `${b.instructor_name} (solo)` : 'Unknown';
       const tooltipLabel = `${who} — ${b.tail_number} (${b.status})`;
-      return `<div class="calendar-event ${cls}" style="${style}" title="${tooltipLabel}">${prefix}${time} ${b.lesson_type || b.tail_number || ''}</div>`;
+      const isMine = b.student_id === currentUser?.id || b.instructor_id === currentUser?.id;
+      const bookedStyle = (!isMine && ['student', 'renter', 'maintenance'].includes(currentUser?.role))
+        ? 'opacity:0.92;border-left:2px solid var(--gray-500);' : '';
+      return `<div class="calendar-event ${cls}" style="${style}${bookedStyle}" title="${tooltipLabel}">${prefix}${time} ${b.tail_number || ''}${b.lesson_type ? ' · ' + escHtml(b.lesson_type) : ''}</div>`;
     }).join('');
 
     const moreHtml = dayBookings.length > 3 ? `<div style="font-size:0.6rem;color:var(--gray-500)">+${dayBookings.length - 3} more</div>` : '';
@@ -8744,10 +8756,14 @@ function openDayDetail(year, month, day) {
         peopleLine = 'Unknown';
       }
 
+      const isOwnBooking = b.student_id === currentUser.id || b.instructor_id === currentUser.id;
+      const viewOnlyTag = (!isOwnBooking && ['student', 'renter', 'maintenance'].includes(currentUser.role))
+        ? '<span class="tag" style="background:rgba(148,163,184,0.12);color:var(--gray-400);font-size:0.68rem">School booking — view only</span>' : '';
+
       return `<div class="booking-card">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.25rem;">
           <div class="booking-time">${formatTime(start)} - ${formatTime(end)}</div>
-          <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;"><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span>${bookingTypeBadge}${statusBadge}</div>
+          <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;"><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span>${bookingTypeBadge}${statusBadge}${viewOnlyTag}</div>
         </div>
         <div class="booking-details">${peopleLine}</div>
         <div class="booking-aircraft">${b.tail_number} - ${b.make_model}</div>

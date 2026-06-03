@@ -43,10 +43,8 @@ router.get('/', authenticateToken, async (req, res) => {
     if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
     if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
     if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
-    if (req.user.role === 'student' || req.user.role === 'renter') {
-      query += ` AND b.student_id = $${paramIdx++}`;
-      params.push(req.user.id);
-    }
+    // Schedule calendar: all roles see every active booking so students/renters/maintenance
+    // can tell which aircraft, instructors, and time slots are already taken.
     query += ' ORDER BY b.start_time';
     const result = await pool.query(query, params);
     res.json(result.rows);
