@@ -308,7 +308,7 @@ async function buildPDF() {
     'Claim/verify Google Business Profile with exact NAP from FAA records',
     'Primary category: "Flight School" + secondary: "Aviation Training"',
     'Upload 15–20 high-quality photos (aircraft fleet, classroom, hangar, students, instructors)',
-    'Add 1–2 videos (30–60 sec facility tour, student testimonial)',
+    'Add 1–2 videos (30–60 sec facility walkthrough, student testimonial)',
     'Create first 3 Google Posts (events, scholarship, enrollment deadline)',
     'Enable online scheduling or appointment booking link',
     'Submit to Yelp, YellowPages, MerchantCircle — consistent NAP across all',
@@ -446,7 +446,7 @@ async function buildPDF() {
     'Verify profile; use exact NAP from official FAA records',
     'Primary category: "Flight School" — Secondary: "Aviation Training," "Pilot Training"',
     'Upload 15–20 high-quality photos (aircraft, classrooms, hangars, instructors, students)',
-    'Add 1–2 videos (facility tour 30–60 sec, student testimonial)',
+    'Add 1–2 videos (facility walkthrough 30–60 sec, student testimonial)',
     'Create Service Areas: list all Virginia cities served',
   ]);
 
