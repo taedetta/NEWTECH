@@ -79,7 +79,7 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
     const location = String(req.query.location || '').trim();
     if (!location) {
       return res.status(400).json({
-        error: 'Location is required — it must exactly match a Location name in your Flight Schedule Pro account.',
+        error: 'Location is required — enter the location name used in your scheduling software.',
       });
     }
     const defaultLocation = String(req.query.default_location || '').trim();
@@ -107,7 +107,7 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
     const exportOptions = { location, defaultLocation, companyName };
     const dateStamp = new Date().toISOString().slice(0, 10);
     const filterSuffix = role && role !== 'all' ? `-${role}` : '';
-    const baseName = `fsp-people-import${filterSuffix}-${dateStamp}`;
+    const baseName = `people-export${filterSuffix}-${dateStamp}`;
 
     if (format === 'csv') {
       const buf = buildFspCsv(users, exportOptions);
@@ -122,7 +122,7 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
     return res.send(buf);
   } catch (err) {
     console.error('FSP people export error:', err);
-    res.status(500).json({ error: 'Failed to export users for Flight Schedule Pro' });
+    res.status(500).json({ error: 'Failed to export people' });
   }
 });
 

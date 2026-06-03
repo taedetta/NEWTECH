@@ -2070,7 +2070,7 @@
           <div class="page-header">
             <h1 id="people-title">People</h1>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-              <button class="btn btn-secondary btn-sm hidden" id="fsp-export-btn" onclick="openFspExportModal()">Export for Flight Schedule Pro</button>
+              <button class="btn btn-secondary btn-sm hidden" id="fsp-export-btn" onclick="openFspExportModal()">Export</button>
               <button class="btn btn-primary btn-sm hidden" id="add-user-btn" onclick="openInviteModal()">+ Add User</button>
             </div>
           </div>
@@ -4422,18 +4422,18 @@
     </div>
   </div>
 
-  <!-- ─── FSP PEOPLE EXPORT MODAL ─── -->
+  <!-- ─── PEOPLE EXPORT MODAL ─── -->
   <div id="fsp-export-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeFspExportModal()">
     <div class="modal" style="max-width:480px">
-      <h3>Export for Flight Schedule Pro</h3>
+      <h3>Export People</h3>
       <p style="color:var(--gray-400);font-size:0.85rem;margin-bottom:1rem;line-height:1.5">
-        Downloads an Excel file matching FSP&apos;s People Import Template. Submit the file to FSP Support to import users into your FSP account.
+        Download a spreadsheet of people from the current list. Use it to import users into your scheduling software.
       </p>
       <div id="fsp-export-error" class="error-msg hidden"></div>
       <div class="form-group">
-        <label>FSP Location <span style="color:var(--amber)">*</span></label>
+        <label>Location <span style="color:var(--amber)">*</span></label>
         <input type="text" id="fsp-export-location" required placeholder="e.g. New Tech Aviation" maxlength="100">
-        <small style="color:var(--gray-500);display:block;margin-top:0.35rem">Must exactly match a Location name in your Flight Schedule Pro account.</small>
+        <small style="color:var(--gray-500);display:block;margin-top:0.35rem">Must exactly match the location name in your scheduling software.</small>
       </div>
       <div class="form-group">
         <label>Default Location <span style="color:var(--gray-500)">(optional)</span></label>
@@ -4446,7 +4446,7 @@
       <div class="form-group">
         <label>Format</label>
         <select id="fsp-export-format">
-          <option value="xlsx" selected>Excel (.xlsx) — recommended for FSP</option>
+          <option value="xlsx" selected>Excel (.xlsx)</option>
           <option value="csv">CSV (.csv)</option>
         </select>
       </div>
@@ -11641,7 +11641,7 @@ async function downloadFspPeopleExport() {
 
   const location = document.getElementById('fsp-export-location').value.trim();
   if (!location) {
-    errEl.textContent = 'FSP Location is required — it must match a Location in your Flight Schedule Pro account.';
+    errEl.textContent = 'Location is required — enter the location name used in your scheduling software.';
     errEl.classList.remove('hidden');
     return;
   }
@@ -11677,11 +11677,11 @@ async function downloadFspPeopleExport() {
     const filterSuffix = role ? '-' + role : '';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'fsp-people-import' + filterSuffix + '-' + dateStamp + '.' + ext;
+    a.download = 'people-export' + filterSuffix + '-' + dateStamp + '.' + ext;
     a.click();
     URL.revokeObjectURL(a.href);
     closeFspExportModal();
-    showToast('Flight Schedule Pro export downloaded', 'success');
+    showToast('Export downloaded', 'success');
   } catch (err) {
     errEl.textContent = err.message || 'Failed to export people';
     errEl.classList.remove('hidden');
