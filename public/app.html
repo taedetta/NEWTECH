@@ -8231,12 +8231,27 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId, flightLabel) {
 }
 
 // ─── DASHBOARD ───
-function dashboardBookingMatchesScope(b, scope, isSelfService) {
-  if (isSelfService) return b.student_id === currentUser.id;
-  if (currentUser.role === 'instructor' && scope === 'mine') {
-    return b.instructor_id === currentUser.id;
+function dashboardShowsFlightTabs() {
+  if (!currentUser) return false;
+  if (['student', 'renter', 'instructor'].includes(currentUser.role)) return true;
+  if (['admin', 'owner'].includes(currentUser.role) && isBookableInstructor(currentUser)) return true;
+  return false;
+}
+
+function isDashboardOwnBooking(b) {
+  const uid = currentUser.id;
+  if (['student', 'renter'].includes(currentUser.role)) {
+    return b.student_id === uid;
   }
-  return true;
+  if (currentUser.role === 'instructor' || isBookableInstructor(currentUser)) {
+    return b.instructor_id === uid || b.student_id === uid;
+  }
+  return false;
+}
+
+function dashboardBookingMatchesScope(b, scope) {
+  if (scope === 'all') return true;
+  return isDashboardOwnBooking(b);
 }
 
 function setDashboardFlightsScope(scope) {
@@ -8250,13 +8265,12 @@ function setDashboardFlightsScope(scope) {
 
 function renderDashboardUpcomingTable(cache) {
   const { bookings, now, wxData } = cache;
-  const isSelfService = ['student', 'renter'].includes(currentUser.role);
-  const isInstructorDash = currentUser.role === 'instructor';
-  const scope = isInstructorDash ? dashboardFlightsScope : 'all';
+  const showTabs = dashboardShowsFlightTabs();
+  const scope = showTabs ? dashboardFlightsScope : 'all';
 
   const tabsEl = document.getElementById('dashboard-flights-tabs');
   if (tabsEl) {
-    if (isInstructorDash) {
+    if (showTabs) {
       tabsEl.classList.remove('hidden');
       tabsEl.innerHTML = `
         <button class="portal-tab${scope === 'mine' ? ' active' : ''}" type="button" onclick="setDashboardFlightsScope('mine')">Your Upcoming Flights</button>
@@ -8270,7 +8284,7 @@ function renderDashboardUpcomingTable(cache) {
 
   const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
   const upcoming = upcomingAll
-    .filter(b => dashboardBookingMatchesScope(b, scope, isSelfService))
+    .filter(b => dashboardBookingMatchesScope(b, scope))
     .slice(0, 10);
 
   const tbody = document.getElementById('upcoming-bookings-list');
@@ -8303,8 +8317,8 @@ function renderDashboardUpcomingTable(cache) {
       const p = emptyEl.querySelector('p');
       if (h3) h3.textContent = 'No upcoming flights in this view';
       if (p) {
-        p.textContent = isInstructorDash && scope === 'mine'
-          ? 'You have no flights assigned to you this week. Try All Flights to see the full schedule.'
+        p.textContent = scope === 'mine'
+          ? 'You have no upcoming flights in this view. Try All Flights to see the full schedule.'
           : 'Head to the Schedule to book your next lesson';
       }
     }
@@ -8367,17 +8381,16 @@ async function loadDashboard() {
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const bookings = await loadBookings(now.toISOString(), weekEnd.toISOString());
-  const isSelfService = ['student', 'renter'].includes(currentUser.role);
-  const isInstructorDash = currentUser.role === 'instructor';
-  const scope = isInstructorDash ? dashboardFlightsScope : 'all';
+  const showTabs = dashboardShowsFlightTabs();
+  const scope = showTabs ? dashboardFlightsScope : 'all';
   const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
-  const scopedUpcoming = upcomingAll.filter(b => dashboardBookingMatchesScope(b, scope, isSelfService));
+  const scopedUpcoming = upcomingAll.filter(b => dashboardBookingMatchesScope(b, scope));
   const upcoming = scopedUpcoming.slice(0, 10);
 
   const todayBookings = bookings.filter(b => {
     const d = new Date(b.start_time);
     if (d.toDateString() !== now.toDateString()) return false;
-    return dashboardBookingMatchesScope(b, scope, isSelfService);
+    return dashboardBookingMatchesScope(b, scope);
   });
 
   const instructorCount = allUsers.filter(isInstructorUser).length;
