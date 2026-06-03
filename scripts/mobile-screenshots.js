@@ -30,8 +30,9 @@ const PAGES = [
   { id: 'fleet', wait: '#fleet-table, #fleet-empty' },
   { id: 'messages', wait: '.messages-layout, #messages-empty' },
   { id: 'progress', wait: '#progress-content, .progress-student-grid' },
-  { id: 'people', wait: '#people-table, .people-table-wrap' },
-  { id: 'leads', wait: '#leads-table, #leads-empty' },
+  { id: 'history', wait: '#history-table-body, #history-empty, #history-cards' },
+  { id: 'billing', wait: '#billing-students-list, #billing-detail, #billing-empty' },
+  { id: 'instructor-hours', wait: '#ih-tbody, #ih-empty, #ih-cards' },
   { id: 'portal', wait: '#portal-content, .portal-hero' },
 ];
 

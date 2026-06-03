@@ -267,6 +267,165 @@ body.staging-env .mobile-toggle {
   text-align: center;
 }
 
+/* ─── Shared mobile data cards (history, billing, instructor hours) ─── */
+.mob-cards-wrap {
+  display: none;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.mob-card {
+  background: var(--dark-blue);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.9rem 1rem;
+}
+
+.mob-card-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.mob-card-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--white);
+  line-height: 1.35;
+}
+
+.mob-card-sub {
+  font-size: 0.72rem;
+  color: var(--gray-500);
+  margin-top: 0.1rem;
+}
+
+.mob-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--gray-300);
+  margin-bottom: 0.6rem;
+}
+
+.mob-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.mob-card-meta .meta-label {
+  color: var(--gray-500);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.mob-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+}
+
+.mob-card-stat {
+  background: var(--slate);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.45rem;
+  text-align: center;
+}
+
+.mob-card-stat-lbl {
+  font-size: 0.55rem;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  margin-bottom: 0.12rem;
+  line-height: 1.2;
+}
+
+.mob-card-stat-val {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--gray-200);
+}
+
+.mob-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+.mob-card-actions .btn-sm {
+  flex: 1 1 calc(50% - 0.2rem);
+  min-width: calc(50% - 0.2rem);
+  justify-content: center;
+}
+
+.mob-card-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.mob-card-total-label {
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.mob-card-total-val {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--sky);
+}
+
+/* Billing student list — grid stats on mobile */
+.billing-student-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  width: 100%;
+}
+
+.history-stats-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.mobile-filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.ih-tabs-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.ih-tabs-wrap::-webkit-scrollbar {
+  display: none;
+}
+
 /* ─── Mobile layout activation ─── */
 @media (max-width: 768px) {
   body.mobile-app-active .mobile-top-bar,
@@ -448,9 +607,7 @@ body.staging-env .mobile-toggle {
     min-height: 44px;
   }
 
-  /* Table scroll hints on data-heavy pages */
-  body.mobile-app-active #page-history .table-card::before,
-  body.mobile-app-active #page-billing .table-card::before,
+  /* Table scroll hints on data-heavy pages (tables without card fallback) */
   body.mobile-app-active #page-approvals .table-card::before,
   body.mobile-app-active #page-discrepancies .table-card::before {
     content: 'Swipe sideways for more columns →';
@@ -458,6 +615,214 @@ body.staging-env .mobile-toggle {
     font-size: 0.72rem;
     color: var(--gray-500);
     padding: 0.5rem 0.85rem 0.25rem;
+  }
+
+  /* Hide wide tables — show mobile cards instead */
+  body.mobile-app-active #history-table-card,
+  body.mobile-app-active #ih-table-card,
+  body.mobile-app-active #billing-monthly-table-card,
+  body.mobile-app-active #billing-aircraft-table-card,
+  body.mobile-app-active #billing-flights-table-card,
+  body.mobile-app-active #billing-ground-table-card {
+    display: none !important;
+  }
+
+  body.mobile-app-active .mob-cards-wrap {
+    display: flex;
+  }
+
+  /* Booking history */
+  body.mobile-app-active .history-stats-bar {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.55rem;
+    margin-bottom: 1rem;
+  }
+
+  body.mobile-app-active .history-stats-bar .table-card {
+    padding: 0.75rem 0.85rem !important;
+  }
+
+  body.mobile-app-active .history-stats-bar .table-card > div:first-child {
+    font-size: 1.15rem !important;
+  }
+
+  body.mobile-app-active .mobile-filter-grid {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+
+  body.mobile-app-active .mobile-filter-grid .form-group {
+    width: 100%;
+    min-width: unset !important;
+    flex: 1 1 100% !important;
+    margin-bottom: 0 !important;
+  }
+
+  body.mobile-app-active .mobile-filter-grid select,
+  body.mobile-app-active .mobile-filter-grid input[type="date"] {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  body.mobile-app-active .history-period-btns {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  body.mobile-app-active .history-period-btns .btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+
+  body.mobile-app-active .history-filters > .btn {
+    width: 100%;
+    min-height: 44px;
+    margin-bottom: 0 !important;
+  }
+
+  body.mobile-app-active .mob-card-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  body.mobile-app-active .mob-card-stats.cols-3-wide {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Instructor hours */
+  body.mobile-app-active #page-instructor-hours .page-header-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  body.mobile-app-active #page-instructor-hours .page-header-actions .btn {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  body.mobile-app-active .ih-filters > div {
+    width: 100%;
+  }
+
+  body.mobile-app-active .ih-filters select,
+  body.mobile-app-active .ih-filters input[type="date"],
+  body.mobile-app-active .ih-filters label[style*="display:flex"] {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  body.mobile-app-active #ih-date-nav > div:last-child {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  body.mobile-app-active #ih-date-nav > div:last-child .btn,
+  body.mobile-app-active #ih-date-nav > div:last-child input,
+  body.mobile-app-active #ih-date-nav > div:last-child select,
+  body.mobile-app-active #ih-date-nav > div:last-child > div {
+    flex: 1 1 auto;
+    min-height: 40px;
+  }
+
+  body.mobile-app-active #ih-stats.stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  body.mobile-app-active .ih-tab-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 0.6rem 0.75rem !important;
+    font-size: 0.78rem !important;
+    white-space: nowrap;
+  }
+
+  body.mobile-app-active .ih-filters > div:first-child > div:last-child {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  body.mobile-app-active .ih-filters > div:first-child > div:last-child .btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  /* Billing */
+  body.mobile-app-active #billing-student-name {
+    font-size: 0.95rem !important;
+    line-height: 1.4;
+    margin-bottom: 1rem !important;
+  }
+
+  body.mobile-app-active .billing-view-tabs {
+    width: 100%;
+  }
+
+  body.mobile-app-active .billing-view-tabs .btn {
+    flex: 1;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  body.mobile-app-active .billing-student-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+    padding: 0.9rem 1rem;
+  }
+
+  body.mobile-app-active .billing-student-name {
+    font-size: 1rem;
+    min-width: unset;
+    width: 100%;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  body.mobile-app-active .billing-student-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.4rem;
+    width: 100%;
+  }
+
+  body.mobile-app-active .billing-student-stat {
+    background: var(--slate);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.45rem 0.4rem;
+    text-align: center;
+    min-width: unset;
+    display: block;
+  }
+
+  body.mobile-app-active .billing-student-stat .bs-label {
+    font-size: 0.58rem;
+    margin-bottom: 0.1rem;
+  }
+
+  body.mobile-app-active .billing-student-stat .bs-value {
+    font-size: 0.88rem;
+  }
+
+  body.mobile-app-active #billing-back-btn {
+    width: 100%;
+    text-align: center;
+    padding: 0.65rem;
+    margin-bottom: 0.75rem;
+  }
+
+  body.mobile-app-active #billing-detail h3 {
+    font-size: 0.78rem !important;
   }
 
   /* Stat grid tighter */
@@ -510,6 +875,18 @@ body.staging-env .mobile-toggle {
 @media (max-width: 375px) {
   body.mobile-app-active .stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  body.mobile-app-active .history-stats-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  body.mobile-app-active .billing-student-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  body.mobile-app-active .mob-card-stats.cols-3-wide {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   body.mobile-app-active .mobile-top-bar-title {

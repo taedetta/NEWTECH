@@ -2405,7 +2405,7 @@
             <h1 id="billing-title">Billing</h1>
           </div>
           <div id="billing-audit-banner" class="hidden" style="margin-bottom:1.25rem;padding:0.85rem 1rem;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);color:var(--gray-200);font-size:0.88rem;"></div>
-          <div id="billing-view-tabs" class="hidden" style="display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;">
+          <div id="billing-view-tabs" class="hidden billing-view-tabs" style="display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;">
             <button type="button" class="btn btn-secondary btn-sm billing-view-tab active" data-view="students" onclick="switchBillingView('students')">All Students</button>
             <button type="button" class="btn btn-secondary btn-sm billing-view-tab" data-view="my" onclick="switchBillingView('my')">My Activity</button>
           </div>
@@ -2429,31 +2429,33 @@
             <!-- Monthly breakdown -->
             <div style="margin-bottom:2rem;">
               <h3 style="margin-bottom:1rem;font-size:0.9rem;color:var(--gray-300);text-transform:uppercase;letter-spacing:1px;">Monthly Breakdown</h3>
-              <div class="table-card">
+              <div class="table-card" id="billing-monthly-table-card">
                 <table class="data-table">
                   <thead><tr><th>Month</th><th>Hobbs Hrs</th><th>Aircraft Charge</th><th>Instr Hrs</th><th>Instr Charge</th><th>Total</th></tr></thead>
                   <tbody id="billing-monthly-table"></tbody>
                 </table>
                 <div id="billing-monthly-empty" class="hidden" style="padding:2rem;text-align:center;color:var(--gray-500);font-size:0.9rem;">No completed flights yet</div>
               </div>
+              <div id="billing-monthly-cards" class="mob-cards-wrap"></div>
             </div>
 
             <!-- Per-aircraft breakdown -->
             <div style="margin-bottom:2rem;">
               <h3 style="margin-bottom:1rem;font-size:0.9rem;color:var(--gray-300);text-transform:uppercase;letter-spacing:1px;">By Aircraft</h3>
-              <div class="table-card">
+              <div class="table-card" id="billing-aircraft-table-card">
                 <table class="data-table">
                   <thead><tr><th>Aircraft</th><th>Rate/hr</th><th>Hobbs Hrs</th><th>Aircraft Charge</th><th>Instr Hrs</th><th>Instr Charge</th><th>Total</th></tr></thead>
                   <tbody id="billing-aircraft-table"></tbody>
                 </table>
                 <div id="billing-aircraft-empty" class="hidden" style="padding:2rem;text-align:center;color:var(--gray-500);font-size:0.9rem;">No completed flights yet</div>
               </div>
+              <div id="billing-aircraft-cards" class="mob-cards-wrap"></div>
             </div>
 
             <!-- Flight log -->
             <div>
               <h3 style="margin-bottom:1rem;font-size:0.9rem;color:var(--gray-300);text-transform:uppercase;letter-spacing:1px;">Flight Log</h3>
-              <div class="table-card">
+              <div class="table-card" id="billing-flights-table-card">
                 <table class="data-table">
                   <thead><tr><th>Date</th><th>Aircraft</th><th>Type</th><th>Hobbs Hrs</th><th>Dual Hrs</th><th>Rental</th><th>Instruction</th><th>Total</th><th id="billing-flights-actions-th" class="hidden"></th></tr></thead>
                   <tbody id="billing-flights-table"></tbody>
@@ -2461,18 +2463,20 @@
                 <div id="billing-flights-total" style="padding:0.75rem 1rem;text-align:right;font-size:0.9rem;color:var(--gray-300);border-top:1px solid var(--border-light);display:none;"></div>
                 <div id="billing-flights-empty" class="hidden" style="padding:2rem;text-align:center;color:var(--gray-500);font-size:0.9rem;">No completed flights yet</div>
               </div>
+              <div id="billing-flights-cards" class="mob-cards-wrap"></div>
             </div>
 
             <!-- Ground sessions -->
             <div id="billing-ground-section" style="margin-top:2rem;">
               <h3 style="margin-bottom:1rem;font-size:0.9rem;color:var(--gray-300);text-transform:uppercase;letter-spacing:1px;">Ground Sessions</h3>
-              <div class="table-card">
+              <div class="table-card" id="billing-ground-table-card">
                 <table class="data-table">
                   <thead><tr><th>Date</th><th>Instructor</th><th>Type</th><th>Ground Hrs</th><th>Aircraft Charge</th><th>Instruction</th><th>Total</th><th id="billing-ground-actions-th" class="hidden"></th></tr></thead>
                   <tbody id="billing-ground-table"></tbody>
                 </table>
                 <div id="billing-ground-empty" class="hidden" style="padding:2rem;text-align:center;color:var(--gray-500);font-size:0.9rem;">No ground sessions yet</div>
               </div>
+              <div id="billing-ground-cards" class="mob-cards-wrap"></div>
             </div>
           </div>
 
@@ -2488,7 +2492,7 @@
         <div id="page-instructor-hours" class="page hidden">
           <div class="page-header">
             <h1>Instructor Hours</h1>
-            <div style="display:flex;gap:0.5rem;align-items:center;">
+            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap" class="page-header-actions">
               <button class="btn btn-danger btn-sm" id="ih-clear-all-btn" onclick="clearAllForInstructor()" style="width:auto;display:none;">🗑 Clear All</button>
               <button class="btn btn-primary btn-sm" onclick="toggleIHForm()" id="ih-toggle-btn" style="width:auto;">+ Log Hours</button>
               <button class="btn btn-secondary btn-sm" onclick="toggleGSForm()" id="gs-toggle-btn" style="width:auto;">+ Ground Session</button>
@@ -2599,8 +2603,8 @@
           </div>
 
           <!-- Filters -->
-          <div class="table-card" style="padding:1rem;margin-bottom:1.5rem;">
-            <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end;">
+          <div class="table-card mobile-filter-card" style="padding:1rem;margin-bottom:1.5rem;">
+            <div class="mobile-filter-grid ih-filters">
               <!-- Time period toggle -->
               <div>
                 <div style="font-size:0.68rem;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.4rem;">Period</div>
@@ -2661,7 +2665,7 @@
           </div>
 
           <!-- HOBBS / INSTRUCTION tabs -->
-          <div style="display:flex;gap:0;margin-bottom:1.25rem;border-bottom:2px solid var(--border-light);">
+          <div class="ih-tabs-wrap" style="display:flex;gap:0;margin-bottom:1.25rem;border-bottom:2px solid var(--border-light);">
             <button class="ih-tab-btn active" data-tab="hobbs" onclick="setIHTab('hobbs')" style="padding:0.65rem 1.5rem;background:transparent;border:none;border-bottom:2px solid var(--sky);color:var(--sky);font-weight:700;font-size:0.9rem;cursor:pointer;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:-2px;">HOBBS</button>
             <button class="ih-tab-btn" data-tab="instruction" onclick="setIHTab('instruction')" style="padding:0.65rem 1.5rem;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--gray-400);font-weight:600;font-size:0.9rem;cursor:pointer;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:-2px;transition:color 0.15s, border-color 0.15s;">INSTRUCTION</button>
           </div>
@@ -2670,7 +2674,7 @@
           <div class="stat-grid" id="ih-stats" style="margin-bottom:1.5rem;"></div>
 
           <!-- Entries table -->
-          <div class="table-card">
+          <div class="table-card" id="ih-table-card">
             <table class="data-table" id="ih-table">
               <thead>
                 <tr>
@@ -2694,6 +2698,7 @@
               <div>No entries yet. Use the <strong>Log Hours</strong> button above to submit instructor hours.</div>
             </div>
           </div>
+          <div id="ih-cards" class="mob-cards-wrap" aria-label="Instructor hours entries"></div>
         </div>
 
         <!-- ─── FLIGHT LOG PAGE ─── -->
@@ -2778,15 +2783,15 @@
           </div>
 
           <!-- Summary stats bar -->
-          <div id="history-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1rem;margin-bottom:1.5rem"></div>
+          <div id="history-stats" class="history-stats-bar"></div>
 
           <!-- Filters -->
-          <div class="table-card" style="padding:1rem;margin-bottom:1.5rem">
-            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:end">
+          <div class="table-card mobile-filter-card" style="padding:1rem;margin-bottom:1.5rem">
+            <div class="mobile-filter-grid history-filters">
               <!-- Period buttons -->
               <div class="form-group" style="margin-bottom:0">
                 <label style="font-size:0.78rem;color:var(--gray-500)">Period</label>
-                <div style="display:flex;gap:0.35rem;flex-wrap:wrap">
+                <div style="display:flex;gap:0.35rem;flex-wrap:wrap" class="history-period-btns">
                   <button class="btn btn-sm history-period-btn active" data-period="month" onclick="setHistoryPeriod('month')" style="font-size:0.78rem;padding:0.35rem 0.65rem">Month</button>
                   <button class="btn btn-sm history-period-btn" data-period="week" onclick="setHistoryPeriod('week')" style="font-size:0.78rem;padding:0.35rem 0.65rem">Week</button>
                   <button class="btn btn-sm history-period-btn" data-period="day" onclick="setHistoryPeriod('day')" style="font-size:0.78rem;padding:0.35rem 0.65rem">Day</button>
@@ -2834,7 +2839,7 @@
           </div>
 
           <!-- Results table -->
-          <div class="table-card" style="overflow-x:auto">
+          <div class="table-card" id="history-table-card" style="overflow-x:auto">
             <table class="data-table" id="history-table">
               <thead>
                 <tr>
@@ -2858,6 +2863,7 @@
               No bookings for the selected filters.
             </div>
           </div>
+          <div id="history-cards" class="mob-cards-wrap" aria-label="Booking history"></div>
         </div>
 
         <!-- ─── HOURS AUDIT PAGE (owner/admin only) ─── -->
@@ -13954,13 +13960,19 @@ function renderBillingStudentList(students) {
     var totalCost = parseFloat(s.total_rental || 0) + parseFloat(s.total_instruction || 0);
     return '<div class="billing-student-card" onclick="selectBillingStudent(' + s.id + ', \'' + escHtml(s.name).replace(/'/g, "\\'") + '\')">' +
       '<div class="billing-student-name">' + escHtml(s.name) + '</div>' +
+      '<div class="billing-student-stats">' +
       '<div class="billing-student-stat"><div class="bs-label">Flights</div><div class="bs-value">' + (s.flight_count || 0) + '</div></div>' +
       '<div class="billing-student-stat"><div class="bs-label">Hours</div><div class="bs-value">' + parseFloat(s.total_hours || 0).toFixed(1) + '</div></div>' +
       '<div class="billing-student-stat"><div class="bs-label">Rental</div><div class="bs-value" style="color:var(--sky)">$' + parseFloat(s.total_rental || 0).toFixed(0) + '</div></div>' +
       '<div class="billing-student-stat"><div class="bs-label">Instruction</div><div class="bs-value" style="color:var(--amber)">$' + parseFloat(s.total_instruction || 0).toFixed(0) + '</div></div>' +
       '<div class="billing-student-stat"><div class="bs-label">Total</div><div class="bs-value" style="color:var(--green)">$' + totalCost.toFixed(0) + '</div></div>' +
-      '</div>';
+      '</div></div>';
   }).join('');
+}
+
+function mobStat(label, value, color) {
+  var style = color ? ' style="color:' + color + '"' : '';
+  return '<div class="mob-card-stat"><div class="mob-card-stat-lbl">' + escHtml(label) + '</div><div class="mob-card-stat-val"' + style + '>' + value + '</div></div>';
 }
 
 async function selectBillingStudent(studentId, studentName) {
@@ -13998,6 +14010,10 @@ async function loadBillingForStudent(studentId) {
       document.getElementById('billing-aircraft-table').innerHTML = '';
       document.getElementById('billing-flights-table').innerHTML = '';
       document.getElementById('billing-ground-table').innerHTML = '';
+      ['billing-monthly-cards', 'billing-aircraft-cards', 'billing-flights-cards', 'billing-ground-cards'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+      });
       document.getElementById('billing-monthly-empty').classList.remove('hidden');
       document.getElementById('billing-aircraft-empty').classList.remove('hidden');
       document.getElementById('billing-flights-empty').classList.remove('hidden');
@@ -14084,6 +14100,21 @@ async function loadBillingForStudent(studentId) {
         '<td style="color:var(--amber)">$' + m.instrCharge.toFixed(0) + '</td>' +
         '<td style="font-weight:600;color:var(--green)">$' + tot.toFixed(0) + '</td></tr>';
     }).join('');
+    var monthlyCardsEl = document.getElementById('billing-monthly-cards');
+    if (monthlyCardsEl) {
+      monthlyCardsEl.innerHTML = months.map(function(k) {
+        var m = monthlyData[k];
+        var tot = m.acCharge + m.instrCharge;
+        return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + escHtml(m.label) + '</div></div></div>' +
+          '<div class="mob-card-stats cols-3-wide">' +
+          mobStat('Hobbs Hrs', m.hobbsHrs.toFixed(1), 'var(--sky)') +
+          mobStat('Aircraft', '$' + m.acCharge.toFixed(0), 'var(--sky)') +
+          mobStat('Instr Hrs', m.instrHrs.toFixed(1), 'var(--amber)') +
+          mobStat('Instruction', '$' + m.instrCharge.toFixed(0), 'var(--amber)') +
+          '</div>' +
+          '<div class="mob-card-total"><span class="mob-card-total-label">Total</span><span class="mob-card-total-val">$' + tot.toFixed(0) + '</span></div></article>';
+      }).join('');
+    }
 
     // Aircraft breakdown
     var acKeys = Object.keys(aircraftData);
@@ -14098,6 +14129,24 @@ async function loadBillingForStudent(studentId) {
         '<td style="color:var(--amber)">$' + a.instrCharge.toFixed(0) + '</td>' +
         '<td style="font-weight:600;color:var(--green)">$' + tot.toFixed(0) + '</td></tr>';
     }).join('');
+    var aircraftCardsEl = document.getElementById('billing-aircraft-cards');
+    if (aircraftCardsEl) {
+      aircraftCardsEl.innerHTML = acKeys.map(function(k) {
+        var a = aircraftData[k];
+        var tot = a.acCharge + a.instrCharge;
+        var rateStr = a.rate > 0 ? '$' + a.rate.toFixed(0) + '/hr' : '—';
+        return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + escHtml(a.tail) + '</div>' +
+          (a.model ? '<div class="mob-card-sub">' + escHtml(a.model) + '</div>' : '') + '</div></div>' +
+          '<div class="mob-card-stats cols-3-wide">' +
+          mobStat('Rate', rateStr) +
+          mobStat('Hobbs Hrs', a.hobbsHrs.toFixed(1), 'var(--sky)') +
+          mobStat('Aircraft', '$' + a.acCharge.toFixed(0), 'var(--sky)') +
+          mobStat('Instr Hrs', a.instrHrs.toFixed(1), 'var(--amber)') +
+          mobStat('Instruction', '$' + a.instrCharge.toFixed(0), 'var(--amber)') +
+          '</div>' +
+          '<div class="mob-card-total"><span class="mob-card-total-label">Total</span><span class="mob-card-total-val">$' + tot.toFixed(0) + '</span></div></article>';
+      }).join('');
+    }
 
     // Show/hide Actions column for admin/owner
     var canEditBilling = ['owner','admin'].includes(currentUser.role);
@@ -14131,6 +14180,36 @@ async function loadBillingForStudent(studentId) {
         '<td style="font-weight:600;color:var(--green)">$' + total.toFixed(0) + '</td>' +
         actionTd + '</tr>';
     }).join('');
+    var flightsCardsEl = document.getElementById('billing-flights-cards');
+    if (flightsCardsEl) {
+      flightsCardsEl.innerHTML = flights.map(function(f) {
+        var hrs = billingHobbsHours(f);
+        var rentalCost = f.aircraft_charge_amount != null ? parseFloat(f.aircraft_charge_amount) : hrs * parseFloat(f.aircraft_rate || 0);
+        var dualHrs = billingDualHours(f);
+        var instrCost = f.booking_type === 'dual' ? (f.instruction_charge_amount != null ? parseFloat(f.instruction_charge_amount) : dualHrs * parseFloat(f.instructor_rate || 0)) : 0;
+        var total = rentalCost + instrCost;
+        var d = new Date(f.start_time);
+        var dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        var typeTag = f.booking_type === 'dual' ? '<span class="tag tag-sky">Dual</span>' : '<span class="tag tag-green">Solo</span>';
+        var dualHrsStr = (f.booking_type === 'dual' && dualHrs > 0) ? dualHrs.toFixed(1) : (f.booking_type === 'dual' ? hrs.toFixed(1) : '—');
+        var actions = canEditBilling
+          ? '<div class="mob-card-actions"><button class="btn btn-secondary btn-sm" onclick=\'openEditBillingFlightModal(' + JSON.stringify(f.id) + ')\'>Edit</button>' +
+            '<button class="btn btn-danger btn-sm" onclick=\'confirmDeleteBillingFlight(' + JSON.stringify(f.id) + ', ' + JSON.stringify(dateStr) + ')\'>Delete</button></div>'
+          : '';
+        return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + dateStr + '</div><div class="mob-card-sub">' + escHtml(f.tail_number || '—') + '</div></div>' + typeTag + '</div>' +
+          '<div class="mob-card-meta">' +
+          '<span><span class="meta-label">CFI</span> ' + escHtml(f.instructor_name || '—') + '</span>' +
+          '</div>' +
+          '<div class="mob-card-stats cols-3-wide">' +
+          mobStat('Hobbs Hrs', hrs.toFixed(1), 'var(--sky)') +
+          mobStat('Dual Hrs', dualHrsStr) +
+          mobStat('Rental', '$' + rentalCost.toFixed(0), 'var(--sky)') +
+          mobStat('Instruction', instrCost > 0 ? '$' + instrCost.toFixed(0) : '—', 'var(--amber)') +
+          '</div>' +
+          '<div class="mob-card-total"><span class="mob-card-total-label">Total</span><span class="mob-card-total-val">$' + total.toFixed(0) + '</span></div>' +
+          actions + '</article>';
+      }).join('');
+    }
 
     // Show/hide Actions column for ground sessions
     var actThG = document.getElementById('billing-ground-actions-th');
@@ -14156,6 +14235,27 @@ async function loadBillingForStudent(studentId) {
         '<td style="font-weight:600;color:var(--green)">$' + charge.toFixed(0) + '</td>' +
         actionTd + '</tr>';
     }).join('');
+    var groundCardsEl = document.getElementById('billing-ground-cards');
+    if (groundCardsEl) {
+      groundCardsEl.innerHTML = groundSessions.map(function(gs) {
+        var dateStr = String(gs.session_date).slice(0,10);
+        var d = new Date(dateStr + 'T12:00:00');
+        var dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        var charge = parseFloat(gs.instruction_charge_amount || 0);
+        var groundHrs = parseFloat(gs.ground_hours || 0).toFixed(1);
+        var actions = canEditBilling
+          ? '<div class="mob-card-actions"><button class="btn btn-danger btn-sm" onclick=\'confirmDeleteGroundSession(' + JSON.stringify(gs.id) + ', ' + JSON.stringify(dateLabel) + ')\'>Delete</button></div>'
+          : '';
+        return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + dateLabel + '</div><div class="mob-card-sub">' + escHtml(gs.instructor_name || '—') + '</div></div>' +
+          '<span class="tag" style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.3);">Ground</span></div>' +
+          '<div class="mob-card-stats">' +
+          mobStat('Ground Hrs', groundHrs, 'var(--amber)') +
+          mobStat('Instruction', '$' + charge.toFixed(0), 'var(--amber)') +
+          '</div>' +
+          '<div class="mob-card-total"><span class="mob-card-total-label">Total</span><span class="mob-card-total-val">$' + charge.toFixed(0) + '</span></div>' +
+          actions + '</article>';
+      }).join('');
+    }
 
   } catch (err) {
     detailEl.innerHTML = '<div style="color:var(--red);padding:2rem">Failed to load billing data: ' + escHtml(err.error || err.message || 'Unknown error') + '</div>';
@@ -14664,6 +14764,8 @@ async function loadHistoryLegacyPage() {
 
     if (!rows.length) {
       tbody.innerHTML = '';
+      var historyCardsEl = document.getElementById('history-cards');
+      if (historyCardsEl) historyCardsEl.innerHTML = '';
       emptyEl.classList.remove('hidden');
       return;
     }
@@ -14703,9 +14805,55 @@ async function loadHistoryLegacyPage() {
         ${actionTd}
       </tr>`;
     }).join('');
+
+    var historyCardsEl = document.getElementById('history-cards');
+    if (historyCardsEl) {
+      historyCardsEl.innerHTML = rows.map(function(r) {
+        return renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar);
+      }).join('');
+    }
   } catch (err) {
     console.error('Booking history load error:', err);
   }
+}
+
+function renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar) {
+  var dateStr = String(r.flight_date).slice(0, 10);
+  var isGround = r.session_type === 'ground';
+  var needsHours = r.session_type === 'flight' && r.status === 'completed' && (r.hobbs_delta == null || parseFloat(r.hobbs_delta) <= 0);
+  var statusTag = r.status === 'cancelled'
+    ? '<span class="tag" style="background:rgba(239,68,68,0.15);color:#F87171">Cancelled</span>'
+    : isGround
+      ? '<span class="tag" style="background:rgba(59,130,246,0.15);color:var(--sky)">Ground</span>'
+      : needsHours
+        ? '<span class="tag tag-amber">Needs Hours</span>'
+        : '<span class="tag tag-completed">Completed</span>';
+  var hobbsStr = isGround || needsHours ? '—' : fmtVal(r.hobbs_delta);
+  var tachStr = isGround || needsHours ? '—' : fmtVal(r.tach_delta);
+  var totalStr = fmtDollar(r.total_charge > 0 ? r.total_charge : null);
+  var actions = canEditHistory
+    ? '<div class="mob-card-actions"><button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit</button>' +
+      '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\')">Delete</button></div>'
+    : '';
+  var cancelNote = (r.status === 'cancelled' && r.cancellation_reason)
+    ? '<div class="mob-card-sub" style="color:#F87171;margin-top:0.35rem">' + escHtml(r.cancellation_reason) + '</div>'
+    : '';
+  return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + dateStr + '</div>' +
+    '<div class="mob-card-sub">' + escHtml(r.tail_number || '—') + (r.make_model ? ' · ' + escHtml(r.make_model) : '') + '</div></div>' + statusTag + '</div>' +
+    cancelNote +
+    '<div class="mob-card-meta">' +
+    '<span><span class="meta-label">Student</span> ' + (r.student_name ? escHtml(r.student_name) : '—') + '</span>' +
+    '<span><span class="meta-label">CFI</span> ' + (r.instructor_name ? escHtml(r.instructor_name) : '—') + '</span>' +
+    '</div>' +
+    '<div class="mob-card-stats cols-3-wide">' +
+    mobStat('Hobbs', hobbsStr, 'var(--sky)') +
+    mobStat('Tach', tachStr, 'var(--sky)') +
+    mobStat('Instr Hrs', fmtVal(r.dual_instruction_hours), 'var(--amber)') +
+    mobStat('Aircraft $', fmtDollar(r.aircraft_charge_amount), 'var(--sky)') +
+    mobStat('Instr $', fmtDollar(r.instruction_charge_amount), 'var(--amber)') +
+    '</div>' +
+    '<div class="mob-card-total"><span class="mob-card-total-label">Total</span><span class="mob-card-total-val">' + totalStr + '</span></div>' +
+    actions + '</article>';
 }
 
 function clearHistoryFilters() {
@@ -17746,6 +17894,8 @@ function renderIHTable(entries) {
   if (!sorted.length) {
     tbody.innerHTML = '';
     if (tfoot) tfoot.innerHTML = '';
+    var ihCardsEl = document.getElementById('ih-cards');
+    if (ihCardsEl) ihCardsEl.innerHTML = '';
     if (emptyEl) emptyEl.classList.remove('hidden');
     return;
   }
@@ -17820,6 +17970,21 @@ function renderIHTable(entries) {
       '</tr>';
   }).join('');
 
+  var ihCardsEl = document.getElementById('ih-cards');
+  if (ihCardsEl) {
+    ihCardsEl.innerHTML = sorted.map(function(e) {
+      return renderIHCard(e, isAdminOrOwnerView);
+    }).join('') +
+      '<article class="mob-card" style="border-color:var(--border-light)"><div class="mob-card-hdr"><div class="mob-card-title">Period Total</div></div>' +
+      '<div class="mob-card-stats cols-3-wide">' +
+      mobStat('Hobbs Hrs', footTotalAcHrs.toFixed(1), 'var(--sky)') +
+      mobStat('Hobbs $', '$' + footTotalHobbsCharge.toFixed(2), 'var(--sky)') +
+      mobStat('Dual Hrs', footTotalInHrs.toFixed(1), 'var(--amber)') +
+      mobStat('Dual $', '$' + footTotalInstrCharge.toFixed(2), 'var(--amber)') +
+      '</div>' +
+      '<div class="mob-card-total"><span class="mob-card-total-label">Total Billed</span><span class="mob-card-total-val">$' + footTotalBilled.toFixed(2) + '</span></div></article>';
+  }
+
   // Render footer totals row
   if (tfoot) {
     var instrNameFootTd = isAdminOrOwnerView ? '<td></td>' : '';
@@ -17836,6 +18001,54 @@ function renderIHTable(entries) {
       '<td></td>' +
       '</tr>';
   }
+}
+
+function renderIHCard(e, showInstructor) {
+  var dateStr = e.entry_date ? e.entry_date.slice(0, 10) : '—';
+  var isGround = e.entry_type === 'ground';
+  var acHrs = isGround ? '—' : parseFloat(e.aircraft_hours || 0).toFixed(1);
+  var hobbsCharge = parseFloat(e.aircraft_hours || 0) * parseFloat(e.aircraft_rate || 0);
+  var inHrs = parseFloat(e.instruction_hours || 0).toFixed(1);
+  var instrCharge = parseFloat(e.instruction_hours || 0) * parseFloat(e.instructor_rate || 0);
+  var totalBilled = parseFloat(e.total_billed || 0);
+  var acLabel = isGround
+    ? '<span class="tag" style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.3);">Ground</span>'
+    : (e.tail_number ? escHtml(e.tail_number) : '—');
+  var canDelete = currentUser.role === 'owner' || currentUser.role === 'admin' || (currentUser.role === 'instructor' && e.instructor_id === currentUser.id);
+  var canEdit = currentUser.role === 'owner' || currentUser.role === 'admin'
+    || (currentUser.role === 'instructor' && e.instructor_id === currentUser.id);
+  var editBtn = canEdit
+    ? (isGround
+      ? '<button class="btn btn-secondary btn-sm" onclick="openEditGSModal(' + e.id + ')">Edit</button>'
+      : '<button class="btn btn-secondary btn-sm" onclick="openEditIHModal(' + e.id + ')">Edit</button>')
+    : '';
+  var deleteBtn = canDelete
+    ? (isGround
+      ? '<button class="btn btn-danger btn-sm" onclick="deleteGSEntry(' + e.id + ', \'' + escHtml(e.student_name || '').replace(/'/g, "\\'") + '\', \'' + escHtml(dateStr) + '\')">Delete</button>'
+      : '<button class="btn btn-danger btn-sm" onclick="deleteIHEntry(' + e.id + ', \'' + escHtml(e.student_name || '').replace(/'/g, "\\'") + '\', \'' + escHtml(dateStr) + '\')">Delete</button>')
+    : '';
+  var actions = (editBtn || deleteBtn)
+    ? '<div class="mob-card-actions">' + editBtn + deleteBtn + '</div>'
+    : '';
+  var instructorMeta = showInstructor && e.instructor_name
+    ? '<span><span class="meta-label">CFI</span> ' + escHtml(e.instructor_name) + '</span>'
+    : '';
+  return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + escHtml(dateStr) + '</div>' +
+    '<div class="mob-card-sub">' + (isGround ? 'Ground session' : escHtml(e.make_model || '')) + '</div></div>' +
+    (isGround ? acLabel : '<span style="font-family:\'Space Grotesk\';font-weight:700;color:var(--white)">' + acLabel + '</span>') + '</div>' +
+    '<div class="mob-card-meta">' +
+    instructorMeta +
+    '<span><span class="meta-label">Student</span> ' + (e.student_name ? escHtml(e.student_name) : '—') + '</span>' +
+    '</div>' +
+    '<div class="mob-card-stats cols-3-wide">' +
+    mobStat('Hobbs Hrs', acHrs, 'var(--sky)') +
+    mobStat('Hobbs $', !isGround && hobbsCharge > 0 ? '$' + hobbsCharge.toFixed(2) : '—', 'var(--sky)') +
+    mobStat('Dual Hrs', inHrs, 'var(--amber)') +
+    mobStat('Dual $', instrCharge > 0 ? '$' + instrCharge.toFixed(2) : '—', 'var(--amber)') +
+    '</div>' +
+    '<div class="mob-card-total"><span class="mob-card-total-label">Total Billed</span><span class="mob-card-total-val">' +
+    (totalBilled > 0 ? '$' + totalBilled.toFixed(2) : '—') + '</span></div>' +
+    actions + '</article>';
 }
 
 function toggleIHForm() {
