@@ -4808,7 +4808,7 @@
           <div style="font-size:0.8rem;color:var(--gray-500);margin-bottom:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Inspection Due Dates</div>
         </div>
         <div class="form-group">
-          <label>Next 100-hr Inspection Due (Hobbs hours)</label>
+          <label>Next 100-hr Inspection Due (Tach hours)</label>
           <input type="number" id="insp-100hr" step="0.1" min="0" placeholder="1300.0">
         </div>
         <div class="form-group">
@@ -4859,8 +4859,8 @@
           <input type="date" id="ad-due-date">
         </div>
         <div class="form-group">
-          <label>Due Hobbs hrs (optional)</label>
-          <input type="number" id="ad-due-hobbs" step="0.1" min="0" placeholder="1350.0">
+          <label>Due Tach hrs (optional)</label>
+          <input type="number" id="ad-due-hobbs" step="0.1" min="0" placeholder="1350.0" title="Tach hour limit for this AD">
         </div>
       </div>
       <div class="form-group" id="ad-status-group" style="display:none;">
@@ -7900,7 +7900,7 @@ async function loadMaintenanceSchedule() {
           </div>`).join('') : '<div style="font-size:0.82rem;color:var(--gray-500);">No open squawks</div>';
 
         const annual = ac.next_annual_due ? new Date(ac.next_annual_due).toLocaleDateString() : '—';
-        const hobbs100 = ac.next_100hr_due ? `${ac.next_100hr_due} hrs (${ac.hours_until_100hr !== null ? ac.hours_until_100hr.toFixed(1) + ' remaining' : '—'})` : '—';
+        const tach100 = ac.next_100hr_due ? `${ac.next_100hr_due} Tach (${ac.hours_until_100hr !== null ? ac.hours_until_100hr.toFixed(1) + ' remaining' : '—'})` : '—';
         const lastMaint = ac.last_maintenance ? `${ac.last_maintenance.description || 'Maintenance performed'} on ${new Date(ac.last_maintenance.performed_at).toLocaleDateString()}` : '—';
 
         return `
@@ -7911,9 +7911,9 @@ async function loadMaintenanceSchedule() {
             </div>
             <div style="font-size:0.8rem;color:var(--gray-400);margin-bottom:1rem;">${ac.make_model}</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem;font-size:0.78rem;">
-              <div><div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.1rem;">Hobbs</div><div style="color:var(--gray-200);">${ac.hobbs.toFixed(1)} hrs</div></div>
+              <div><div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.1rem;">Tach</div><div style="color:var(--gray-200);">${ac.tach != null ? ac.tach.toFixed(1) : '—'} hrs</div></div>
               <div><div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.1rem;">Status</div><div style="color:var(--gray-200);text-transform:capitalize;">${ac.status}</div></div>
-              <div><div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.1rem;">Next 100-hr</div><div style="color:${ac.hours_until_100hr !== null && ac.hours_until_100hr <= 10 ? 'var(--amber)' : 'var(--gray-200)'};">${hobbs100}</div></div>
+              <div><div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.1rem;">Next 100-hr (Tach)</div><div style="color:${ac.hours_until_100hr !== null && ac.hours_until_100hr <= 10 ? 'var(--amber)' : 'var(--gray-200)'};">${tach100}</div></div>
               <div><div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.1rem;">Annual Due</div><div style="color:${ac.next_annual_due && new Date(ac.next_annual_due) <= new Date(Date.now()+30*24*60*60*1000) ? 'var(--amber)' : 'var(--gray-200)'};">${annual}</div></div>
             </div>
             <div style="font-size:0.6rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.4rem;">Last Maintenance</div>
@@ -11937,6 +11937,19 @@ function hobbsRemaining(current, due) {
   return parseFloat(due) - parseFloat(current);
 }
 
+/** Tach hours used for 100-hr inspections, AD limits, etc. */
+function aircraftInspectionHours(ac) {
+  if (!ac) return null;
+  const raw = ac.current_tach ?? ac.total_tach_hours;
+  if (raw == null || raw === '') return null;
+  const n = parseFloat(raw);
+  return Number.isNaN(n) ? null : n;
+}
+
+function inspectionHoursRemaining(ac, due) {
+  return hobbsRemaining(aircraftInspectionHours(ac), due);
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return null;
   const today = new Date();
@@ -11991,17 +12004,17 @@ async function loadMaintenanceFleet() {
       ? `<span class="tag tag-red">&#128308; Down for Maint</span>`
       : `<span class="tag tag-green">&#128994; Available</span>`;
 
-    // Use total_hobbs_hours as single source of truth (synced with Fleet page)
+    // Use total_tach_hours for inspection due calculations (100-hr, ADs) (synced with Fleet page)
     const hobbs = a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : null;
     const tach = a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : null;
-    const hRem = hobbsRemaining(a.total_hobbs_hours, a.next_100hr_due);
+    const hRem = inspectionHoursRemaining(a, a.next_100hr_due);
     const dayRem = daysUntil(a.next_annual_due);
     const openSq = openSquawksByAircraft[a.id] || 0;
 
     const h100Class = hobbsStatusClass(hRem);
     const annualClass = daysStatusClass(dayRem);
 
-    const h100Display = hRem == null ? 'Not set' : (hRem <= 0 ? `${Math.abs(hRem.toFixed(1))} OVERDUE` : `${hRem.toFixed(1)} hrs`);
+    const h100Display = hRem == null ? 'Not set' : (hRem <= 0 ? `${Math.abs(hRem.toFixed(1))} Tach OVERDUE` : `${hRem.toFixed(1)} Tach hrs`);
     const annualDisplay = dayRem == null ? 'Not set' : (dayRem <= 0 ? `${Math.abs(dayRem)} days OVERDUE` : `${dayRem}d`);
 
     const maintBtn = canManage
@@ -12029,7 +12042,7 @@ async function loadMaintenanceFleet() {
         <div class="ms-value">${tach != null ? tach : '—'}</div>
       </div>
       <div class="maint-stat">
-        <div class="ms-label">100hr Due</div>
+        <div class="ms-label">100hr Due (Tach)</div>
         <div class="ms-value ${h100Class}">${h100Display}</div>
       </div>
       <div class="maint-stat">
@@ -12353,7 +12366,7 @@ function openInspectionModal(aircraftId, tailNumber) {
   document.getElementById('inspection-modal-title').textContent = `${tailNumber} — Hours & Inspections`;
   document.getElementById('inspection-error').classList.add('hidden');
 
-  // Use total_hobbs_hours as single source of truth
+  // Use total_tach_hours for inspection due calculations (100-hr, ADs)
   document.getElementById('insp-hobbs').value = ac && ac.total_hobbs_hours != null ? ac.total_hobbs_hours : '';
   document.getElementById('insp-tach').value = ac && ac.total_tach_hours != null ? ac.total_tach_hours : '';
   document.getElementById('insp-note').value = '';
@@ -12496,16 +12509,16 @@ async function loadInspections() {
   const canEditHours = ['owner', 'instructor', 'admin'].includes(currentUser.role);
 
   el.innerHTML = allAircraft.map(a => {
-    // Use total_hobbs_hours as single source of truth
+    // Use total_tach_hours for inspection due calculations (100-hr, ADs)
     const hobbs = a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : null;
     const tach = a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : null;
-    const hRem = hobbsRemaining(a.total_hobbs_hours, a.next_100hr_due);
+    const hRem = inspectionHoursRemaining(a, a.next_100hr_due);
     const dayRem = daysUntil(a.next_annual_due);
 
     const h100Class = hobbsStatusClass(hRem);
     const annualClass = daysStatusClass(dayRem);
 
-    const h100Display = hRem == null ? '—' : (hRem <= 0 ? `${Math.abs(hRem.toFixed(1))} hrs OVERDUE` : `${hRem.toFixed(1)} hrs remaining`);
+    const h100Display = hRem == null ? '—' : (hRem <= 0 ? `${Math.abs(hRem.toFixed(1))} Tach hrs OVERDUE` : `${hRem.toFixed(1)} Tach hrs remaining`);
     const annualDisplay = dayRem == null ? '—' : (dayRem <= 0 ? `${Math.abs(dayRem)} days OVERDUE` : `${dayRem} days remaining`);
 
     const editBtn = canEditHours ? `<button class="btn btn-secondary btn-sm" onclick="openInspectionModal(${a.id}, '${escHtml(a.tail_number)}')">Edit Hours</button>` : '';
@@ -12530,9 +12543,9 @@ async function loadInspections() {
             <div class="ic-value">${tach != null ? tach + ' hrs' : 'Not set'}</div>
           </div>
           <div class="insp-cell">
-            <div class="ic-label">100hr Inspection</div>
+            <div class="ic-label">100hr Inspection (Tach)</div>
             <div class="ic-value ${h100Class}">${h100Display}</div>
-            ${a.next_100hr_due != null ? `<div style="font-size:0.75rem;color:var(--gray-500)">Due at ${parseFloat(a.next_100hr_due).toFixed(1)} hrs</div>` : ''}
+            ${a.next_100hr_due != null ? `<div style="font-size:0.75rem;color:var(--gray-500)">Due at ${parseFloat(a.next_100hr_due).toFixed(1)} Tach hrs</div>` : ''}
           </div>
           <div class="insp-cell">
             <div class="ic-label">Annual Inspection</div>
@@ -12588,10 +12601,10 @@ async function loadADs(aircraftId) {
       }
       if (ad.due_hobbs) {
         const ac2 = allAircraft.find(a => a.id === aircraftId);
-        // Use total_hobbs_hours as single source of truth
-        const rem = hobbsRemaining(ac2?.total_hobbs_hours, ad.due_hobbs);
+        // Use total_tach_hours for inspection due calculations (100-hr, ADs)
+        const rem = inspectionHoursRemaining(ac2, ad.due_hobbs);
         const cls = hobbsStatusClass(rem);
-        dueInfo += `<span class="ms-value ${cls}" style="font-size:0.8rem">${rem != null ? (rem <= 0 ? `${Math.abs(rem.toFixed(1))} OVERDUE` : `${rem.toFixed(1)} hrs`) : `Due at ${parseFloat(ad.due_hobbs).toFixed(1)} hrs`}</span>`;
+        dueInfo += `<span class="ms-value ${cls}" style="font-size:0.8rem">${rem != null ? (rem <= 0 ? `${Math.abs(rem.toFixed(1))} Tach OVERDUE` : `${rem.toFixed(1)} Tach hrs`) : `Due at ${parseFloat(ad.due_hobbs).toFixed(1)} Tach hrs`}</span>`;
       }
 
       const statusTag = isComplied ? `<span class="tag tag-green">Complied</span>` : `<span class="tag tag-red">Open</span>`;
@@ -12602,7 +12615,7 @@ async function loadADs(aircraftId) {
         ? `<button class="btn btn-sm btn-danger" onclick="deleteAd(${aircraftId}, ${ad.id})">Delete</button>`
         : '';
 
-      return `<div class="ad-row ${!isComplied && (ad.due_date && daysUntil(ad.due_date) <= 0 || ad.due_hobbs && hobbsRemaining(ac?.total_hobbs_hours, ad.due_hobbs) <= 0) ? 'ad-overdue' : ''}">
+      return `<div class="ad-row ${!isComplied && (ad.due_date && daysUntil(ad.due_date) <= 0 || ad.due_hobbs && inspectionHoursRemaining(ac, ad.due_hobbs) <= 0) ? 'ad-overdue' : ''}">
         <div class="ad-number">${ad.ad_number ? escHtml(ad.ad_number) : 'AD'}</div>
         <div class="ad-desc">${escHtml(ad.description)}</div>
         <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">

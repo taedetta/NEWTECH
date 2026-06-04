@@ -6,6 +6,7 @@
  */
 
 const express = require('express');
+const { getInspectionHours, hoursUntilDue } = require('../lib/aircraft-inspection-hours');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 
@@ -97,6 +98,7 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
          a.make_model,
          a.status,
          a.current_hobbs,
+         a.current_tach,
          a.total_hobbs_hours,
          a.total_tach_hours,
          a.next_100hr_due,
@@ -153,8 +155,8 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
 
     const schedule = aircraft.rows.map(ac => {
       const hobbs = parseFloat(ac.current_hobbs || ac.total_hobbs_hours || 0);
-      const next100hr = parseFloat(ac.next_100hr_due || 0);
-      const hoursUntil100hr = next100hr > 0 ? Math.max(0, next100hr - hobbs) : null;
+      const tach = getInspectionHours(ac);
+      const hoursUntil100hr = hoursUntilDue(ac, ac.next_100hr_due);
 
       // Color-code: red = open squawk or overdue, yellow = due within 10hrs or 30 days, green = all good
       const openSquawks = (squawksByAircraft[ac.id] || []).filter(s => s.status === 'open' || s.severity === 'grounding');
@@ -175,6 +177,7 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
       return {
         ...ac,
         hobbs,
+        tach,
         hours_until_100hr: hoursUntil100hr,
         schedule_status: scheduleStatus,
         open_squawks: squawksByAircraft[ac.id] || [],
