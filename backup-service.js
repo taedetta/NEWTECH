@@ -17,6 +17,7 @@ const PDFDocument = require('pdfkit');
 const { PassThrough } = require('stream');
 const { uploadBuffer } = require('./lib/r2-storage');
 const { buildZipBuffer } = require('./lib/backup-zip');
+const { sanitizeUploadUrl } = require('./lib/upload-url');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
 
@@ -1142,18 +1143,18 @@ async function runBackup(pool, frequency) {
 
     // Upload all 6 PDFs to R2
     const pdfFiles = [
-      { name: 'Billing Report', filename: `Billing_${label}.pdf`, buffer: billingBuf },
-      { name: 'Instructor Hours Report', filename: `Instructor_Hours_${label}.pdf`, buffer: instructorBuf },
-      { name: 'Flight Logs Report', filename: `Flight_Logs_${label}.pdf`, buffer: flightBuf },
-      { name: 'Endorsements Report', filename: `Endorsements_${label}.pdf`, buffer: endorsementBuf },
-      { name: 'User Directory', filename: `User_Directory_${label}.pdf`, buffer: studentBuf },
-      { name: 'Maintenance Logs Report', filename: `Maintenance_Logs_${label}.pdf`, buffer: maintenanceBuf },
+      { name: 'Billing Report', zipFolder: '01_Billing', filename: `Billing_${label}.pdf`, buffer: billingBuf },
+      { name: 'Instructor Hours Report', zipFolder: '02_Instructor_Hours', filename: `Instructor_Hours_${label}.pdf`, buffer: instructorBuf },
+      { name: 'Flight Logs Report', zipFolder: '03_Flight_Logs', filename: `Flight_Logs_${label}.pdf`, buffer: flightBuf },
+      { name: 'Endorsements Report', zipFolder: '04_Endorsements', filename: `Endorsements_${label}.pdf`, buffer: endorsementBuf },
+      { name: 'User Directory', zipFolder: '05_User_Directory', filename: `User_Directory_${label}.pdf`, buffer: studentBuf },
+      { name: 'Maintenance Logs Report', zipFolder: '06_Maintenance_Logs', filename: `Maintenance_Logs_${label}.pdf`, buffer: maintenanceBuf },
     ];
 
-    console.log(`[backup] Uploading ${pdfFiles.length} PDFs to R2...`);
+    console.log(`[backup] Uploading ${pdfFiles.length} PDFs to storage...`);
     const downloadLinks = [];
     for (const pf of pdfFiles) {
-      const url = await uploadPdfToR2(pf.buffer, pf.filename);
+      const url = sanitizeUploadUrl(await uploadPdfToR2(pf.buffer, pf.filename));
       downloadLinks.push({ name: pf.name, filename: pf.filename, url });
     }
 
@@ -1167,11 +1168,13 @@ async function runBackup(pool, frequency) {
       `Label: ${label}`,
       `Generated: ${generatedAt} CT`,
       '',
-      'Contents:',
-      ...pdfFiles.map((pf) => `  ${pf.name} (${pf.filename})`),
-    ].join('\n');
+      'Each folder contains one PDF report with complete historical data.',
+      '',
+      'Folder structure:',
+      ...pdfFiles.map((pf) => `  ${pf.zipFolder}/${pf.filename}  —  ${pf.name}`),
+    ].join('\r\n');
     const zipBuffer = await buildZipBuffer(
-      pdfFiles.map((pf) => ({ name: pf.filename, content: pf.buffer })),
+      pdfFiles.map((pf) => ({ name: `${pf.zipFolder}/${pf.filename}`, content: pf.buffer })),
       readme,
     );
     console.log(`[backup] ZIP attachment ready: ${zipName} (${(zipBuffer.length / 1024).toFixed(0)} KB)`);

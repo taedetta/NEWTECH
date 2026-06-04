@@ -4,6 +4,7 @@
 
 const { uploadBuffer } = require('./lib/r2-storage');
 const { buildZipBuffer } = require('./lib/backup-zip');
+const { sanitizeUploadUrl } = require('./lib/upload-url');
 const { sendEmail } = require('./email-templates');
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
@@ -21,18 +22,16 @@ function isoDate(d) {
 // ── CSV helpers ────────────────────────────────────────────────────────────────
 
 function esc(val) {
-  if (val === null || val === undefined) return '';
+  if (val === null || val === undefined) return '""';
   const s = String(val);
-  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
-    return '"' + s.replace(/"/g, '""') + '"';
-  }
-  return s;
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function toCsv(headers, rows) {
   const lines = [headers.map(esc).join(',')];
   for (const row of rows) lines.push(row.map(esc).join(','));
-  return lines.join('\n');
+  // UTF-8 BOM + CRLF — opens correctly in Excel with one column per field
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
 function fmtDate(v) {
@@ -463,7 +462,7 @@ async function runExport(pool) {
     }
     const { csv, count } = result.value;
     const url = await uploadCsvToR2(Buffer.from(csv, 'utf8'), filename);
-    files.push({ folder: task.folder, count, url, filename, csv });
+    files.push({ folder: task.folder, count, url: sanitizeUploadUrl(url), filename, csv });
     console.log(`[export] ${task.folder}: ${count} records — ${url ? 'uploaded' : 'using email attachment'}`);
   }
 
@@ -473,11 +472,27 @@ async function runExport(pool) {
     `Export date: ${dateLabel}`,
     `Generated: ${new Date().toISOString()}`,
     '',
-    'Files:',
+    'Open CSV files in Excel or Google Sheets. Each file has a header row and quoted fields.',
+    '',
+    'Folder structure:',
     ...files.map((f) => `  ${f.folder}/${f.filename} (${f.count || 0} records)`),
-  ].join('\n');
+    '',
+    'Categories:',
+    '  STUDENTS            — All user accounts',
+    '  FLIGHT_LOGS         — Every flight log entry',
+    '  HOURS_RECORDS       — Hobbs/Tach hours per flight',
+    '  MAINTENANCE_SQUAWKS — Aircraft squawks/discrepancies',
+    '  BILLING             — All charges (flights + ground)',
+    '  INSTRUCTOR_HOURS    — Instructor billing hours',
+    '  ENDORSEMENTS        — FAA endorsements',
+    '  STUDENT_HOURS       — Per-student hour totals',
+    '  STUDENT_PROGRESS    — Training program progress',
+  ].join('\r\n');
   const zipBuffer = await buildZipBuffer(
-    files.map((f) => ({ name: `${f.folder}/${f.filename}`, content: f.csv || '' })),
+    files.map((f) => ({
+      name: `${f.folder}/${f.filename}`,
+      content: Buffer.from(f.csv || '', 'utf8'),
+    })),
     readme,
   );
   console.log(`[export] ZIP attachment ready: ${zipName} (${(zipBuffer.length / 1024).toFixed(0)} KB)`);
