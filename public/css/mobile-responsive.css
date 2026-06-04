@@ -546,6 +546,15 @@ body.staging-env .mobile-toggle {
     gap: 0.5rem;
   }
 
+  body.mobile-app-active .schedule-calendar-wrap {
+    margin-left: -0.125rem;
+    margin-right: -0.125rem;
+  }
+
+  body.mobile-app-active .schedule-calendar-wrap .calendar-grid {
+    min-width: 0;
+  }
+
   body.mobile-app-active .calendar-header h2 {
     order: -1;
     width: 100%;
