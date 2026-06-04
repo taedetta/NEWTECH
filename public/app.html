@@ -209,17 +209,17 @@
 
     /* ─── APP LAYOUT ─── */
     .app-layout { display: flex; min-height: 100vh; min-height: 100dvh; }
-    .sidebar { width: 250px; background: var(--dark-blue); border-right: 1px solid var(--border); padding: 1.5rem 0; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 50; }
-    .sidebar-logo { display: flex; align-items: center; padding: 0 1.25rem; margin-bottom: 1.75rem; }
+    .sidebar { width: 250px; background: var(--dark-blue); border-right: 1px solid var(--border); padding: 1.5rem 0; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; height: 100dvh; min-height: 0; overflow: hidden; z-index: 50; box-sizing: border-box; }
+    .sidebar-logo { display: flex; align-items: center; padding: 0 1.25rem; margin-bottom: 1.75rem; flex-shrink: 0; }
     .sidebar-logo-img { height: 44px; width: auto; max-width: 200px; object-fit: contain; filter: drop-shadow(0 1px 3px rgba(79,195,247,0.15)); }
-    .sidebar-nav { flex: 1; overflow-y: auto; }
+    .sidebar-nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
     .nav-section-label { font-size: 0.62rem; font-weight: 600; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.8px; padding: 0.85rem 1.25rem 0.35rem; }
     .nav-divider { height: 1px; background: var(--border); margin: 0.5rem 1.25rem; }
     .sidebar-nav a { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1.25rem; color: var(--gray-400); font-size: 0.88rem; font-weight: 500; transition: all var(--transition); cursor: pointer; border-left: 3px solid transparent; text-decoration: none; }
     .sidebar-nav a:hover { color: var(--gray-100); background: var(--sky-faint); text-decoration: none; }
     .sidebar-nav a.active { color: var(--white); background: var(--sky-faint); border-left-color: var(--sky); }
     .sidebar-nav a .nav-icon { width: 22px; text-align: center; font-size: 1rem; flex-shrink: 0; }
-    .sidebar-user { padding: 1rem 1.25rem; border-top: 1px solid var(--border); margin-top: auto; }
+    .sidebar-user { padding: 1rem 1.25rem; border-top: 1px solid var(--border); margin-top: auto; flex-shrink: 0; background: var(--dark-blue); }
     .sidebar-user .user-name { font-size: 0.88rem; font-weight: 600; color: var(--white); }
     .sidebar-user .user-role { font-size: 0.72rem; color: var(--gray-500); text-transform: capitalize; margin-top: 0.1rem; }
     .sidebar-user .logout-btn { margin-top: 0.6rem; font-size: 0.78rem; color: var(--gray-500); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0.25rem 0; transition: color var(--transition); }
@@ -1736,6 +1736,7 @@
     <button class="mobile-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
     <header class="mobile-top-bar" id="mobile-top-bar" aria-hidden="true">
       <span class="mobile-top-bar-title" id="mobile-top-bar-title">Dashboard</span>
+      <button type="button" class="mobile-top-bar-logout hidden" id="mobile-top-bar-logout" onclick="logout()" aria-label="Sign out">Sign out</button>
     </header>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
     <div class="app-layout">
@@ -5185,8 +5186,10 @@ function switchAuthTab(tab) {
 function syncSidebarAuth(loggedIn) {
   const guestBtn = document.getElementById('guest-signin-btn');
   const authInfo = document.getElementById('auth-user-info');
+  const mobileLogout = document.getElementById('mobile-top-bar-logout');
   if (guestBtn) guestBtn.classList.toggle('hidden', loggedIn);
   if (authInfo) authInfo.classList.toggle('hidden', !loggedIn);
+  if (mobileLogout) mobileLogout.classList.toggle('hidden', !loggedIn);
 }
 
 // Auth modal is not dismissible on the login screen (no backdrop click, no Escape).
