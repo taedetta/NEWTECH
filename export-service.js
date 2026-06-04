@@ -3,8 +3,9 @@
 // Does not own: PDF backup (backup-service.js), auth, booking logic, aircraft management
 
 const { uploadBuffer } = require('./lib/r2-storage');
+const { buildZipBuffer } = require('./lib/backup-zip');
 const { sendEmail } = require('./email-templates');
-const RECIPIENTS = ['aviationnewtech@gmail.com', 'blankthe97@gmail.com', 'bunnfarmva@yopmail.com'];
+const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
 // ── Timezone helpers ───────────────────────────────────────────────────────────
 
@@ -315,7 +316,7 @@ async function uploadCsvToR2(csvBuffer, filename) {
 
 // ── Email ──────────────────────────────────────────────────────────────────────
 
-async function sendExportEmail(dateLabel, files) {
+async function sendExportEmail(dateLabel, files, zipAttachment) {
   if (!process.env.BREVO_API_KEY && !process.env.SMTP_HOST) {
     console.error('[export] Email not configured — set BREVO_API_KEY or SMTP');
     return;
@@ -330,7 +331,9 @@ async function sendExportEmail(dateLabel, files) {
       <td style="padding:10px 16px;text-align:right;">
         ${f.url
           ? `<a href="${f.url}" style="color:#2563EB;font-weight:bold;font-size:13px;text-decoration:none;">Download CSV &rarr;</a>`
-          : '<span style="color:#9CA3AF;font-size:13px;">Upload failed</span>'}
+          : zipAttachment
+            ? '<span style="color:#059669;font-size:13px;">Included in attached ZIP</span>'
+            : '<span style="color:#9CA3AF;font-size:13px;">See attached ZIP</span>'}
       </td>
     </tr>`).join('');
 
@@ -350,6 +353,9 @@ async function sendExportEmail(dateLabel, files) {
         <p style="color:#374151;font-size:15px;margin:0 0 20px;">
           Full historical export — <strong>every record from the beginning of time</strong>, no date filtering. 9 CSV files covering all operational data.
         </p>
+        ${zipAttachment ? `<div style="background:#ECFDF5;border-left:4px solid #059669;padding:12px 16px;border-radius:4px;margin-bottom:20px;">
+          <p style="margin:0;color:#065F46;font-size:13px;"><strong>Attached:</strong> All 9 CSV files are included in <strong>${zipAttachment.name}</strong> on this email.</p>
+        </div>` : ''}
         <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;margin-bottom:24px;">
           <tr style="background:#0F1D2F;">
             <td style="padding:12px 16px;font-weight:bold;color:#fff;font-size:13px;">Data Category</td>
@@ -376,12 +382,24 @@ async function sendExportEmail(dateLabel, files) {
 </body></html>`;
 
   const bodyText = `New Tech Aviation — Complete Records Export — ${dateLabel}\nGenerated: ${generatedAt} CT\n\n` +
+    (zipAttachment ? `Attachment: ${zipAttachment.name} (all 9 CSV files)\n\n` : '') +
     `Full history export — ALL records, no date filtering.\n\n` +
-    files.map(f => `${f.folder}: ${f.count} records — ${f.url || 'Upload failed'}`).join('\n');
+    files.map((f) => {
+      if (f.url) return `${f.folder}: ${f.count} records — ${f.url}`;
+      if (zipAttachment) return `${f.folder}: ${f.count} records — included in ${zipAttachment.name}`;
+      return `${f.folder}: ${f.count} records — see attached ZIP`;
+    }).join('\n');
+
+  const attachments = zipAttachment
+    ? [{ name: zipAttachment.name, content: zipAttachment.buffer }]
+    : undefined;
 
   for (const recipient of RECIPIENTS) {
-    sendEmail(recipient, subject, bodyHtml, bodyText)
-      .catch((err) => console.error(`[export] Email error to ${recipient}:`, err.message));
+    try {
+      await sendEmail(recipient, subject, bodyHtml, bodyText, attachments);
+    } catch (err) {
+      console.error(`[export] Email error to ${recipient}:`, err.message);
+    }
   }
 }
 
@@ -437,24 +455,39 @@ async function runExport(pool) {
   for (let i = 0; i < EXPORT_TASKS.length; i++) {
     const task = EXPORT_TASKS[i];
     const result = results[i];
+    const filename = `${task.folder}_${dateLabel}.csv`;
     if (result.status === 'rejected') {
       console.error(`[export] CSV gen failed for ${task.folder}:`, result.reason?.message || result.reason);
-      files.push({ folder: task.folder, count: 0, url: null });
+      files.push({ folder: task.folder, count: 0, url: null, filename, csv: '' });
       continue;
     }
     const { csv, count } = result.value;
-    const filename = `${task.folder}_${dateLabel}.csv`;
     const url = await uploadCsvToR2(Buffer.from(csv, 'utf8'), filename);
-    files.push({ folder: task.folder, count, url });
-    console.log(`[export] ${task.folder}: ${count} records — ${url ? 'uploaded' : 'upload failed'}`);
+    files.push({ folder: task.folder, count, url, filename, csv });
+    console.log(`[export] ${task.folder}: ${count} records — ${url ? 'uploaded' : 'using email attachment'}`);
   }
 
-  await sendExportEmail(dateLabel, files);
+  const zipName = `NTA_Records_Export_${dateLabel.replace(/-/g, '')}.zip`;
+  const readme = [
+    'New Tech Aviation — Complete Records Export',
+    `Export date: ${dateLabel}`,
+    `Generated: ${new Date().toISOString()}`,
+    '',
+    'Files:',
+    ...files.map((f) => `  ${f.folder}/${f.filename} (${f.count || 0} records)`),
+  ].join('\n');
+  const zipBuffer = await buildZipBuffer(
+    files.map((f) => ({ name: `${f.folder}/${f.filename}`, content: f.csv || '' })),
+    readme,
+  );
+  console.log(`[export] ZIP attachment ready: ${zipName} (${(zipBuffer.length / 1024).toFixed(0)} KB)`);
+
+  await sendExportEmail(dateLabel, files, { name: zipName, buffer: zipBuffer });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   const uploaded = files.filter(f => f.url).length;
-  console.log(`[export] Complete in ${elapsed}s — ${uploaded}/9 files uploaded`);
-  return { success: true, dateLabel, files, uploaded };
+  console.log(`[export] Complete in ${elapsed}s — ${uploaded}/9 files uploaded, ZIP emailed`);
+  return { success: true, dateLabel, files, uploaded, zipName, zipSizeKb: Math.round(zipBuffer.length / 1024) };
 }
 
 // ── Scheduler ──────────────────────────────────────────────────────────────────

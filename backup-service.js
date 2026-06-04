@@ -16,6 +16,7 @@
 const PDFDocument = require('pdfkit');
 const { PassThrough } = require('stream');
 const { uploadBuffer } = require('./lib/r2-storage');
+const { buildZipBuffer } = require('./lib/backup-zip');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
 
@@ -960,18 +961,21 @@ async function uploadPdfToR2(pdfBuffer, filename) {
 
 // ── Email ─────────────────────────────────────────────────────────────────────
 
-async function sendBackupEmail(frequency, label, downloadLinks, recordCounts) {
+async function sendBackupEmail(frequency, label, downloadLinks, recordCounts, zipAttachment) {
   const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
   const subject = `New Tech Aviation — ${freqLabel} Data Backup — ${label}`;
   const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
 
-  const bodyHtml = buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks);
-  const bodyText = buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks);
+  const bodyHtml = buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
+  const bodyText = buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
+  const attachments = zipAttachment
+    ? [{ name: zipAttachment.name, content: zipAttachment.buffer }]
+    : undefined;
 
   const errors = [];
   for (const recipient of RECIPIENTS) {
     try {
-      await sendEmail(recipient, subject, bodyHtml, bodyText);
+      await sendEmail(recipient, subject, bodyHtml, bodyText, attachments);
     } catch (err) {
       console.error(`[backup] Error sending to ${recipient}:`, err.message);
       errors.push({ recipient, error: err.message });
@@ -980,7 +984,7 @@ async function sendBackupEmail(frequency, label, downloadLinks, recordCounts) {
   return errors;
 }
 
-function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks) {
+function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment) {
   const LOGO = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
 
   const dlRows = downloadLinks.map((dl, i) => `
@@ -989,7 +993,9 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
       <td style="padding:10px 16px;text-align:right;">
         ${dl.url
           ? `<a href="${dl.url}" style="color:#2563EB;font-weight:bold;font-size:13px;text-decoration:none;">Download PDF &rarr;</a>`
-          : '<span style="color:#9CA3AF;font-size:13px;">Upload failed</span>'}
+          : zipAttachment
+            ? '<span style="color:#059669;font-size:13px;">Included in attached ZIP</span>'
+            : '<span style="color:#9CA3AF;font-size:13px;">See attached ZIP</span>'}
       </td>
     </tr>`).join('');
 
@@ -1023,6 +1029,9 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
             <p style="color:#374151;font-size:15px;margin:0 0 20px;">
               Your ${freqLabel.toLowerCase()} backup reports are ready. Each PDF contains <strong>complete historical data</strong> — not just recent activity.
             </p>
+            ${zipAttachment ? `<div style="background:#ECFDF5;border-left:4px solid #059669;padding:12px 16px;border-radius:4px;margin-bottom:20px;">
+              <p style="margin:0;color:#065F46;font-size:13px;"><strong>Attached:</strong> All 6 PDF reports are included in <strong>${zipAttachment.name}</strong> on this email.</p>
+            </div>` : ''}
             <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;margin-bottom:24px;">
               <tr style="background:#0F1D2F;">
                 <td style="padding:12px 16px;font-weight:bold;color:#ffffff;font-size:13px;">Report (6 PDFs)</td>
@@ -1059,15 +1068,19 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
 </html>`;
 }
 
-function buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks) {
-  const dlLines = downloadLinks.map(dl => `  - ${dl.name}: ${dl.url || 'Upload failed'}`).join('\n');
+function buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment) {
+  const dlLines = downloadLinks.map((dl) => {
+    if (dl.url) return `  - ${dl.name}: ${dl.url}`;
+    if (zipAttachment) return `  - ${dl.name}: included in attached ${zipAttachment.name}`;
+    return `  - ${dl.name}: see attached ZIP`;
+  }).join('\n');
   const rcLines = recordCounts.map(rc => `  - ${rc.name}: ${rc.count} records`).join('\n');
   return `New Tech Aviation — ${freqLabel} Data Backup (${label})
 Generated: ${generatedAt} CT
-
+${zipAttachment ? `\nAttachment: ${zipAttachment.name} (all 6 PDF reports)\n` : ''}
 Full history backup — ALL records from the database.
 
-Download PDFs:
+Reports:
 ${dlLines}
 
 Record counts:
@@ -1145,17 +1158,29 @@ async function runBackup(pool, frequency) {
     }
 
     const uploadedCount = downloadLinks.filter(dl => dl.url).length;
-    console.log(`[backup] ${uploadedCount}/${pdfFiles.length} PDFs uploaded`);
+    console.log(`[backup] ${uploadedCount}/${pdfFiles.length} PDFs uploaded to storage`);
 
-    if (uploadedCount === 0) {
-      throw new Error('All PDF uploads failed — check R2 credentials or disk storage');
-    }
+    const zipName = `NTA_PDF_Backup_${label.replace(/[^\w-]+/g, '_')}.zip`;
+    const readme = [
+      'New Tech Aviation — PDF Data Backup',
+      `Frequency: ${frequency}`,
+      `Label: ${label}`,
+      `Generated: ${generatedAt} CT`,
+      '',
+      'Contents:',
+      ...pdfFiles.map((pf) => `  ${pf.name} (${pf.filename})`),
+    ].join('\n');
+    const zipBuffer = await buildZipBuffer(
+      pdfFiles.map((pf) => ({ name: pf.filename, content: pf.buffer })),
+      readme,
+    );
+    console.log(`[backup] ZIP attachment ready: ${zipName} (${(zipBuffer.length / 1024).toFixed(0)} KB)`);
 
-    await sendBackupEmail(frequency, label, downloadLinks, recordCounts);
+    await sendBackupEmail(frequency, label, downloadLinks, recordCounts, { name: zipName, buffer: zipBuffer });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[backup] ${frequency} backup complete in ${elapsed}s`);
-    return { success: true, label, recordCounts, uploadedCount, downloadLinks };
+    return { success: true, label, recordCounts, uploadedCount, downloadLinks, zipName, zipSizeKb: Math.round(zipBuffer.length / 1024) };
   } catch (err) {
     console.error(`[backup] ${frequency} backup failed:`, err);
     return { success: false, error: err.message };
