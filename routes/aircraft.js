@@ -4,6 +4,7 @@ const express = require('express');
 const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
 const { uploadBuffer } = require('../lib/r2-storage');
+const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -136,10 +137,11 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const current = await client.query(
-      'SELECT total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
       [req.params.id]
     );
     if (current.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+    const acRow = current.rows[0];
     await client.query('BEGIN');
     const sets = [];
     const vals = [];
@@ -164,14 +166,14 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, current.rows[0].total_hobbs_hours, parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, current.rows[0].total_tach_hours, parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
       );
     }
     await client.query('COMMIT');

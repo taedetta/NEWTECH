@@ -14772,8 +14772,8 @@ async function loadFlogAircraftHours() {
   wrap.classList.remove('hidden');
 
   list.innerHTML = allAircraft.map(a => {
-    const hobbs = parseFloat(a.total_hobbs_hours || 0).toFixed(1);
-    const tach = parseFloat(a.total_tach_hours || 0).toFixed(1);
+    const hobbs = aircraftMeterHobbs(a) != null ? aircraftMeterHobbs(a).toFixed(1) : '0.0';
+    const tach = aircraftMeterTach(a) != null ? aircraftMeterTach(a).toFixed(1) : '0.0';
     return `<div style="background:var(--gray-800);border-radius:8px;padding:0.75rem 1rem;min-width:180px;flex:1;max-width:260px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
         <span style="font-weight:600;font-size:0.85rem;color:var(--gray-200)">${escHtml(a.tail_number)}</span>

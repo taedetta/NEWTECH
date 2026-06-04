@@ -11,6 +11,7 @@ const { checkConflicts, isInstructorAvailable, findNextAvailableSlots } = requir
 const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail, sendEmail } = require('../email-templates');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
+const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 
 const router = express.Router();
 
@@ -161,30 +162,6 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const hEnd = parseFloat(hobbs_end);
     if (hEnd <= hStart) { recordHobbsFail(req.user.id); return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' }); }
 
-    // ── Server-side Hobbs validation: prevent backdating, allow normal meter variance ──
-    if (b.aircraft_id) {
-      const acResult = await client.query('SELECT current_hobbs, total_hobbs_hours FROM aircraft WHERE id = $1', [b.aircraft_id]);
-      if (acResult.rows.length > 0) {
-        const currentHobbs = acResult.rows[0].current_hobbs != null
-          ? parseFloat(acResult.rows[0].current_hobbs)
-          : parseFloat(acResult.rows[0].total_hobbs_hours || 0);
-        if (currentHobbs > 0) {
-          if (hStart < currentHobbs - 0.1) {
-            recordHobbsFail(req.user.id);
-            return res.status(400).json({
-              error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
-            });
-          }
-          if (hStart > currentHobbs + 5) {
-            recordHobbsFail(req.user.id);
-            return res.status(400).json({
-              error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
-            });
-          }
-        }
-      }
-    }
-
     // Validate tach values if provided — both or neither
     if ((tach_start != null) !== (tach_end != null)) {
       return res.status(400).json({ error: 'Both tach_start and tach_end are required when logging tach time' });
@@ -199,6 +176,48 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
     }
 
+    const tStart = tach_start != null ? parseFloat(tach_start) : null;
+    const tEnd = tach_end != null ? parseFloat(tach_end) : null;
+
+    // ── Server-side meter validation: start cannot be before aircraft current reading ──
+    if (b.aircraft_id) {
+      const acResult = await client.query(
+        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+        [b.aircraft_id]
+      );
+      if (acResult.rows.length > 0) {
+        const acRow = acResult.rows[0];
+        const currentHobbs = getMeterHobbs(acRow);
+        if (currentHobbs != null && currentHobbs > 0) {
+          if (hStart < currentHobbs - 0.1) {
+            recordHobbsFail(req.user.id);
+            return res.status(400).json({
+              error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
+            });
+          }
+          if (hStart > currentHobbs + 5) {
+            recordHobbsFail(req.user.id);
+            return res.status(400).json({
+              error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
+            });
+          }
+        }
+        const currentTach = getMeterTach(acRow);
+        if (tStart != null && currentTach != null && currentTach > 0) {
+          if (tStart < currentTach - 0.1) {
+            return res.status(400).json({
+              error: `Tach start (${tStart.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
+            });
+          }
+          if (tStart > currentTach + 5) {
+            return res.status(400).json({
+              error: `Tach start (${tStart.toFixed(1)}) is unusually high vs aircraft reading (${currentTach.toFixed(1)}). Verify the meter.`,
+            });
+          }
+        }
+      }
+    }
+
     const hobbsFlown = hEnd - hStart;
 
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
@@ -206,8 +225,6 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       const dualErr = validateHobbsValue(dual_instruction_hours, 'dual_instruction_hours');
       if (dualErr) return res.status(400).json({ error: dualErr });
     }
-    const tStart = tach_start != null ? parseFloat(tach_start) : null;
-    const tEnd = tach_end != null ? parseFloat(tach_end) : null;
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
     const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : 0;
     const flight_date = new Date(b.start_time).toISOString().slice(0, 10);
@@ -261,36 +278,14 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       );
       logId = logResult.rows[0].id;
     }
-    // Aircraft meter readings — end values entered by pilot become the current (and displayed) totals
+    // Aircraft meter readings — end values entered by pilot (all aircraft use same logic)
     if (b.aircraft_id) {
-      const acDelta = await client.query(
-        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
-        [b.aircraft_id]
-      );
-      if (acDelta.rows.length > 0) {
-        const row = acDelta.rows[0];
-        const oldHobbs = parseFloat(row.current_hobbs ?? row.total_hobbs_hours) || 0;
-        const oldTach = parseFloat(row.current_tach ?? row.total_tach_hours) || 0;
-        if (tEnd != null) {
-          await client.query(
-            `UPDATE aircraft SET total_hobbs_hours = $1, current_hobbs = $1, total_tach_hours = $2, current_tach = $2, updated_at = NOW() WHERE id = $3`,
-            [hEnd, tEnd, b.aircraft_id]
-          );
-          await client.query(
-            `INSERT INTO aircraft_hours_history (aircraft_id, booking_id, field, old_value, new_value, source) VALUES ($1, $2, 'tach', $3, $4, 'flight_complete')`,
-            [b.aircraft_id, req.params.id, oldTach, tEnd]
-          );
-        } else {
-          await client.query(
-            `UPDATE aircraft SET total_hobbs_hours = $1, current_hobbs = $1, updated_at = NOW() WHERE id = $2`,
-            [hEnd, b.aircraft_id]
-          );
-        }
-        await client.query(
-          `INSERT INTO aircraft_hours_history (aircraft_id, booking_id, field, old_value, new_value, source) VALUES ($1, $2, 'hobbs', $3, $4, 'flight_complete')`,
-          [b.aircraft_id, req.params.id, oldHobbs, hEnd]
-        );
-      }
+      await applyAircraftMeterReadings(client, b.aircraft_id, {
+        hobbsEnd: hEnd,
+        tachEnd: tEnd,
+        bookingId: parseInt(req.params.id, 10),
+        source: 'flight_complete',
+      });
     }
     // Update student cumulative hours
     if (b.student_id) {

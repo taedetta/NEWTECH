@@ -5,6 +5,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
+const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 
 const router = express.Router();
 
@@ -221,7 +222,7 @@ router.post('/manual', authenticateToken, async (req, res) => {
       const tE = tEnd != null ? tEnd : null;
       const hDelta = hEnd - hStart;
       const tDelta = (tS != null && tE != null) ? (tE - tS) : null;
-      const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : (iid ? hDelta : 0);
+      const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
       const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
       const client = await pool.connect();
       try {
@@ -238,8 +239,12 @@ router.post('/manual', authenticateToken, async (req, res) => {
           [bkId, flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
         );
         if (acId) {
-          await client.query(`UPDATE aircraft SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2, current_hobbs = total_hobbs_hours + $1, current_tach = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, acId]);
-          await client.query(`INSERT INTO aircraft_hours_history (aircraft_id, field, old_value, new_value, source) SELECT $1, 'hobbs', total_hobbs_hours - $2, total_hobbs_hours, 'manual_entry' FROM aircraft WHERE id = $1`, [acId, hDelta]);
+          await applyAircraftMeterReadings(client, acId, {
+            hobbsEnd: hEnd,
+            tachEnd: tE,
+            bookingId: bkId,
+            source: 'manual_entry',
+          });
         }
         await client.query(`UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, sid]);
         await client.query('COMMIT');

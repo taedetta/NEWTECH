@@ -10,7 +10,7 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
 const { getPlatformAdminEmail } = require('../lib/platform-admin');
-const { upsertFullUserPermissions } = require('../lib/user-permissions-db');
+const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
 
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
@@ -279,6 +279,7 @@ async function runStartup({ pool }) {
     await ensureSchemaPatches(pool);
     await ensureUserIdSequence(pool);
     await ensureDefaultAdminAccount(pool);
+    await syncAllAircraftMeterFields(pool);
   } catch (err) {
     console.error('[bootstrap] startup error:', err.message);
   }

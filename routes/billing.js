@@ -198,7 +198,11 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
         [hobbsDelta, tachDelta, b.instructor_id]
       );
       if (b.aircraft_id) await client.query(
-        `UPDATE aircraft SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
+        `UPDATE aircraft SET
+           total_hobbs_hours = total_hobbs_hours - $1, current_hobbs = current_hobbs - $1,
+           total_tach_hours = total_tach_hours - $2, current_tach = current_tach - $2,
+           updated_at = NOW()
+         WHERE id = $3`,
         [hobbsDelta, tachDelta, b.aircraft_id]
       );
     }

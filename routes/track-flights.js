@@ -6,6 +6,7 @@
  */
 
 const express = require('express');
+const { getMeterHobbs } = require('../lib/aircraft-meter');
 const { getInspectionHours, hoursUntilDue } = require('../lib/aircraft-inspection-hours');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
@@ -154,7 +155,7 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
     }
 
     const schedule = aircraft.rows.map(ac => {
-      const hobbs = parseFloat(ac.current_hobbs || ac.total_hobbs_hours || 0);
+      const hobbs = getMeterHobbs(ac) ?? 0;
       const tach = getInspectionHours(ac);
       const hoursUntil100hr = hoursUntilDue(ac, ac.next_100hr_due);
 
