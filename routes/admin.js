@@ -108,6 +108,10 @@ router.post('/email-data-backup', authenticateToken, requireRole('owner', 'admin
 // ─── BACKUP TRIGGER ─────────────────────────────────────
 
 router.post('/backup/trigger', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  const { isStaging } = require('../lib/app-env');
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Backup only runs on the production site' });
+  }
   const frequency = req.body?.frequency || 'daily';
   const validFrequencies = ['daily', 'weekly', 'monthly', 'yearly'];
   if (!validFrequencies.includes(frequency)) {
@@ -547,6 +551,10 @@ router.get('/instructor-availability/all', authenticateToken, requireRole('admin
 
 router.post('/run-export', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
+    const { isStaging } = require('../lib/app-env');
+    if (isStaging()) {
+      return res.status(403).json({ error: 'Records export only runs on the production site' });
+    }
     const { runExport } = require('../export-service');
     // Fire async — don't block the response
     runExport(pool)

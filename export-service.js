@@ -5,6 +5,7 @@
 const { uploadBuffer } = require('./lib/r2-storage');
 const { buildZipBuffer } = require('./lib/backup-zip');
 const { sanitizeUploadUrl } = require('./lib/upload-url');
+const { prod, assertProductionExport } = require('./lib/production-query');
 const { sendEmail } = require('./email-templates');
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
@@ -59,6 +60,7 @@ async function genStudents(pool) {
     SELECT u.name, u.phone_number, u.email, u.role, u.created_at, u.deleted_at,
            u.approval_status
     FROM users u
+    WHERE ${prod('u')}
     ORDER BY u.created_at
   `);
   const headers = ['first_name','last_name','phone_number','email','role','signup_date','status','approved_by','approved_at'];
@@ -85,6 +87,7 @@ async function genFlightLogs(pool) {
     LEFT JOIN users i ON i.id = fl.instructor_id
     LEFT JOIN aircraft a ON a.id = fl.aircraft_id
     LEFT JOIN bookings b ON b.id = fl.booking_id
+    WHERE ${prod('fl')}
     ORDER BY fl.flight_date DESC, fl.created_at DESC
   `);
   const headers = ['booking_id','student_name','instructor_name','aircraft','tail_number','flight_date',
@@ -111,6 +114,7 @@ async function genHoursRecords(pool) {
     LEFT JOIN users s ON s.id = fl.student_id
     LEFT JOIN users i ON i.id = fl.instructor_id
     LEFT JOIN aircraft a ON a.id = fl.aircraft_id
+    WHERE ${prod('fl')}
     ORDER BY fl.flight_date DESC
   `);
   const headers = ['booking_id','student_name','instructor_name','aircraft','tail_number',
@@ -136,6 +140,7 @@ async function genMaintenance(pool) {
     LEFT JOIN aircraft a ON a.id = sq.aircraft_id
     LEFT JOIN users rep ON rep.id = sq.reported_by
     LEFT JOIN users rev ON rev.id = sq.reviewed_by
+    WHERE ${prod('sq')}
     ORDER BY sq.reported_at DESC
   `);
   const headers = ['squawk_id','aircraft','tail_number','reported_by','reported_date',
@@ -165,6 +170,7 @@ async function genBilling(pool) {
     LEFT JOIN users i ON i.id = fl.instructor_id
     LEFT JOIN aircraft a ON a.id = fl.aircraft_id
     LEFT JOIN bookings b ON b.id = fl.booking_id
+    WHERE ${prod('fl')}
     UNION ALL
     SELECT NULL AS booking_id, s.name AS student_name, i.name AS instructor_name,
            'Ground Session' AS aircraft, gs.session_date AS flight_date,
@@ -175,6 +181,7 @@ async function genBilling(pool) {
     FROM ground_sessions gs
     LEFT JOIN users s ON s.id = gs.student_id
     LEFT JOIN users i ON i.id = gs.instructor_id
+    WHERE ${prod('gs')}
     ORDER BY flight_date DESC NULLS LAST
   `);
   const headers = ['booking_id','student_name','instructor_name','aircraft','flight_date',
@@ -198,7 +205,7 @@ async function genInstructorHours(pool) {
     FROM flight_logs fl
     LEFT JOIN users i ON i.id = fl.instructor_id
     LEFT JOIN aircraft a ON a.id = fl.aircraft_id
-    WHERE fl.instructor_id IS NOT NULL
+    WHERE fl.instructor_id IS NOT NULL AND ${prod('fl')}
     UNION ALL
     SELECT NULL AS booking_id, i.name AS instructor_name, 'Ground Session' AS aircraft,
            gs.session_date AS flight_date, 0 AS hobbs_hours, 0 AS tach_hours,
@@ -207,6 +214,7 @@ async function genInstructorHours(pool) {
            gs.created_at
     FROM ground_sessions gs
     LEFT JOIN users i ON i.id = gs.instructor_id
+    WHERE ${prod('gs')}
     ORDER BY flight_date DESC NULLS LAST
   `);
   const headers = ['booking_id','instructor_name','aircraft','flight_date','hobbs_hours',
@@ -228,6 +236,7 @@ async function genEndorsements(pool) {
            e.endorsement_text AS notes, e.created_at
     FROM endorsements e
     LEFT JOIN aircraft a ON a.id = e.aircraft_id
+    WHERE ${prod('e')}
     ORDER BY e.endorsement_date DESC NULLS LAST
   `);
   const headers = ['endorsement_id','student_name','instructor_name','endorsement_type',
@@ -250,8 +259,8 @@ async function genStudentHours(pool) {
            MAX(fl.flight_date) AS last_flight_date,
            s.created_at
     FROM users s
-    LEFT JOIN flight_logs fl ON fl.student_id = s.id
-    WHERE s.role = 'student'
+    LEFT JOIN flight_logs fl ON fl.student_id = s.id AND ${prod('fl')}
+    WHERE s.role = 'student' AND ${prod('s')}
     GROUP BY s.id, s.name, s.created_at
     ORDER BY s.name
   `);
@@ -290,8 +299,9 @@ async function genStudentProgress(pool) {
     LEFT JOIN (
       SELECT student_id, COUNT(*) AS flight_count,
              COALESCE(SUM(hobbs_delta), 0) AS total_hours
-      FROM flight_logs GROUP BY student_id
+      FROM flight_logs WHERE ${prod('flight_logs')} GROUP BY student_id
     ) fc ON fc.student_id = st.student_id
+    WHERE ${prod('st')}
     ORDER BY s.name
   `);
   const headers = ['student_name','instructor_name','program','current_stage','progress_pct',
@@ -444,9 +454,10 @@ async function generateAllCsvExports(pool) {
 // ── Main export runner ─────────────────────────────────────────────────────────
 
 async function runExport(pool) {
+  assertProductionExport();
   const startTime = Date.now();
   const dateLabel = isoDate(new Date());
-  console.log(`[export] Starting nightly CSV export for ${dateLabel}...`);
+  console.log(`[export] Starting nightly CSV export for ${dateLabel} (production data only)...`);
 
   const results = await Promise.allSettled(EXPORT_TASKS.map((t) => t.fn(pool)));
   const files = [];

@@ -27,6 +27,13 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
+if (process.env.APP_ENV === 'staging') {
+  console.error('Backup/export must run with APP_ENV=production (live site data only)');
+  process.exit(1);
+}
+
+process.env.APP_ENV = process.env.APP_ENV || 'production';
+
 const dbUrl = process.env.DATABASE_URL;
 const pool = new Pool({
   connectionString: dbUrl,

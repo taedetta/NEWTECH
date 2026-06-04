@@ -18,6 +18,7 @@ const { PassThrough } = require('stream');
 const { uploadBuffer } = require('./lib/r2-storage');
 const { buildZipBuffer } = require('./lib/backup-zip');
 const { sanitizeUploadUrl } = require('./lib/upload-url');
+const { prod, assertProductionExport } = require('./lib/production-query');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
 
@@ -402,6 +403,7 @@ async function buildBillingPdf(pool, generatedAt) {
     LEFT JOIN users u ON fl.student_id = u.id
     LEFT JOIN users i ON fl.instructor_id = i.id
     LEFT JOIN aircraft a ON fl.aircraft_id = a.id
+    WHERE ${prod('fl')}
     ORDER BY fl.flight_date DESC, u.name
   `);
 
@@ -416,6 +418,7 @@ async function buildBillingPdf(pool, generatedAt) {
     FROM ground_sessions gs
     LEFT JOIN users u ON gs.student_id = u.id
     LEFT JOIN users i ON gs.instructor_id = i.id
+    WHERE ${prod('gs')}
     ORDER BY gs.session_date DESC, u.name
   `);
 
@@ -523,7 +526,7 @@ async function buildInstructorHoursPdf(pool, generatedAt) {
     LEFT JOIN users i ON fl.instructor_id = i.id
     LEFT JOIN users u ON fl.student_id = u.id
     LEFT JOIN aircraft a ON fl.aircraft_id = a.id
-    WHERE fl.instructor_id IS NOT NULL
+    WHERE fl.instructor_id IS NOT NULL AND ${prod('fl')}
     ORDER BY fl.flight_date DESC, i.name
   `);
 
@@ -542,6 +545,7 @@ async function buildInstructorHoursPdf(pool, generatedAt) {
     FROM ground_sessions gs
     LEFT JOIN users i ON gs.instructor_id = i.id
     LEFT JOIN users u ON gs.student_id = u.id
+    WHERE ${prod('gs')}
     ORDER BY gs.session_date DESC, i.name
   `);
 
@@ -628,6 +632,7 @@ async function buildFlightLogsPdf(pool, generatedAt) {
     LEFT JOIN users u ON fl.student_id = u.id
     LEFT JOIN users i ON fl.instructor_id = i.id
     LEFT JOIN aircraft a ON fl.aircraft_id = a.id
+    WHERE ${prod('fl')}
     ORDER BY fl.flight_date DESC, u.name
   `);
 
@@ -639,7 +644,8 @@ async function buildFlightLogsPdf(pool, generatedAt) {
       COALESCE(current_hobbs, 0) AS current_hobbs,
       COALESCE(current_tach, 0) AS current_tach,
       status
-    FROM aircraft
+    FROM aircraft a
+    WHERE ${prod('a')}
     ORDER BY tail_number
   `);
 
@@ -750,6 +756,7 @@ async function buildEndorsementsPdf(pool, generatedAt) {
       e.student_signature IS NOT NULL AS student_signed_flag
     FROM endorsements e
     LEFT JOIN aircraft a ON e.aircraft_id = a.id
+    WHERE ${prod('e')}
     ORDER BY e.endorsement_date DESC, e.student_name
   `);
 
@@ -826,9 +833,9 @@ async function buildStudentDirectoryPdf(pool, generatedAt) {
       u.deleted_at,
       inst.name AS assigned_instructor
     FROM users u
-    LEFT JOIN student_training st ON st.student_id = u.id AND st.status = 'active'
+    LEFT JOIN student_training st ON st.student_id = u.id AND st.status = 'active' AND ${prod('st')}
     LEFT JOIN users inst ON inst.id = st.instructor_id
-    WHERE u.deleted_at IS NULL OR u.deleted_at IS NOT NULL
+    WHERE ${prod('u')}
     ORDER BY
       CASE u.role
         WHEN 'owner' THEN 1
@@ -906,6 +913,7 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
     LEFT JOIN aircraft a ON sq.aircraft_id = a.id
     LEFT JOIN users rep ON sq.reported_by = rep.id
     LEFT JOIN users rev ON sq.reviewed_by = rev.id
+    WHERE ${prod('sq')}
     ORDER BY sq.reported_at DESC
   `);
 
@@ -1093,8 +1101,9 @@ New Tech Aviation · 179 Airport Circle, Dublin, VA 24084 · KPSK`;
 // ── Main backup runner ────────────────────────────────────────────────────────
 
 async function runBackup(pool, frequency) {
+  assertProductionExport();
   const startTime = Date.now();
-  console.log(`[backup] Starting ${frequency} backup (full history)...`);
+  console.log(`[backup] Starting ${frequency} backup (production data only)...`);
 
   try {
     const { label } = getDateRange(frequency);
@@ -1120,14 +1129,14 @@ async function runBackup(pool, frequency) {
 
     // Record counts for email summary
     const [flCount, gsCount, endCount, userCount, sqCount, instrTotal] = await Promise.all([
-      pool.query(`SELECT COUNT(*) FROM flight_logs`),
-      pool.query(`SELECT COUNT(*) FROM ground_sessions`),
-      pool.query(`SELECT COUNT(*) FROM endorsements`),
-      pool.query(`SELECT COUNT(*) FROM users`),
-      pool.query(`SELECT COUNT(*) FROM squawks`),
+      pool.query(`SELECT COUNT(*) FROM flight_logs WHERE ${prod('flight_logs')}`),
+      pool.query(`SELECT COUNT(*) FROM ground_sessions WHERE ${prod('ground_sessions')}`),
+      pool.query(`SELECT COUNT(*) FROM endorsements WHERE ${prod('endorsements')}`),
+      pool.query(`SELECT COUNT(*) FROM users WHERE ${prod('users')}`),
+      pool.query(`SELECT COUNT(*) FROM squawks WHERE ${prod('squawks')}`),
       pool.query(`
-        SELECT (SELECT COUNT(*) FROM flight_logs WHERE instructor_id IS NOT NULL) +
-               (SELECT COUNT(*) FROM ground_sessions) AS count
+        SELECT (SELECT COUNT(*) FROM flight_logs WHERE instructor_id IS NOT NULL AND ${prod('flight_logs')}) +
+               (SELECT COUNT(*) FROM ground_sessions WHERE ${prod('ground_sessions')}) AS count
       `),
     ]);
 
