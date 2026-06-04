@@ -209,7 +209,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const tStart = tach_start != null ? parseFloat(tach_start) : null;
     const tEnd = tach_end != null ? parseFloat(tach_end) : null;
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
-    const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : (b.booking_type === 'dual' ? hobbsFlown : 0);
+    const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : 0;
     const flight_date = new Date(b.start_time).toISOString().slice(0, 10);
     // Flight type flags from post-flight wizard
     const nightFlag = !!is_night;
@@ -261,21 +261,34 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       );
       logId = logResult.rows[0].id;
     }
-    // Update aircraft running totals — parseFloat because Postgres DECIMAL returns strings
+    // Aircraft meter readings — end values entered by pilot become the current (and displayed) totals
     if (b.aircraft_id) {
-      const acDelta = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1', [b.aircraft_id]);
+      const acDelta = await client.query(
+        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+        [b.aircraft_id]
+      );
       if (acDelta.rows.length > 0) {
-        const oldHobbs = parseFloat(acDelta.rows[0].total_hobbs_hours) || 0;
-        const oldTach = parseFloat(acDelta.rows[0].total_tach_hours) || 0;
-        const newHobbs = oldHobbs + hobbsFlown;
-        const newTach = oldTach + (tachFlown || 0);
-        await client.query(
-          `UPDATE aircraft SET total_hobbs_hours = $1, total_tach_hours = $2, current_hobbs = $3, current_tach = $4, updated_at = NOW() WHERE id = $5`,
-          [newHobbs, newTach, hEnd, tEnd || newTach, b.aircraft_id]
-        );
+        const row = acDelta.rows[0];
+        const oldHobbs = parseFloat(row.current_hobbs ?? row.total_hobbs_hours) || 0;
+        const oldTach = parseFloat(row.current_tach ?? row.total_tach_hours) || 0;
+        if (tEnd != null) {
+          await client.query(
+            `UPDATE aircraft SET total_hobbs_hours = $1, current_hobbs = $1, total_tach_hours = $2, current_tach = $2, updated_at = NOW() WHERE id = $3`,
+            [hEnd, tEnd, b.aircraft_id]
+          );
+          await client.query(
+            `INSERT INTO aircraft_hours_history (aircraft_id, booking_id, field, old_value, new_value, source) VALUES ($1, $2, 'tach', $3, $4, 'flight_complete')`,
+            [b.aircraft_id, req.params.id, oldTach, tEnd]
+          );
+        } else {
+          await client.query(
+            `UPDATE aircraft SET total_hobbs_hours = $1, current_hobbs = $1, updated_at = NOW() WHERE id = $2`,
+            [hEnd, b.aircraft_id]
+          );
+        }
         await client.query(
           `INSERT INTO aircraft_hours_history (aircraft_id, booking_id, field, old_value, new_value, source) VALUES ($1, $2, 'hobbs', $3, $4, 'flight_complete')`,
-          [b.aircraft_id, req.params.id, oldHobbs, newHobbs]
+          [b.aircraft_id, req.params.id, oldHobbs, hEnd]
         );
       }
     }

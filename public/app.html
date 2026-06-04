@@ -10310,10 +10310,10 @@ function openPostFlightWizard(bookingId, bookingDataOverride) {
     // Auto-fill Hobbs/Tach start from aircraft's last known reading
     const aircraft = allAircraft.find(a => a.id === b.aircraft_id);
     if (aircraft) {
-      const curHobbs = parseFloat(aircraft.current_hobbs ?? aircraft.total_hobbs_hours ?? 0);
-      const curTach  = parseFloat(aircraft.current_tach ?? aircraft.total_tach_hours ?? curHobbs);
-      if (curHobbs > 0) document.getElementById('pfw-hobbs-start').value = curHobbs.toFixed(1);
-      if (curTach  > 0) document.getElementById('pfw-tach-start').value  = curTach.toFixed(1);
+      const curHobbs = aircraftMeterHobbs(aircraft);
+      const curTach  = aircraftMeterTach(aircraft);
+      if (curHobbs != null && curHobbs > 0) document.getElementById('pfw-hobbs-start').value = curHobbs.toFixed(1);
+      if (curTach  != null && curTach  > 0) document.getElementById('pfw-tach-start').value  = curTach.toFixed(1);
     }
     // Auto-check solo for student_solo bookings
     document.getElementById('pfw-is-solo').checked = (b.booking_type === 'student_solo');
@@ -10421,14 +10421,6 @@ function pfwUpdateDelta() {
   if (!isNaN(hs) && !isNaN(he) && he < hs) errors.push('Hobbs End must be ≥ Hobbs Start');
   if (!isNaN(ts) && !isNaN(te) && te < ts) errors.push('Tach End must be ≥ Tach Start');
   if (errors.length) { valErr.textContent = errors.join('. '); valErr.classList.remove('hidden'); }
-
-  // Default dual hours from Hobbs delta when empty (user can increase for ground time)
-  if (pfwIsDualFlight && !isNaN(hs) && !isNaN(he) && he > hs) {
-    const dualEl = document.getElementById('pfw-dual-hours');
-    if (dualEl && dualEl.dataset.userEdited !== '1' && dualEl.value === '') {
-      dualEl.value = (he - hs).toFixed(1);
-    }
-  }
 }
 
 async function pfwSubmitStep1() {
@@ -10851,10 +10843,10 @@ function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
     <td>${a.year || '-'}</td>
     <td>${a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) : '-'}</td>
     <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">
-      ${a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : '0.0'}
+      ${(() => { const h = aircraftMeterHobbs(a); return h != null ? h.toFixed(1) : '0.0'; })()}
       ${canEditHours ? `<button class="btn btn-secondary btn-sm" style="margin-left:0.4rem;padding:2px 7px;font-size:0.7rem" onclick="openInspectionModalHoursOnly(${a.id}, '${escHtml(a.tail_number)}')">Edit</button>` : ''}
     </td>
-    <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">${a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : '0.0'}</td>
+    <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">${(() => { const t = aircraftMeterTach(a); return t != null ? t.toFixed(1) : '0.0'; })()}</td>
     <td><span class="tag ${statusClass}">${a.status}</span></td>
     <td style="white-space:nowrap">
       ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
@@ -10870,8 +10862,8 @@ function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
 
 function renderFleetCard(a, canEdit, canEditHours, canDelete) {
   const statusClass = a.status === 'available' ? 'tag-green' : a.status === 'maintenance' ? 'tag-amber' : 'tag-red';
-  const hobbs = a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : '0.0';
-  const tach = a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : '0.0';
+  const hobbs = (() => { const h = aircraftMeterHobbs(a); return h != null ? h.toFixed(1) : '0.0'; })();
+  const tach = (() => { const t = aircraftMeterTach(a); return t != null ? t.toFixed(1) : '0.0'; })();
   const rate = a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) + '/hr' : '—';
   return `<article class="fleet-card">
     <div class="fleet-card-hdr">
@@ -11946,6 +11938,23 @@ function aircraftInspectionHours(ac) {
   return Number.isNaN(n) ? null : n;
 }
 
+/** Last meter reading on aircraft (what the next pilot sees as Hobbs/Tach start). */
+function aircraftMeterHobbs(ac) {
+  if (!ac) return null;
+  const raw = ac.current_hobbs ?? ac.total_hobbs_hours;
+  if (raw == null || raw === '') return null;
+  const n = parseFloat(raw);
+  return Number.isNaN(n) ? null : n;
+}
+
+function aircraftMeterTach(ac) {
+  if (!ac) return null;
+  const raw = ac.current_tach ?? ac.total_tach_hours;
+  if (raw == null || raw === '') return null;
+  const n = parseFloat(raw);
+  return Number.isNaN(n) ? null : n;
+}
+
 function inspectionHoursRemaining(ac, due) {
   return hobbsRemaining(aircraftInspectionHours(ac), due);
 }
@@ -12005,8 +12014,8 @@ async function loadMaintenanceFleet() {
       : `<span class="tag tag-green">&#128994; Available</span>`;
 
     // Use total_tach_hours for inspection due calculations (100-hr, ADs) (synced with Fleet page)
-    const hobbs = a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : null;
-    const tach = a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : null;
+    const hobbs = aircraftMeterHobbs(a) != null ? aircraftMeterHobbs(a).toFixed(1) : null;
+    const tach = aircraftMeterTach(a) != null ? aircraftMeterTach(a).toFixed(1) : null;
     const hRem = inspectionHoursRemaining(a, a.next_100hr_due);
     const dayRem = daysUntil(a.next_annual_due);
     const openSq = openSquawksByAircraft[a.id] || 0;
@@ -12367,8 +12376,8 @@ function openInspectionModal(aircraftId, tailNumber) {
   document.getElementById('inspection-error').classList.add('hidden');
 
   // Use total_tach_hours for inspection due calculations (100-hr, ADs)
-  document.getElementById('insp-hobbs').value = ac && ac.total_hobbs_hours != null ? ac.total_hobbs_hours : '';
-  document.getElementById('insp-tach').value = ac && ac.total_tach_hours != null ? ac.total_tach_hours : '';
+  document.getElementById('insp-hobbs').value = ac && aircraftMeterHobbs(ac) != null ? aircraftMeterHobbs(ac) : '';
+  document.getElementById('insp-tach').value = ac && aircraftMeterTach(ac) != null ? aircraftMeterTach(ac) : '';
   document.getElementById('insp-note').value = '';
   document.getElementById('insp-100hr').value = ac && ac.next_100hr_due != null ? ac.next_100hr_due : '';
   document.getElementById('insp-annual').value = ac && ac.next_annual_due ? ac.next_annual_due.split('T')[0] : '';
@@ -12510,8 +12519,8 @@ async function loadInspections() {
 
   el.innerHTML = allAircraft.map(a => {
     // Use total_tach_hours for inspection due calculations (100-hr, ADs)
-    const hobbs = a.total_hobbs_hours != null ? parseFloat(a.total_hobbs_hours).toFixed(1) : null;
-    const tach = a.total_tach_hours != null ? parseFloat(a.total_tach_hours).toFixed(1) : null;
+    const hobbs = aircraftMeterHobbs(a) != null ? aircraftMeterHobbs(a).toFixed(1) : null;
+    const tach = aircraftMeterTach(a) != null ? aircraftMeterTach(a).toFixed(1) : null;
     const hRem = inspectionHoursRemaining(a, a.next_100hr_due);
     const dayRem = daysUntil(a.next_annual_due);
 
