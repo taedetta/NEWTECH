@@ -68,7 +68,11 @@ router.get('/', authenticateToken, async (req, res) => {
             COALESCE(fl.dual_instruction_hours,
               CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
             ) * COALESCE(i.instructor_rate, 0), 0) as total_charge,
-        fl.hobbs_start, fl.hobbs_end, fl.tach_start, fl.tach_end
+        COALESCE(fl.hobbs_start, b.hobbs_start) as hobbs_start,
+        COALESCE(fl.hobbs_end, b.hobbs_end) as hobbs_end,
+        COALESCE(fl.tach_start, b.tach_start) as tach_start,
+        COALESCE(fl.tach_end, b.tach_end) as tach_end,
+        fl.id as flight_log_id
       FROM bookings b
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
@@ -146,6 +150,160 @@ router.get('/', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Booking history GET error:', err);
     res.status(500).json({ error: 'Failed to load booking history' });
+  }
+});
+
+// PATCH /api/booking-history/flights/:id — admin/owner: edit a completed flight booking by booking id
+router.patch('/flights/:id', authenticateToken, async (req, res) => {
+  try {
+    const { role, id: userId } = req.user;
+    if (!['owner', 'admin'].includes(role)) {
+      return res.status(403).json({ error: 'Only admins and owners can edit booking history records' });
+    }
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
+
+    const bkResult = await pool.query(
+      `SELECT b.*, a.hourly_rate
+       FROM bookings b
+       JOIN aircraft a ON b.aircraft_id = a.id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+    if (bkResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    const b = bkResult.rows[0];
+
+    const {
+      flight_date,
+      hobbs_start,
+      hobbs_end,
+      tach_start,
+      tach_end,
+      dual_instruction_hours,
+      aircraft_charge_amount,
+      instruction_charge_amount,
+    } = req.body;
+
+    const hStart = hobbs_start != null ? parseFloat(hobbs_start) : (b.hobbs_start != null ? parseFloat(b.hobbs_start) : null);
+    const hEnd = hobbs_end != null ? parseFloat(hobbs_end) : (b.hobbs_end != null ? parseFloat(b.hobbs_end) : null);
+    if (hStart == null || hEnd == null || Number.isNaN(hStart) || Number.isNaN(hEnd)) {
+      return res.status(400).json({ error: 'hobbs_start and hobbs_end are required' });
+    }
+    if (hEnd <= hStart) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
+
+    const tStart = tach_start != null ? parseFloat(tach_start) : (b.tach_start != null ? parseFloat(b.tach_start) : null);
+    const tEnd = tach_end != null ? parseFloat(tach_end) : (b.tach_end != null ? parseFloat(b.tach_end) : null);
+    if ((tStart != null) !== (tEnd != null)) {
+      return res.status(400).json({ error: 'Provide both tach_start and tach_end, or leave both empty' });
+    }
+    if (tStart != null && tEnd != null && tEnd <= tStart) {
+      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
+    }
+
+    const hobbsDelta = parseFloat((hEnd - hStart).toFixed(2));
+    const tachDelta = (tStart != null && tEnd != null) ? parseFloat((tEnd - tStart).toFixed(2)) : null;
+    const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
+    const acCharge = aircraft_charge_amount != null
+      ? parseFloat(aircraft_charge_amount)
+      : Math.round(hobbsDelta * parseFloat(b.hourly_rate || 0) * 100) / 100;
+    const instrRate = b.instructor_id
+      ? (await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]?.instructor_rate
+      : null;
+    const instrCharge = instruction_charge_amount != null
+      ? parseFloat(instruction_charge_amount)
+      : (dualHrs > 0 && instrRate != null ? Math.round(dualHrs * parseFloat(instrRate) * 100) / 100 : 0);
+    const dateVal = flight_date || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      if (dateVal) {
+        const startTime = new Date(dateVal + 'T12:00:00Z');
+        const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+        await client.query(
+          `UPDATE bookings SET start_time = $1, end_time = $2 WHERE id = $3`,
+          [startTime.toISOString(), endTime.toISOString(), bookingId]
+        );
+      }
+
+      await client.query(
+        `UPDATE bookings SET hobbs_start = $1, hobbs_end = $2, tach_start = $3, tach_end = $4, updated_at = NOW()
+         WHERE id = $5`,
+        [hStart, hEnd, tStart, tEnd, bookingId]
+      );
+
+      const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [bookingId]);
+      if (existingLog.rows.length > 0) {
+        await client.query(
+          `UPDATE flight_logs SET
+            flight_date = $1, hobbs_start = $2, hobbs_end = $3, hobbs_delta = $4,
+            tach_start = $5, tach_end = $6, tach_delta = $7,
+            dual_instruction_hours = $8, aircraft_charge_amount = $9, instruction_charge_amount = $10,
+            updated_at = NOW()
+           WHERE booking_id = $11`,
+          [dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, acCharge, instrCharge, bookingId]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO flight_logs
+            (booking_id, aircraft_id, student_id, instructor_id, booking_type,
+             flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
+             dual_instruction_hours, submitted_by, aircraft_charge_amount, instruction_charge_amount)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+          [bookingId, b.aircraft_id, b.student_id, b.instructor_id, b.booking_type || 'dual',
+           dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, userId, acCharge, instrCharge]
+        );
+      }
+
+      await client.query('COMMIT');
+      res.json({ ok: true, booking_id: bookingId });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('Booking history flight update error:', err);
+    res.status(500).json({ error: 'Failed to update booking record' });
+  }
+});
+
+// PATCH /api/booking-history/ground-sessions/:id — admin/owner: edit a ground session
+router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
+  try {
+    const { role } = req.user;
+    if (!['owner', 'admin'].includes(role)) {
+      return res.status(403).json({ error: 'Only admins and owners can edit booking history records' });
+    }
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
+
+    const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1', [sessionId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
+    const gs = existing.rows[0];
+
+    const { flight_date, dual_instruction_hours, instruction_charge_amount } = req.body;
+    const sessionDate = flight_date || gs.session_date;
+    const groundHours = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : parseFloat(gs.ground_hours);
+    if (!groundHours || groundHours <= 0) {
+      return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
+    }
+    const instrCharge = instruction_charge_amount != null
+      ? parseFloat(instruction_charge_amount)
+      : (gs.instructor_rate != null
+        ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
+        : gs.instruction_charge_amount);
+
+    await pool.query(
+      `UPDATE ground_sessions SET session_date = $1, ground_hours = $2, instruction_charge_amount = $3 WHERE id = $4`,
+      [sessionDate, groundHours, instrCharge, sessionId]
+    );
+    res.json({ ok: true, ground_session_id: sessionId });
+  } catch (err) {
+    console.error('Booking history ground session update error:', err);
+    res.status(500).json({ error: 'Failed to update ground session record' });
   }
 });
 
