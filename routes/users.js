@@ -243,6 +243,122 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// PATCH /api/users/:id/privileges — toggle admin/owner access (owners manage both; admins/perm-managers manage admin only)
+router.patch('/:id/privileges', authenticateToken, async (req, res) => {
+  try {
+    const requesterResult = await pool.query(
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [req.user.id]
+    );
+    if (!requesterResult.rows.length) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    const requesterRole = requesterResult.rows[0].role;
+    const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
+    const canGrantAdmin = ['owner', 'admin'].includes(requesterRole) || requesterPerms.can_manage_permissions;
+    const canGrantOwner = requesterRole === 'owner';
+
+    const targetId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(targetId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    if (targetId === req.user.id) {
+      return res.status(403).json({ error: 'You cannot change your own privileges' });
+    }
+
+    const { admin_access, owner_access } = req.body;
+    if (admin_access === undefined && owner_access === undefined) {
+      return res.status(400).json({ error: 'Provide admin_access and/or owner_access' });
+    }
+    if (owner_access !== undefined && !canGrantOwner) {
+      return res.status(403).json({ error: 'Only owners can grant or revoke owner access' });
+    }
+    if (admin_access !== undefined && !canGrantAdmin) {
+      return res.status(403).json({ error: 'Insufficient permissions to change admin access' });
+    }
+
+    const targetResult = await pool.query(
+      'SELECT id, role, name, email, is_instructor FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [targetId]
+    );
+    if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const target = targetResult.rows[0];
+
+    if (isPlatformAdminEmail(target.email) && owner_access === true) {
+      return res.status(403).json({ error: 'This account stays Admin/Instructor in the UI; it already has full management access' });
+    }
+
+    let newRole = target.role;
+
+    if (owner_access === true) {
+      newRole = 'owner';
+    } else if (owner_access === false && target.role === 'owner') {
+      const ownerCount = await pool.query(
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
+      );
+      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
+        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      }
+      newRole = target.is_instructor ? 'instructor' : 'admin';
+    } else if (admin_access === true && target.role !== 'owner') {
+      newRole = 'admin';
+    } else if (admin_access === false && target.role === 'admin') {
+      newRole = target.is_instructor ? 'instructor' : 'student';
+    }
+
+    if (newRole === target.role) {
+      return res.json({
+        ok: true,
+        id: targetId,
+        role: newRole,
+        admin_access: newRole === 'admin' || newRole === 'owner',
+        owner_access: newRole === 'owner',
+        unchanged: true,
+      });
+    }
+
+    if (target.role === 'owner' && newRole !== 'owner') {
+      const ownerCount = await pool.query(
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
+      );
+      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
+        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      }
+    }
+
+    const setInstructor = newRole === 'instructor';
+    await pool.query(
+      `UPDATE users SET role = $1,
+        is_instructor = CASE WHEN $3 THEN TRUE ELSE is_instructor END,
+        updated_at = NOW()
+       WHERE id = $2`,
+      [newRole, targetId, setInstructor]
+    );
+    pool.query(
+      `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
+      ['change_privileges', req.user.id, JSON.stringify({
+        user_id: targetId,
+        user_name: target.name,
+        from: target.role,
+        to: newRole,
+        admin_access,
+        owner_access,
+      })]
+    ).catch(e => console.error('[audit] privilege change log failed:', e.message));
+
+    res.json({
+      ok: true,
+      id: targetId,
+      role: newRole,
+      admin_access: newRole === 'admin' || newRole === 'owner',
+      owner_access: newRole === 'owner',
+    });
+  } catch (err) {
+    console.error('Privilege change error:', err);
+    res.status(500).json({ error: 'Failed to update privileges' });
+  }
+});
+
 // PATCH /api/users/:id/role — owner/admin: change a user's role
 router.patch('/:id/role', authenticateToken, async (req, res) => {
   try {

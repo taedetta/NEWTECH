@@ -2104,7 +2104,7 @@
           </div>
           <div id="perm-banner" class="perm-section-banner hidden">
             <span class="perm-icon">&#128274;</span>
-            <span>Toggle permissions for each user. Owner permissions cannot be modified. Students cannot receive management permissions.</span>
+            <span>Use Admin and Owner toggles to grant full access. Toggle individual permissions below. Students cannot receive management permissions.</span>
           </div>
           <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
             <button class="btn btn-secondary btn-sm" onclick="loadPeople('all')" data-filter="all">All</button>
@@ -4495,11 +4495,10 @@
         <select id="role-change-select" class="input-field" onchange="onRoleChangeSelect()">
           <option value="student">Student Pilot</option>
           <option value="instructor">Instructor (CFI)</option>
-          <option value="admin">Admin</option>
           <option value="renter">Renter</option>
-          <option value="owner">Owner</option>
           <option value="maintenance">Maintenance Technician</option>
         </select>
+        <p style="font-size:0.78rem;color:var(--gray-400);margin-top:0.35rem;">Admin and Owner access are toggled in the User Management table.</p>
       </div>
       <!-- Is Instructor toggle — independent of role -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:0.85rem 1rem;margin-bottom:0.75rem;background:rgba(56,189,248,0.04);border-radius:8px;border:1px solid rgba(56,189,248,0.1);">
@@ -11251,8 +11250,11 @@ async function loadPeople(filter, skipReload) {
   });
 
   const isOwner = ['owner', 'admin'].includes(currentUser.role);
+  const isOwnerRole = currentUser.role === 'owner';
   const perms = currentUser.permissions || {};
   const canManagePerms = isOwner || perms.can_manage_permissions;
+  const canToggleAdmin = isOwner || perms.can_manage_permissions;
+  const canToggleOwner = isOwnerRole;
   const canManageInstructors = isOwner || perms.can_manage_instructors;
   const canManageStudents = isOwner || perms.can_manage_students;
   const canAddUsers = isOwner || canManageInstructors || canManageStudents;
@@ -11295,6 +11297,8 @@ async function loadPeople(filter, skipReload) {
       '<th>Phone</th>' +
       '<th>Students</th>' +
       '<th>Rate/hr</th>' +
+      '<th class="perm-col-header" style="text-align:center">Admin</th>' +
+      '<th class="perm-col-header" style="text-align:center">Owner</th>' +
       '<th class="perm-col-header" style="text-align:center">Aircraft</th>' +
       '<th class="perm-col-header" style="text-align:center">Instructors</th>' +
       '<th class="perm-col-header" style="text-align:center">Students</th>' +
@@ -11304,6 +11308,7 @@ async function loadPeople(filter, skipReload) {
 
     tbody.innerHTML = users.map(function(u) {
       var isTargetOwner = u.role === 'owner';
+      var isTargetAdmin = u.role === 'admin';
       var isTargetStudent = u.role === 'student';
       var isNonMgmtRole = ['student', 'renter', 'maintenance'].includes(u.role);
       var disabled = isTargetOwner || isNonMgmtRole;
@@ -11311,7 +11316,8 @@ async function loadPeople(filter, skipReload) {
       var isDualRole = !!u.is_instructor && ['admin', 'owner'].includes(u.role) && u.role !== 'instructor';
       var roleClass = u.role === 'owner' ? 'tag-gold' : u.role === 'instructor' ? 'tag-sky' : u.role === 'admin' ? 'tag-amber' : u.role === 'renter' ? 'tag-green' : u.role === 'maintenance' ? 'tag-amber' : 'tag-purple';
       var roleLabel = u.role === 'owner' ? 'Owner' : u.role === 'instructor' ? 'Instructor' : isDualRole ? 'Admin / Instructor' : u.role === 'admin' ? 'Admin' : u.role === 'renter' ? 'Renter' : u.role === 'maintenance' ? 'Maintenance' : 'Student';
-      var editRoleBtn = isOwner && !isSelf ? ' <button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:0.85rem;padding:0.15rem 0.3rem;border-radius:4px;line-height:1;vertical-align:middle;transition:color 0.15s" title="Edit user" onmouseover="this.style.color=\'var(--sky)\'" onmouseout="this.style.color=\'var(--gray-400)\'" onclick="openRoleChangeModal(' + u.id + ',\'' + escHtml(u.name).replace(/'/g,"\\'") + '\',\'' + u.role + '\', ' + (!!u.is_instructor ? 'true' : 'false') + ')">&#9998;</button>' : '';
+      var canEditBaseRole = (canToggleAdmin || canToggleOwner) && !isSelf && !isTargetOwner;
+      var editRoleBtn = canEditBaseRole ? ' <button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:0.85rem;padding:0.15rem 0.3rem;border-radius:4px;line-height:1;vertical-align:middle;transition:color 0.15s" title="Edit base role" onmouseover="this.style.color=\'var(--sky)\'" onmouseout="this.style.color=\'var(--gray-400)\'" onclick="openRoleChangeModal(' + u.id + ',\'' + escHtml(u.name).replace(/'/g,"\\'") + '\',\'' + u.role + '\', ' + (!!u.is_instructor ? 'true' : 'false') + ')">&#9998;</button>' : '';
 
       function makeToggle(perm, value) {
         var checked = isTargetOwner ? true : !!value;
@@ -11321,6 +11327,22 @@ async function loadPeople(filter, skipReload) {
           'onchange="stagePermissionChange(' + u.id + ', \'' + perm + '\', this.checked)">' +
           '<span class="toggle-slider"></span></label>';
       }
+
+      function makePrivilegeToggle(type, checked, toggleDisabled, title) {
+        return '<label class="toggle-switch" title="' + escHtml(title || '') + '">' +
+          '<input type="checkbox" ' + (checked ? 'checked ' : '') + (toggleDisabled ? 'disabled ' : '') +
+          'onchange="toggleUserPrivilege(' + u.id + ', \'' + type + '\', this.checked, this)">' +
+          '<span class="toggle-slider"></span></label>';
+      }
+
+      var hasAdminAccess = isTargetAdmin || isTargetOwner;
+      var adminToggleDisabled = isSelf || !canToggleAdmin || isTargetOwner;
+      var ownerToggleDisabled = isSelf || !canToggleOwner;
+      var adminTitle = isSelf ? 'Cannot change your own access' : isTargetOwner ? 'Owner includes admin access' : !canToggleAdmin ? 'No permission to change admin access' : 'Grant or revoke full admin access';
+      var ownerTitle = isSelf ? 'Cannot change your own access' : !canToggleOwner ? 'Only owners can grant owner access' : 'Grant or revoke owner access';
+
+      var adminCell = makePrivilegeToggle('admin', hasAdminAccess, adminToggleDisabled, adminTitle);
+      var ownerCell = makePrivilegeToggle('owner', isTargetOwner, ownerToggleDisabled, ownerTitle);
 
       var canDelete = !isSelf && (
         (isOwner && isTargetOwner) ||
@@ -11357,6 +11379,8 @@ async function loadPeople(filter, skipReload) {
         '<td style="color:var(--gray-300);font-size:0.875rem">' + (u.phone_number ? escHtml(u.phone_number) : '<span style="color:var(--gray-500)">—</span>') + '</td>' +
         '<td style="text-align:center">' + studentCount + '</td>' +
         '<td>' + rateCell + '</td>' +
+        '<td style="text-align:center">' + adminCell + '</td>' +
+        '<td style="text-align:center">' + ownerCell + '</td>' +
         '<td style="text-align:center">' + (note || makeToggle('can_manage_aircraft', u.can_manage_aircraft)) + '</td>' +
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_manage_instructors', u.can_manage_instructors)) + '</td>' +
         '<td style="text-align:center">' + (note ? '' : makeToggle('can_manage_students', u.can_manage_students)) + '</td>' +
@@ -11521,10 +11545,12 @@ async function deleteUser(userId, userName) {
 // ─── ROLE CHANGE ───
 function openRoleChangeModal(userId, userName, currentRole, isInstructor) {
   const roleNames = { student: 'Student Pilot', instructor: 'Instructor (CFI)', admin: 'Admin', renter: 'Renter', owner: 'Owner', maintenance: 'Maintenance Technician' };
+  const baseRoles = ['student', 'instructor', 'renter', 'maintenance'];
+  const selectRole = baseRoles.includes(currentRole) ? currentRole : (isInstructor ? 'instructor' : 'student');
   document.getElementById('role-change-user-id').value = userId;
   document.getElementById('role-change-user-name').textContent = userName;
   document.getElementById('role-change-current-role').textContent = 'Current role: ' + (roleNames[currentRole] || currentRole);
-  document.getElementById('role-change-select').value = currentRole;
+  document.getElementById('role-change-select').value = selectRole;
   document.getElementById('role-change-current-instructor').value = isInstructor ? 'true' : 'false';
   document.getElementById('role-change-is-instructor').checked = !!isInstructor;
   document.getElementById('role-change-instructor-note').classList.add('hidden');
@@ -11557,7 +11583,8 @@ async function saveRoleChange() {
   const wasInstructor = document.getElementById('role-change-current-instructor').value === 'true';
   const errEl = document.getElementById('role-change-error');
   const btn = document.getElementById('role-change-save-btn');
-  if (!userId || !newRole) {
+  const baseRoles = ['student', 'instructor', 'renter', 'maintenance'];
+  if (!userId || !newRole || !baseRoles.includes(newRole)) {
     errEl.textContent = 'Invalid user or role selection';
     errEl.classList.remove('hidden');
     errEl.classList.add('visible');
@@ -11590,6 +11617,39 @@ async function saveRoleChange() {
     showToast(msg, 'error');
     btn.disabled = false;
     btn.textContent = 'Save Changes';
+  }
+}
+
+async function toggleUserPrivilege(userId, type, enabled, inputEl) {
+  var user = allUsers.find(function(u) { return u.id === userId; });
+  if (!user) return;
+
+  var label = type === 'owner' ? 'owner' : 'admin';
+  if (!enabled) {
+    var msg = type === 'owner'
+      ? 'Remove owner access from ' + user.name + '? They will be demoted to admin or instructor.'
+      : 'Remove admin access from ' + user.name + '?';
+    if (!confirm(msg)) {
+      if (inputEl) inputEl.checked = !enabled;
+      return;
+    }
+  }
+
+  var payload = type === 'owner'
+    ? { owner_access: enabled }
+    : { admin_access: enabled };
+
+  try {
+    await api('/api/users/' + userId + '/privileges', {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+    await loadUsers();
+    loadPeople(currentPeopleFilter);
+    showToast((enabled ? 'Granted' : 'Removed') + ' ' + label + ' access for ' + user.name, 'success');
+  } catch (err) {
+    if (inputEl) inputEl.checked = !enabled;
+    showToast(err.error || err.message || 'Failed to update privileges', 'error');
   }
 }
 
