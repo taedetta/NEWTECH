@@ -18,10 +18,36 @@ Disallow: /app
 Disallow: /app/
 Disallow: /api/
 
+# Preferred canonical site: https://www.newtechaviation.com
+Host: https://www.newtechaviation.com
 Sitemap: https://www.newtechaviation.com/sitemap.xml
 `
   );
 });
+
+/** Legacy paths from older site builds — permanent redirect to current URLs. */
+const LEGACY_PATH_REDIRECTS = {
+  '/index.html': '/',
+  '/home': '/',
+  '/login': '/app',
+  '/register': '/app',
+  '/signup': '/app',
+  '/schedule': '/app',
+  '/booking': '/book-discovery-flight',
+  '/discovery-flight': '/book-discovery-flight',
+  '/discovery': '/book-discovery-flight',
+  '/contact': '/#contact',
+  '/about': '/#about',
+  '/fleet': '/#fleet',
+  '/programs': '/#programs',
+  '/faq': '/#faq',
+};
+
+for (const [from, to] of Object.entries(LEGACY_PATH_REDIRECTS)) {
+  router.get(from, (req, res) => {
+    res.redirect(301, to);
+  });
+}
 
 router.get('/sitemap.xml', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);

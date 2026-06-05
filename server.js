@@ -29,6 +29,7 @@ const OpenAI = (() => { try { return require('openai'); } catch { return null; }
 
 const pool = require('./db/index');
 const { authenticateToken, requireRole } = require('./middleware/auth');
+const { canonicalHostRedirect } = require('./lib/canonical-host');
 const { checkPasswordResetRateLimit } = require('./middleware/rate-limiter');
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ app.use(compression({ threshold: 1024, filter: (req, res) => {
   const ct = res.getHeader('Content-Type');
   return (typeof ct === 'string' && ct.startsWith('image/')) ? false : compression.filter(req, res);
 }}));
+app.use(canonicalHostRedirect);
 app.use(expressJson({ limit: '25mb' }));
 app.use(cookieParser());
 
