@@ -3847,8 +3847,16 @@
           <a id="lead-detail-phone" href="#" style="color:var(--sky);font-weight:600"></a>
         </div>
         <div>
+          <div class="lead-detail-field-label">Experience</div>
+          <div id="lead-detail-experience" style="color:var(--gray-200)"></div>
+        </div>
+        <div>
           <div class="lead-detail-field-label">Program</div>
           <div id="lead-detail-program" style="color:var(--gray-200)"></div>
+        </div>
+        <div>
+          <div class="lead-detail-field-label">Preferred Date / Time</div>
+          <div id="lead-detail-preferred" style="color:var(--gray-200)"></div>
         </div>
         <div>
           <div class="lead-detail-field-label">Source</div>
@@ -18953,7 +18961,9 @@ function renderLeadDetail(lead, activity) {
   phoneEl.textContent = lead.phone || '—';
   phoneEl.href = lead.phone ? 'tel:' + lead.phone.replace(/\D/g, '') : '#';
 
+  document.getElementById('lead-detail-experience').textContent = lead.experience_level || '—';
   document.getElementById('lead-detail-program').textContent = lead.program_interest || '—';
+  document.getElementById('lead-detail-preferred').textContent = lead.preferred_date ? String(lead.preferred_date) : '—';
   document.getElementById('lead-detail-source').textContent = lead.source_label === 'manual' ? 'Manual entry' : (lead.source_label || 'Website form');
 
   const msgWrap = document.getElementById('lead-detail-message-wrap');
@@ -19055,7 +19065,7 @@ async function loadLeads() {
     tbody.innerHTML = filtered.map(l => {
       const statusBadge = leadStatusBadge(l.status);
       const dateStr = l.created_at ? new Date(l.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-      const prefDate = l.preferred_date ? String(l.preferred_date).slice(0, 10) : '—';
+      const prefDate = l.preferred_date ? String(l.preferred_date) : '—';
       const msg = l.message ? `<span title="${escHtml(l.message)}" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;cursor:default">${escHtml(l.message).slice(0, 30)}${l.message.length > 30 ? '…' : ''}</span>` : '—';
       const actionTd = canManage
         ? `<td style="white-space:nowrap">

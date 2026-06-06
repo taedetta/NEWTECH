@@ -5,6 +5,39 @@
 const pool = require('./index');
 const { buildSourceParam, queryWithSourceFilter } = require('./source-wrapper');
 
+const SCHEDULING_PREFIX = /^(Weekday morning|Weekday afternoon|Weekend morning|Weekend afternoon|Flexible|No preference|I'm flexible)/i;
+const PROGRAM_PREFIX = /^(Discovery Flight|Sport Pilot|Private Pilot|Instrument Rating|Commercial Pilot|Not sure yet)/i;
+
+/** Map legacy columns (experience, notes) onto the fields the API/UI expect. */
+function normalizeLeadRow(row) {
+  if (!row) return row;
+  const out = { ...row };
+
+  if (!out.experience_level && out.experience) {
+    out.experience_level = out.experience;
+  }
+  if (out.experience_level === 'beginner') {
+    out.experience_level = 'Beginner';
+  }
+
+  if (out.notes) {
+    const parts = String(out.notes).split(' · ').map(s => s.trim()).filter(Boolean);
+    if (!out.preferred_date && parts.length && SCHEDULING_PREFIX.test(parts[0])) {
+      out.preferred_date = parts[0];
+      if (!out.program_interest && parts[1] && PROGRAM_PREFIX.test(parts[1])) {
+        out.program_interest = parts[1];
+        if (!out.message) out.message = parts.slice(2).join(' · ') || null;
+      } else if (!out.message) {
+        out.message = parts.slice(1).join(' · ') || null;
+      }
+    } else if (!out.message) {
+      out.message = out.notes;
+    }
+  }
+
+  return out;
+}
+
 async function logLeadActivity(client, { leadId, userId, activityType, body, oldStatus, newStatus }) {
   try {
     const db = client || pool;
@@ -41,10 +74,10 @@ async function createLead({ name, email, phone, preferred_date, experience_level
          (name, email, phone, experience, status, notes, created_at, updated_at, source)
        VALUES ($1, $2, $3, $4, 'new', $5, NOW(), NOW(), $6)
        RETURNING *`,
-      [name, email, phone, experience_level || null, [scheduling, message].filter(Boolean).join(' · ') || null, source]
+      [name, email, phone, experience_level || null, [scheduling, program_interest, message].filter(Boolean).join(' · ') || null, source]
     );
   }
-  const lead = result.rows[0];
+  const lead = normalizeLeadRow(result.rows[0]);
   await logLeadActivity(null, {
     leadId: lead.id,
     userId: null,
@@ -79,7 +112,7 @@ async function createManualLead({ name, email, phone, preferred_date, experience
       [name, email, phone, preferred_date || null, experience_level || null, message || null, status || 'new']
     );
   }
-  const lead = result.rows[0];
+  const lead = normalizeLeadRow(result.rows[0]);
   await logLeadActivity(null, {
     leadId: lead.id,
     userId,
@@ -93,7 +126,7 @@ async function listLeads() {
   const result = await queryWithSourceFilter(
     `SELECT * FROM discovery_flight_leads ORDER BY created_at DESC`
   );
-  return result.rows;
+  return result.rows.map(normalizeLeadRow);
 }
 
 async function countNewLeads() {
@@ -108,7 +141,7 @@ async function getLeadById(id) {
     `SELECT * FROM discovery_flight_leads WHERE id = $1`,
     [id]
   );
-  return result.rows[0];
+  return normalizeLeadRow(result.rows[0]);
 }
 
 async function getLeadActivity(leadId) {
@@ -145,7 +178,7 @@ async function updateLeadStatus(id, status, userId) {
       newStatus: status,
     });
   }
-  return lead;
+  return normalizeLeadRow(lead);
 }
 
 async function recordLeadFollowUp(id, userId) {
@@ -163,7 +196,7 @@ async function recordLeadFollowUp(id, userId) {
     activityType: 'follow_up',
     body: 'Follow-up email sent',
   });
-  return result.rows[0];
+  return normalizeLeadRow(result.rows[0]);
 }
 
 async function markLeadConverted(id, userId, convertedUserId) {
@@ -183,7 +216,7 @@ async function markLeadConverted(id, userId, convertedUserId) {
     newStatus: 'converted',
     body: convertedUserId ? `Linked to user #${convertedUserId}` : 'Marked converted',
   });
-  return result.rows[0];
+  return normalizeLeadRow(result.rows[0]);
 }
 
 module.exports = {
