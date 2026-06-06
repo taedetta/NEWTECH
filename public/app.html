@@ -1837,7 +1837,7 @@
           </div>
           <div class="table-card hidden" id="dashboard-table-card">
             <table class="data-table">
-              <thead><tr><th>Time</th><th>Type</th><th>Student</th><th>Instructor</th><th>Aircraft</th><th>Status</th><th style="min-width:9.5rem"><div>Weather</div><div class="wx-th-sub">Current now · click for forecast</div></th></tr></thead>
+              <thead><tr><th>Time</th><th>Type</th><th>Student</th><th>Instructor</th><th>Aircraft</th><th>Status</th><th style="min-width:9.5rem"><div>Weather</div><div class="wx-th-sub">Current now · click for forecast</div></th><th>Actions</th></tr></thead>
               <tbody id="upcoming-bookings-list"></tbody>
             </table>
           </div>
@@ -8620,6 +8620,52 @@ function renderDashboardUpcomingTable(cache) {
   }
 }
 
+function findCachedBooking(bookingId) {
+  const id = parseInt(bookingId, 10);
+  if (!Number.isFinite(id)) return null;
+  let b = allBookings.find(bk => bk.id === id);
+  if (b) return b;
+  if (_dashboardBookingsCache?.bookings) {
+    b = _dashboardBookingsCache.bookings.find(bk => bk.id === id);
+    if (b) return b;
+  }
+  return null;
+}
+
+function buildBookingActionButtons(b, options) {
+  options = options || {};
+  const prefix = options.closeDayModal ? 'closeDayModal();' : '';
+  const btnStyle = options.inline ? '' : 'margin-top:0.5rem;';
+
+  if (!b || !currentUser) return '';
+
+  const canAct = ['student', 'renter'].includes(currentUser.role)
+    ? b.student_id === currentUser.id
+    : currentUser.role !== 'student' || b.student_id === currentUser.id;
+
+  let actionBtns = '';
+  if (b.status === 'confirmed') {
+    if (canUserCompleteBooking(b)) {
+      actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-right:0.4rem;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600;" onclick="${prefix}openCompleteModal(${b.id})">✓ Complete Flight</button>`;
+    } else if (b.instructor_id && ['student', 'renter'].includes(currentUser.role) && b.student_id === currentUser.id) {
+      actionBtns += `<span style="display:block;${btnStyle}font-size:0.75rem;color:var(--gray-500)">Your instructor will log hours after this flight</span>`;
+    }
+    if (canAct) {
+      actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="openEditBookingModal(${b.id})">Edit</button>`;
+      actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}openCancelModal(${b.id})">✗ Cancel Flight</button>`;
+    }
+    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+      actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-left:0.4rem" onclick="duplicateBooking(${b.id})">Duplicate +1wk</button>`;
+    }
+  } else if (b.status === 'completed' && ['owner', 'admin'].includes(currentUser.role)) {
+    actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
+    actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
+  } else if (b.status === 'cancelled' && ['owner', 'admin'].includes(currentUser.role)) {
+    actionBtns = `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
+  }
+  return actionBtns;
+}
+
 function renderDashboardBookingTableRows(b, i, wxData) {
   const start = new Date(b.start_time);
   const end = new Date(b.end_time);
@@ -8632,16 +8678,18 @@ function renderDashboardBookingTableRows(b, i, wxData) {
   const flightLabel = `${dateStr} · ${timeStr}`;
   const weatherCell = wxBuildDashboardWeatherCell(wxData, detailId, wxData?.stale);
   const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
+  const actions = buildBookingActionButtons(b, { inline: true });
   return `<tr>
     <td><div style="font-size:0.8rem;color:var(--gray-500)">${dateStr}</div><div style="font-family:'Space Grotesk';color:var(--sky);font-weight:600">${timeStr}</div></td>
     <td><span class="tag ${typeClass}">${b.lesson_type || 'Flight'}</span></td>
-    <td>${escHtml(b.student_name)}</td>
-    <td>${escHtml(b.instructor_name)}</td>
+    <td>${escHtml(b.student_name || '—')}</td>
+    <td>${escHtml(b.instructor_name || '—')}</td>
     <td style="font-family:'Space Grotesk';font-weight:500">${escHtml(b.tail_number)}</td>
     <td><span class="tag tag-green">${b.status}</span></td>
     <td>${weatherCell}</td>
+    <td style="white-space:nowrap;vertical-align:top">${actions || '<span style="color:var(--gray-500);font-size:0.8rem">—</span>'}</td>
   </tr>
-  <tr class="wx-detail-row"><td colspan="7">${detail}</td></tr>`;
+  <tr class="wx-detail-row"><td colspan="8">${detail}</td></tr>`;
 }
 
 function renderDashboardBookingCard(b, i, wxData) {
@@ -8662,6 +8710,7 @@ function renderDashboardBookingCard(b, i, wxData) {
     'Current conditions at the airport right now'
   );
   const detail = wxBuildDetail(wxData, b.start_time, b.end_time, detailId, flightLabel);
+  const actions = buildBookingActionButtons(b);
   return `<article class="dash-card">
     <div class="dash-card-hdr">
       <div>
@@ -8682,6 +8731,7 @@ function renderDashboardBookingCard(b, i, wxData) {
       <button type="button" class="btn btn-secondary btn-sm dash-card-forecast-btn" onclick="wxToggleWeatherDetail('${detailId}')">Forecast ↓</button>
     </div>
     ${detail}
+    ${actions ? `<div class="dash-card-actions" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border)">${actions}</div>` : ''}
   </article>`;
 }
 
@@ -8706,6 +8756,11 @@ async function loadDashboard() {
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const bookings = await loadBookings(now.toISOString(), weekEnd.toISOString());
+  bookings.forEach(function(b) {
+    const idx = allBookings.findIndex(function(x) { return x.id === b.id; });
+    if (idx >= 0) allBookings[idx] = Object.assign({}, allBookings[idx], b);
+    else allBookings.push(b);
+  });
 
   try {
     const meData = await api('/api/auth/me');
@@ -9343,11 +9398,6 @@ function openDayDetail(year, month, day) {
       const start = new Date(b.start_time);
       const end = new Date(b.end_time);
       const typeClass = getTypeClass(b.lesson_type);
-      const isPast = end < now;
-      // canAct: student can cancel their own bookings, anyone else can cancel any booking
-      const canAct = ['student', 'renter'].includes(currentUser.role)
-        ? b.student_id === currentUser.id
-        : currentUser.role !== 'student' || b.student_id === currentUser.id;
       // Complete Flight button is now shown unconditionally on confirmed bookings
       // Server-side /api/bookings/:id/complete validates permissions
 
@@ -9379,26 +9429,7 @@ function openDayDetail(year, month, day) {
 
       // canEndEarly removed — "Complete Flight" now handles both in-progress and past flights
 
-      let actionBtns = '';
-      if (b.status === 'confirmed') {
-        if (canUserCompleteBooking(b)) {
-          actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;margin-right:0.4rem;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600;" onclick="closeDayModal();openCompleteModal(${b.id})">✓ Complete Flight</button>`;
-        } else if (b.instructor_id && ['student', 'renter'].includes(currentUser.role) && b.student_id === currentUser.id) {
-          actionBtns += `<span style="display:block;margin-top:0.5rem;font-size:0.75rem;color:var(--gray-500)">Your instructor will log hours after this flight</span>`;
-        }
-        if (canAct) {
-          actionBtns += `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem;margin-right:0.4rem" onclick="openEditBookingModal(${b.id})">Edit</button>`;
-          actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();openCancelModal(${b.id})">✗ Cancel Flight</button>`;
-        }
-        if (['owner','admin','instructor'].includes(currentUser.role)) {
-          actionBtns += `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem;margin-left:0.4rem" onclick="duplicateBooking(${b.id})">Duplicate +1wk</button>`;
-        }
-      } else if (b.status === 'completed' && ['owner','admin'].includes(currentUser.role)) {
-        actionBtns = `<button class="btn btn-secondary btn-sm" style="margin-top:0.5rem" onclick="closeDayModal();openEditHoursModal(${b.id})">Edit Hours</button>`;
-        actionBtns += `<button class="btn btn-sm" style="margin-top:0.5rem;margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
-      } else if (b.status === 'cancelled' && ['owner','admin'].includes(currentUser.role)) {
-        actionBtns = `<button class="btn btn-sm" style="margin-top:0.5rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="closeDayModal();deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
-      }
+      let actionBtns = buildBookingActionButtons(b, { closeDayModal: true });
 
       const peopleLine = formatBookingPeopleLine(b);
 
@@ -10281,7 +10312,7 @@ let pfwStudentId = null;
 let pfwFlightDate = null;
 
 function openPostFlightWizard(bookingId, bookingDataOverride) {
-  const b = bookingDataOverride || allBookings.find(bk => bk.id === bookingId);
+  const b = bookingDataOverride || findCachedBooking(bookingId);
   if (b && !canUserCompleteBooking(b)) {
     showBookingAlertModal(
       'Cannot complete this flight',
@@ -10385,7 +10416,7 @@ function openPostFlightWizard(bookingId, bookingDataOverride) {
 
 // Backward-compat alias (existing onclicks call openCompleteModal)
 function openCompleteModal(bookingId) {
-  const b = allBookings.find(bk => bk.id === bookingId);
+  const b = findCachedBooking(bookingId);
   if (b) {
     const end = new Date(b.end_time);
     const now = new Date();
@@ -10396,7 +10427,7 @@ function openCompleteModal(bookingId) {
     }
   }
   // Past flight — go straight to post-flight wizard
-  openPostFlightWizard(bookingId);
+  openPostFlightWizard(bookingId, b);
 }
 
 function closePostFlightWizard() {
@@ -10664,7 +10695,7 @@ function pfwSkipStep3() {
 
 // ─── CANCEL MODAL ───
 function openCancelModal(bookingId) {
-  const b = allBookings.find(bk => bk.id === bookingId);
+  const b = findCachedBooking(bookingId);
   document.getElementById('cancel-booking-id').value = bookingId;
   document.getElementById('cancel-reason').value = '';
 
@@ -10706,7 +10737,7 @@ document.getElementById('cancel-form').addEventListener('submit', async (e) => {
 
 // ─── END FLIGHT EARLY MODAL ───
 function openEndEarlyModal(bookingId) {
-  const b = allBookings.find(bk => bk.id === bookingId);
+  const b = findCachedBooking(bookingId);
   document.getElementById('end-early-booking-id').value = bookingId;
   document.getElementById('end-early-error').classList.add('hidden');
 
