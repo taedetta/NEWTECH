@@ -22,6 +22,16 @@ const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
 
+async function deriveBookingType(client, studentId, instructorId) {
+  if (studentId && instructorId) return 'dual';
+  if (studentId && !instructorId) {
+    const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [studentId]);
+    return roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
+  }
+  if (!studentId && instructorId) return 'instructor_solo';
+  return 'dual';
+}
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { start, end, instructor_id, student_id, aircraft_id } = req.query;
@@ -765,14 +775,16 @@ router.put('/:id', authenticateToken, async (req, res) => {
     await client.query('BEGIN');
     // If start_time changed, reset reminder_sent so a new reminder fires for the new time
     const timeChanged = st !== b.start_time || et !== b.end_time;
+    const booking_type = await deriveBookingType(client, sid, iid);
     const result = await client.query(
       `UPDATE bookings SET student_id = $1, instructor_id = $2, aircraft_id = $3,
        start_time = $4, end_time = $5, lesson_type = COALESCE($6, lesson_type),
        notes = COALESCE($7, notes), status = COALESCE($8, status),
+       booking_type = $9,
        reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
        updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
-      [sid, iid, acId, st, et, lesson_type, notes, status, bookingId]
+       WHERE id = $10 RETURNING *`,
+      [sid, iid, acId, st, et, lesson_type, notes, status, booking_type, bookingId]
     );
     await client.query('COMMIT');
     res.json(result.rows[0]);
