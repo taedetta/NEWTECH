@@ -8647,9 +8647,12 @@ function buildBookingActionButtons(b, options) {
 
   if (!b || !currentUser) return '';
 
-  const canAct = ['student', 'renter'].includes(currentUser.role)
-    ? b.student_id === currentUser.id
-    : currentUser.role !== 'student' || b.student_id === currentUser.id;
+  const canAct = (() => {
+    if (['owner', 'admin', 'maintenance'].includes(currentUser.role)) return true;
+    if (['student', 'renter'].includes(currentUser.role)) return b.student_id === currentUser.id;
+    if (currentUser.role === 'instructor') return b.instructor_id === currentUser.id;
+    return false;
+  })();
 
   let actionBtns = '';
   if (b.status === 'confirmed') {

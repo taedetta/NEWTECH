@@ -22,6 +22,18 @@ const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
 
+function normBookingUserId(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+/** Who may view/update/cancel a booking (staff or assigned participant). */
+function canAccessBooking(user, booking) {
+  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  return user.id === booking.instructor_id || user.id === booking.student_id;
+}
+
 async function deriveBookingType(client, studentId, instructorId) {
   if (studentId && instructorId) return 'dual';
   if (studentId && !instructorId) {
@@ -730,19 +742,17 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    const isInstructor = req.user.id === b.instructor_id;
-    const isStudent = req.user.id === b.student_id;
-    if (!isAdmin && !isInstructor && !isStudent) return res.status(403).json({ error: 'Access denied' });
+    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
-    if (!isAdmin && (student_id !== undefined || instructor_id !== undefined)) {
+    const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
+    const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
+    if (!isAdmin && (sid !== b.student_id || iid !== b.instructor_id)) {
       return res.status(403).json({ error: 'Cannot change student or instructor on an existing booking' });
     }
     if (!isAdmin && rescheduleRequested) {
       if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
-    const sid = student_id !== undefined ? (student_id ? parseInt(student_id) : null) : b.student_id;
-    const iid = instructor_id !== undefined ? (instructor_id ? parseInt(instructor_id) : null) : b.instructor_id;
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id) : b.aircraft_id;
     const st = start_time || b.start_time;
     const et = end_time || b.end_time;
@@ -805,9 +815,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    const isInstructor = req.user.id === b.instructor_id;
-    const isStudent = req.user.id === b.student_id;
-    if (!isAdmin && !isInstructor && !isStudent) return res.status(403).json({ error: 'Access denied' });
+    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
     const policy = await getPolicySettings();
     const cancelCheck = validateCancellation({ bookingStart: b.start_time, userRole: req.user.role, isAdmin, policy });
