@@ -3962,11 +3962,11 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
           <div class="form-group">
             <label>Start Time</label>
-            <select id="booking-start" onchange="updateBookingEndTimes(); if(document.getElementById('booking-instructor').value) refreshBookingAvailability(); refreshBookingPreflight();"></select>
+            <select id="booking-start" onchange="updateBookingEndTimes(); refreshBookingAircraft(); if(document.getElementById('booking-instructor').value) refreshBookingAvailability(); refreshBookingPreflight();"></select>
           </div>
           <div class="form-group">
             <label>End Time</label>
-            <select id="booking-end" onchange="refreshBookingPreflight()"></select>
+            <select id="booking-end" onchange="refreshBookingAircraft(); refreshBookingPreflight()"></select>
           </div>
         </div>
         <div class="form-group">
@@ -4323,6 +4323,21 @@
             <input type="date" id="downtime-end" required>
           </div>
         </div>
+        <label style="font-size:0.82rem;display:flex;align-items:center;gap:0.4rem;cursor:pointer;margin-bottom:0.65rem">
+          <input type="checkbox" id="downtime-all-day">
+          Block entire day(s) — no specific times
+        </label>
+        <div id="downtime-time-row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.5rem">
+          <div class="form-group">
+            <label style="font-size:0.82rem">Start Time</label>
+            <input type="time" id="downtime-start-time" required>
+          </div>
+          <div class="form-group">
+            <label style="font-size:0.82rem">End Time</label>
+            <input type="time" id="downtime-end-time" required>
+          </div>
+        </div>
+        <p style="font-size:0.75rem;color:var(--gray-500);margin:0 0 0.75rem">Use times for part of a day, or span multiple days (e.g. Mon 2pm → Wed 10am).</p>
         <div class="form-group">
           <label style="font-size:0.82rem">Reason (optional)</label>
           <input type="text" id="downtime-reason" placeholder="e.g. Annual inspection, 100hr check">
@@ -4780,6 +4795,39 @@
       <div id="maint-reason-group" class="form-group hidden">
         <label>Reason (optional)</label>
         <input type="text" id="maint-status-reason" placeholder="e.g. 100hr inspection, squawk repair...">
+      </div>
+      <div id="maint-schedule-group" class="hidden" style="border:1px solid rgba(148,163,184,0.12);border-radius:10px;padding:0.85rem;margin-bottom:0.75rem">
+        <div style="font-size:0.75rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.65rem">Out-of-service window</div>
+        <label style="font-size:0.82rem;display:flex;align-items:center;gap:0.4rem;cursor:pointer;margin-bottom:0.65rem">
+          <input type="checkbox" id="maint-indefinite">
+          Indefinite — block all bookings until manually marked available
+        </label>
+        <div id="maint-window-fields">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.5rem">
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:0.82rem">Start Date</label>
+              <input type="date" id="maint-start-date">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:0.82rem">Start Time</label>
+              <input type="time" id="maint-start-time">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.35rem">
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:0.82rem">End Date</label>
+              <input type="date" id="maint-end-date">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:0.82rem">End Time</label>
+              <input type="time" id="maint-end-time">
+            </div>
+          </div>
+          <label style="font-size:0.82rem;display:flex;align-items:center;gap:0.4rem;cursor:pointer">
+            <input type="checkbox" id="maint-all-day">
+            Entire day(s) — no specific times
+          </label>
+        </div>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeMaintStatusModal()">Cancel</button>
@@ -9513,14 +9561,16 @@ async function openBookingModal(editBookingId) {
     }
   }
 
-  // Filter out aircraft in maintenance downtime on the selected date
+  // Filter out aircraft in maintenance downtime for the selected date/time window
   if (savedDate) {
     try {
       const downtimeEntries = await api(`/api/downtime/by-date?date=${savedDate}`);
-      const downAircraftIds = new Set((downtimeEntries || []).map(d => d.aircraft_id));
-      if (downAircraftIds.size > 0) {
-        aircraft = aircraft.filter(a => !downAircraftIds.has(a.id) || a.id === preloadedBooking?.aircraft_id);
-      }
+      const startTime = document.getElementById('booking-start')?.value;
+      const endTime = document.getElementById('booking-end')?.value;
+      aircraft = aircraft.filter(a =>
+        a.id === preloadedBooking?.aircraft_id ||
+        !aircraftBlockedByDowntime(downtimeEntries, a.id, savedDate, startTime, endTime)
+      );
     } catch {
       // Downtime check failed — fall back to status-only filtering
     }
@@ -10035,13 +10085,14 @@ async function refreshBookingAircraft() {
   // Start with all available aircraft (matching openBookingModal logic)
   let availableAircraft = allAircraft.filter(a => a.status === 'available');
 
-  // Filter out aircraft in maintenance downtime for the new date
+  // Filter out aircraft blocked by maintenance downtime for this date/time
   try {
     const downtimeEntries = await api(`/api/downtime/by-date?date=${date}`);
-    const downAircraftIds = new Set((downtimeEntries || []).map(d => d.aircraft_id));
-    if (downAircraftIds.size > 0) {
-      availableAircraft = availableAircraft.filter(a => !downAircraftIds.has(a.id));
-    }
+    const startTime = document.getElementById('booking-start')?.value;
+    const endTime = document.getElementById('booking-end')?.value;
+    availableAircraft = availableAircraft.filter(a =>
+      !aircraftBlockedByDowntime(downtimeEntries, a.id, date, startTime, endTime)
+    );
   } catch (err) {
     // Downtime check failed — warn user and fall back to status-only filtering
     console.error('[refreshBookingAircraft] downtime API failed:', err);
@@ -11210,6 +11261,94 @@ async function confirmDeleteAircraft() {
 }
 
 // ─── AIRCRAFT DOWNTIME ──────────────────────────────────────────────────────
+function isAllDayDowntimeRow(d) {
+  if (!d) return false;
+  if (d.all_day === true) return true;
+  if (d.all_day === false) return false;
+  return !d.start_time && !d.end_time;
+}
+
+function downtimeTimeLabel(t) {
+  if (!t) return null;
+  return String(t).slice(0, 5);
+}
+
+function formatDowntimeRowLabel(d) {
+  if (!d) return '';
+  const start = String(d.start_date).slice(0, 10);
+  const end = String(d.end_date).slice(0, 10);
+  if (isAllDayDowntimeRow(d)) {
+    return start === end ? `${start} (all day)` : `${start} → ${end} (all day)`;
+  }
+  const st = downtimeTimeLabel(d.start_time) || '00:00';
+  const et = downtimeTimeLabel(d.end_time) || '23:59';
+  if (start === end) return `${start} ${st}–${et}`;
+  return `${start} ${st} → ${end} ${et}`;
+}
+
+function downtimeRowBounds(d) {
+  const start = String(d.start_date).slice(0, 10);
+  const end = String(d.end_date).slice(0, 10);
+  const allDay = isAllDayDowntimeRow(d);
+  const st = allDay ? '00:00' : (downtimeTimeLabel(d.start_time) || '00:00');
+  const et = allDay ? '23:59' : (downtimeTimeLabel(d.end_time) || '23:59');
+  const bStart = new Date(`${start}T${st}:00`);
+  const bEnd = new Date(`${end}T${et}:00`);
+  if (allDay || et === '23:59') bEnd.setSeconds(59, 999);
+  return { start: bStart, end: bEnd };
+}
+
+function downtimeOverlapsRange(d, rangeStart, rangeEnd) {
+  const bounds = downtimeRowBounds(d);
+  return rangeStart < bounds.end && rangeEnd > bounds.start;
+}
+
+function bookingRangeFromForm(date, startTime, endTime) {
+  if (!date || !startTime) return null;
+  const endT = endTime || startTime;
+  let rangeEnd;
+  if (endT === '24:00' || (endT < startTime && endT !== '00:00')) {
+    const nextDay = new Date(`${date}T00:00:00`);
+    nextDay.setDate(nextDay.getDate() + 1);
+    rangeEnd = new Date(`${nextDay.toLocaleDateString('en-CA')}T${endT === '24:00' ? '00:00' : endT}:00`);
+  } else {
+    rangeEnd = new Date(`${date}T${endT}:00`);
+  }
+  return { start: new Date(`${date}T${startTime}:00`), end: rangeEnd };
+}
+
+function aircraftBlockedByDowntime(downtimeEntries, aircraftId, date, startTime, endTime) {
+  const entries = (downtimeEntries || []).filter(d => d.aircraft_id === aircraftId);
+  if (!entries.length) return false;
+  if (!startTime || !endTime) {
+    return entries.some(isAllDayDowntimeRow);
+  }
+  const range = bookingRangeFromForm(date, startTime, endTime);
+  if (!range) return entries.some(isAllDayDowntimeRow);
+  return entries.some(d => downtimeOverlapsRange(d, range.start, range.end));
+}
+
+function toggleDowntimeAllDay() {
+  const allDay = document.getElementById('downtime-all-day')?.checked;
+  const row = document.getElementById('downtime-time-row');
+  const st = document.getElementById('downtime-start-time');
+  const et = document.getElementById('downtime-end-time');
+  if (row) row.classList.toggle('hidden', !!allDay);
+  if (st) st.required = !allDay;
+  if (et) et.required = !allDay;
+}
+
+function toggleMaintScheduleFields() {
+  const indefinite = document.getElementById('maint-indefinite')?.checked;
+  const fields = document.getElementById('maint-window-fields');
+  if (fields) fields.classList.toggle('hidden', !!indefinite);
+  const allDay = document.getElementById('maint-all-day')?.checked;
+  ['maint-start-time', 'maint-end-time'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!allDay;
+  });
+}
+
 async function openDowntimeModal(aircraftId) {
   const errEl = document.getElementById('downtime-error');
   errEl.classList.add('hidden');
@@ -11222,6 +11361,13 @@ async function openDowntimeModal(aircraftId) {
   if (aircraftId) sel.value = aircraftId;
 
   document.getElementById('downtime-form').reset();
+  document.getElementById('downtime-all-day').checked = false;
+  toggleDowntimeAllDay();
+  const today = new Date().toLocaleDateString('en-CA');
+  document.getElementById('downtime-start').value = today;
+  document.getElementById('downtime-end').value = today;
+  document.getElementById('downtime-start-time').value = '08:00';
+  document.getElementById('downtime-end-time').value = '17:00';
   await loadDowntimeEntries();
   document.getElementById('downtime-modal').classList.remove('hidden');
 }
@@ -11240,17 +11386,15 @@ async function loadDowntimeEntries() {
       return;
     }
     const today = new Date().toISOString().slice(0, 10);
-    const canManageDowntime = currentUser && ['owner','admin'].includes(currentUser.role);
+    const canManageDowntime = currentUser && (['owner','admin','maintenance'].includes(currentUser.role) || currentUser.permissions?.can_manage_aircraft);
     el.innerHTML = data.map(d => {
-      const isPast = d.end_date < today;
+      const isPast = String(d.end_date).slice(0, 10) < today;
       const removeBtn = canManageDowntime
         ? `<button class="btn btn-sm" style="padding:2px 8px;font-size:0.7rem;background:rgba(239,68,68,0.15);color:#f87171;border:none" onclick="deleteDowntimeEntry(${d.id})">Remove</button>`
         : '';
       return `<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.82rem;${isPast ? 'opacity:0.5' : ''}">
         <div>
-          <span style="color:var(--sky)">${d.start_date}</span>
-          <span style="color:var(--gray-500)"> → </span>
-          <span style="color:var(--sky)">${d.end_date}</span>
+          <span style="color:var(--sky)">${escHtml(formatDowntimeRowLabel(d))}</span>
           ${d.reason ? `<span style="color:var(--gray-400);margin-left:0.4rem">${escHtml(d.reason)}</span>` : ''}
         </div>
         ${removeBtn}
@@ -11273,6 +11417,8 @@ async function deleteDowntimeEntry(id) {
   }
 }
 
+document.getElementById('downtime-all-day')?.addEventListener('change', toggleDowntimeAllDay);
+
 document.getElementById('downtime-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('downtime-error');
@@ -11282,17 +11428,36 @@ document.getElementById('downtime-form').addEventListener('submit', async (e) =>
   const end_date = document.getElementById('downtime-end').value;
   const reason = document.getElementById('downtime-reason').value;
   const create_squawk = document.getElementById('downtime-create-squawk').checked;
+  const all_day = document.getElementById('downtime-all-day').checked;
+  const start_time = all_day ? null : document.getElementById('downtime-start-time').value;
+  const end_time = all_day ? null : document.getElementById('downtime-end-time').value;
   if (end_date < start_date) {
     errEl.textContent = 'End date must be on or after start date';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if (!all_day && (!start_time || !end_time)) {
+    errEl.textContent = 'Select start and end times, or check “Block entire day(s)”';
     errEl.classList.remove('hidden');
     return;
   }
   try {
     await api('/api/downtime', {
       method: 'POST',
-      body: JSON.stringify({ aircraft_id: parseInt(aircraft_id), start_date, end_date, reason, create_squawk })
+      body: JSON.stringify({
+        aircraft_id: parseInt(aircraft_id, 10),
+        start_date,
+        end_date,
+        start_time,
+        end_time,
+        all_day,
+        reason,
+        create_squawk,
+      })
     });
     document.getElementById('downtime-form').reset();
+    document.getElementById('downtime-all-day').checked = false;
+    toggleDowntimeAllDay();
     await loadDowntimeEntries();
   } catch (err) {
     errEl.textContent = err.error || 'Failed to schedule downtime';
@@ -12483,6 +12648,16 @@ function openMaintStatusModal(aircraftId, tailNumber, currentStatus) {
 
   const isGoingDown = document.getElementById('maint-status-value').value === 'maintenance';
   document.getElementById('maint-reason-group').classList.toggle('hidden', !isGoingDown);
+  document.getElementById('maint-schedule-group').classList.toggle('hidden', !isGoingDown);
+
+  const today = new Date().toLocaleDateString('en-CA');
+  document.getElementById('maint-indefinite').checked = false;
+  document.getElementById('maint-all-day').checked = false;
+  document.getElementById('maint-start-date').value = today;
+  document.getElementById('maint-end-date').value = today;
+  document.getElementById('maint-start-time').value = '08:00';
+  document.getElementById('maint-end-time').value = '17:00';
+  toggleMaintScheduleFields();
 
   document.getElementById('maint-status-modal').classList.remove('hidden');
 }
@@ -12492,8 +12667,13 @@ function closeMaintStatusModal() {
 }
 
 document.getElementById('maint-status-value').addEventListener('change', function() {
-  document.getElementById('maint-reason-group').classList.toggle('hidden', this.value !== 'maintenance');
+  const goingDown = this.value === 'maintenance';
+  document.getElementById('maint-reason-group').classList.toggle('hidden', !goingDown);
+  document.getElementById('maint-schedule-group').classList.toggle('hidden', !goingDown);
 });
+
+document.getElementById('maint-indefinite')?.addEventListener('change', toggleMaintScheduleFields);
+document.getElementById('maint-all-day')?.addEventListener('change', toggleMaintScheduleFields);
 
 document.getElementById('maint-status-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -12505,10 +12685,49 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
   const reason = document.getElementById('maint-status-reason').value || null;
 
   try {
-    await api(`/api/aircraft/${id}/maintenance`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status, reason })
-    });
+    if (status === 'maintenance') {
+      const indefinite = document.getElementById('maint-indefinite').checked;
+      if (indefinite) {
+        await api(`/api/aircraft/${id}/maintenance`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status, reason })
+        });
+      } else {
+        const start_date = document.getElementById('maint-start-date').value;
+        const end_date = document.getElementById('maint-end-date').value;
+        const all_day = document.getElementById('maint-all-day').checked;
+        const start_time = all_day ? null : document.getElementById('maint-start-time').value;
+        const end_time = all_day ? null : document.getElementById('maint-end-time').value;
+        if (!start_date || !end_date) {
+          errEl.textContent = 'Select a start and end date for the out-of-service window';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        if (!all_day && (!start_time || !end_time)) {
+          errEl.textContent = 'Select start/end times or check “Entire day(s)”';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        await api('/api/downtime', {
+          method: 'POST',
+          body: JSON.stringify({
+            aircraft_id: parseInt(id, 10),
+            start_date,
+            end_date,
+            start_time,
+            end_time,
+            all_day,
+            reason,
+            create_squawk: !!reason,
+          })
+        });
+      }
+    } else {
+      await api(`/api/aircraft/${id}/maintenance`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, reason })
+      });
+    }
     closeMaintStatusModal();
     await loadAircraft();
     if (currentPage === 'maintenance') loadMaintenanceFleet();

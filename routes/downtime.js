@@ -1,15 +1,76 @@
 'use strict';
 
-// Aircraft downtime windows — blocks bookings on specific dates.
+// Aircraft downtime windows — blocks bookings during scheduled maintenance periods.
 // Does NOT own aircraft status, squawks, or inspection dates.
 
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
+const {
+  timeToHHMM,
+  isAllDayDowntime,
+  downtimeOverlapsBooking,
+  downtimeTouchesDate,
+  formatDowntimeLabel,
+} = require('../lib/downtime-overlap');
 
 const router = express.Router();
 
-// GET /api/downtime?aircraft_id=123 — list all downtime entries (admin only)
+function normalizeDateInput(v) {
+  if (!v) return null;
+  return String(v).slice(0, 10);
+}
+
+function normalizeTimeInput(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return timeToHHMM(s.length === 5 ? `${s}:00` : s);
+}
+
+function validateDowntimePayload({ start_date, end_date, start_time, end_time, all_day }) {
+  const startDate = normalizeDateInput(start_date);
+  const endDate = normalizeDateInput(end_date);
+  if (!startDate || !endDate) {
+    return { error: 'start_date and end_date are required' };
+  }
+  if (endDate < startDate) {
+    return { error: 'end_date must be on or after start_date' };
+  }
+
+  const allDay = all_day === true || all_day === 'true';
+  const st = allDay ? null : normalizeTimeInput(start_time);
+  const et = allDay ? null : normalizeTimeInput(end_time);
+
+  if (!allDay) {
+    if (!st || !et) {
+      return { error: 'Start time and end time are required unless blocking entire day(s)' };
+    }
+    if (startDate === endDate) {
+      const startDt = new Date(`${startDate}T${st}:00`);
+      const endDt = new Date(`${endDate}T${et}:00`);
+      if (endDt <= startDt) {
+        return { error: 'End time must be after start time on the same day' };
+      }
+    } else {
+      const startDt = new Date(`${startDate}T${st}:00`);
+      const endDt = new Date(`${endDate}T${et}:00`);
+      if (endDt <= startDt) {
+        return { error: 'End date/time must be after start date/time' };
+      }
+    }
+  }
+
+  return {
+    start_date: startDate,
+    end_date: endDate,
+    start_time: st,
+    end_time: et,
+    all_day: allDay,
+  };
+}
+
+// GET /api/downtime?aircraft_id=123 — list all downtime entries
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { aircraft_id } = req.query;
@@ -24,9 +85,9 @@ router.get('/', authenticateToken, async (req, res) => {
     const params = [];
     if (aircraft_id) {
       query += ' WHERE d.aircraft_id = $1';
-      params.push(parseInt(aircraft_id));
+      params.push(parseInt(aircraft_id, 10));
     }
-    query += ' ORDER BY d.start_date DESC, d.created_at DESC';
+    query += ' ORDER BY d.start_date DESC, d.start_time DESC NULLS LAST, d.created_at DESC';
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -35,24 +96,30 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/downtime/check?aircraft_id=123&date=2026-05-25
-// Returns whether an aircraft has an active downtime window on the given date
+// GET /api/downtime/check?aircraft_id=123&date=2026-05-25&start_time=10:00&end_time=12:00
 router.get('/check', authenticateToken, async (req, res) => {
   try {
-    const { aircraft_id, date } = req.query;
+    const { aircraft_id, date, start_time, end_time } = req.query;
     if (!aircraft_id || !date) {
       return res.status(400).json({ error: 'aircraft_id and date are required' });
     }
     const result = await pool.query(
-      `SELECT id, start_date, end_date, reason FROM aircraft_downtime
-       WHERE aircraft_id = $1 AND $2::date BETWEEN start_date AND end_date`,
-      [parseInt(aircraft_id), date]
+      `SELECT * FROM aircraft_downtime
+       WHERE aircraft_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
+      [parseInt(aircraft_id, 10), normalizeDateInput(date)]
     );
-    if (result.rows.length > 0) {
-      res.json({ unavailable: true, downtime: result.rows[0] });
-    } else {
-      res.json({ unavailable: false });
+    const dateStr = normalizeDateInput(date);
+    const rows = result.rows.filter((r) => downtimeTouchesDate(r, dateStr));
+    if (!start_time || !end_time) {
+      const hit = rows.find((r) => isAllDayDowntime(r)) || rows[0];
+      if (hit) return res.json({ unavailable: true, downtime: hit, label: formatDowntimeLabel(hit) });
+      return res.json({ unavailable: false });
     }
+    const bookingStart = new Date(`${dateStr}T${timeToHHMM(start_time) || '00:00'}:00`);
+    const bookingEnd = new Date(`${dateStr}T${timeToHHMM(end_time) || '23:59'}:00`);
+    const hit = rows.find((r) => downtimeOverlapsBooking(r, bookingStart, bookingEnd));
+    if (hit) return res.json({ unavailable: true, downtime: hit, label: formatDowntimeLabel(hit) });
+    return res.json({ unavailable: false });
   } catch (err) {
     console.error('Downtime check error:', err);
     res.status(500).json({ error: 'Failed to check downtime' });
@@ -60,16 +127,16 @@ router.get('/check', authenticateToken, async (req, res) => {
 });
 
 // GET /api/downtime/by-date?date=2026-05-25
-// Returns all aircraft with downtime windows covering the given date
 router.get('/by-date', authenticateToken, async (req, res) => {
   try {
-    const { date } = req.query;
+    const date = normalizeDateInput(req.query.date);
     if (!date) return res.status(400).json({ error: 'date is required' });
     const result = await pool.query(
       `SELECT d.*, a.tail_number, a.make_model
        FROM aircraft_downtime d
        JOIN aircraft a ON d.aircraft_id = a.id
-       WHERE $1::date BETWEEN d.start_date AND d.end_date`,
+       WHERE d.start_date <= $1::date AND d.end_date >= $1::date
+       ORDER BY d.aircraft_id, d.start_date`,
       [date]
     );
     res.json(result.rows);
@@ -79,33 +146,48 @@ router.get('/by-date', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/downtime — create a downtime entry (admin/owner only)
+// POST /api/downtime — create a downtime entry
 router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
-    const { aircraft_id, start_date, end_date, reason } = req.body;
-    if (!aircraft_id || !start_date || !end_date) {
-      return res.status(400).json({ error: 'aircraft_id, start_date, and end_date are required' });
-    }
-    const s = new Date(start_date);
-    const e = new Date(end_date);
-    if (e < s) return res.status(400).json({ error: 'end_date must be on or after start_date' });
+    const { aircraft_id, reason, create_squawk } = req.body;
+    const parsed = validateDowntimePayload(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (!aircraft_id) return res.status(400).json({ error: 'aircraft_id is required' });
 
-    // Verify aircraft exists
-    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1', [parseInt(aircraft_id)]);
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1', [parseInt(aircraft_id, 10)]);
     if (ac.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
 
-    const result = await pool.query(
-      `INSERT INTO aircraft_downtime (aircraft_id, start_date, end_date, reason, created_by)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [parseInt(aircraft_id), start_date, end_date, reason || null, req.user.id]
-    );
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO aircraft_downtime
+           (aircraft_id, start_date, end_date, start_time, end_time, all_day, reason, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [
+          parseInt(aircraft_id, 10),
+          parsed.start_date,
+          parsed.end_date,
+          parsed.start_time,
+          parsed.end_time,
+          parsed.all_day,
+          reason || null,
+          req.user.id,
+        ]
+      );
+    } catch (err) {
+      if (!/start_time|end_time|all_day/i.test(err.message)) throw err;
+      result = await pool.query(
+        `INSERT INTO aircraft_downtime (aircraft_id, start_date, end_date, reason, created_by)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [parseInt(aircraft_id, 10), parsed.start_date, parsed.end_date, reason || null, req.user.id]
+      );
+    }
 
-    // Optional nice-to-have: create a squawk entry for scheduled maintenance
-    if (reason && req.body.create_squawk) {
+    if (reason && create_squawk) {
       await pool.query(
         `INSERT INTO squawks (aircraft_id, description, severity, status, expected_downtime, reported_by)
          VALUES ($1, $2, 'minor', 'scheduled', $3, $4)`,
-        [parseInt(aircraft_id), reason, end_date, req.user.id]
+        [parseInt(aircraft_id, 10), reason, formatDowntimeLabel(result.rows[0]), req.user.id]
       );
     }
 
@@ -116,12 +198,12 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
   }
 });
 
-// DELETE /api/downtime/:id — delete a downtime entry (admin/owner only)
+// DELETE /api/downtime/:id
 router.delete('/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const result = await pool.query(
       'DELETE FROM aircraft_downtime WHERE id = $1 RETURNING id',
-      [parseInt(req.params.id)]
+      [parseInt(req.params.id, 10)]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Downtime record not found' });
     res.json({ ok: true });

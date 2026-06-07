@@ -297,3 +297,9 @@ CREATE INDEX IF NOT EXISTS aircraft_documents_aircraft_id_idx ON aircraft_docume
 
 -- user_permissions upsert (some DBs were missing unique on user_id)
 CREATE UNIQUE INDEX IF NOT EXISTS user_permissions_user_id_unique ON user_permissions(user_id);
+
+-- ── Aircraft downtime: optional time-of-day windows ──
+ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS start_time TIME;
+ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS end_time TIME;
+ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS all_day BOOLEAN DEFAULT TRUE;
+UPDATE aircraft_downtime SET all_day = TRUE WHERE all_day IS NULL;

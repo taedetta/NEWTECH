@@ -17,10 +17,24 @@ const {
 } = require('../lib/booking-rules');
 const { BOOKABLE_INSTRUCTOR_WHERE, timeToComparable } = require('../lib/instructors');
 const { isInstructorAvailable } = require('../lib/instructor-availability');
+const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 
 const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
+
+async function findOverlappingDowntime(client, aircraftId, bookingStart, bookingEnd) {
+  const db = client || pool;
+  const startDate = new Date(bookingStart).toISOString().slice(0, 10);
+  const endDate = new Date(bookingEnd).toISOString().slice(0, 10);
+  const result = await db.query(
+    `SELECT id, reason, start_date, end_date, start_time, end_time, all_day
+     FROM aircraft_downtime
+     WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date`,
+    [aircraftId, startDate, endDate]
+  );
+  return result.rows.find((row) => downtimeOverlapsBooking(row, bookingStart, bookingEnd)) || null;
+}
 
 function normBookingUserId(v) {
   if (v === null || v === undefined || v === '') return null;
@@ -633,17 +647,11 @@ router.post('/', authenticateToken, async (req, res) => {
       /* solo endorsement not required */
     }
 
-    // Check aircraft downtime overlap across full booking span
+    // Check aircraft downtime overlap (date + optional time window)
     if (aircraft_id) {
-      const bookingStartDate = start.toISOString().slice(0, 10);
-      const bookingEndDate = end.toISOString().slice(0, 10);
-      const downtimeCheck = await client.query(
-        `SELECT id, reason FROM aircraft_downtime
-         WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date LIMIT 1`,
-        [aircraft_id, bookingStartDate, bookingEndDate]
-      );
-      if (downtimeCheck.rows.length > 0) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeCheck.rows[0].reason });
+      const downtimeHit = await findOverlappingDowntime(client, aircraft_id, start_time, end_time);
+      if (downtimeHit) {
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
 
@@ -763,17 +771,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     // Duration cap on updates
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
-    // Downtime check on updates — full span overlap
+    // Downtime check on updates — time-aware overlap
     if (acId) {
-      const updStartDate = stTime.toISOString().slice(0, 10);
-      const updEndDate = enTime.toISOString().slice(0, 10);
-      const updDowntime = await client.query(
-        `SELECT id, reason FROM aircraft_downtime
-         WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date LIMIT 1`,
-        [acId, updStartDate, updEndDate]
-      );
-      if (updDowntime.rows.length > 0) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: updDowntime.rows[0].reason });
+      const downtimeHit = await findOverlappingDowntime(client, acId, st, et);
+      if (downtimeHit) {
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
     if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
