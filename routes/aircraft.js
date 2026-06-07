@@ -5,6 +5,7 @@ const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
 const { uploadBuffer } = require('../lib/r2-storage');
 const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
+const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -105,7 +106,7 @@ router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintena
   }
 });
 
-// PATCH /api/aircraft/:id/maintenance
+// PATCH /api/aircraft/:id/maintenance — status only; existing bookings are never cancelled here.
 router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { status, reason } = req.body;
@@ -118,7 +119,29 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
       [status, status === 'maintenance' ? (reason || null) : null, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
-    res.json(result.rows[0]);
+
+    let overlapping_bookings = [];
+    if (status === 'maintenance') {
+      const future = await pool.query(
+        `SELECT b.id, b.start_time, b.end_time, b.status, b.lesson_type,
+                s.name AS student_name, i.name AS instructor_name
+         FROM bookings b
+         LEFT JOIN users s ON s.id = b.student_id
+         LEFT JOIN users i ON i.id = b.instructor_id
+         WHERE b.aircraft_id = $1
+           AND b.status NOT IN ('cancelled', 'completed')
+           AND b.end_time > NOW()
+         ORDER BY b.start_time ASC`,
+        [req.params.id]
+      );
+      overlapping_bookings = future.rows;
+    }
+
+    res.json({
+      ...result.rows[0],
+      overlapping_bookings,
+      preserved_bookings: overlapping_bookings.length,
+    });
   } catch (err) {
     console.error('Maintenance status error:', err);
     res.status(500).json({ error: 'Failed to update maintenance status' });

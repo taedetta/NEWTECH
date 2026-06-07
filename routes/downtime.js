@@ -12,6 +12,7 @@ const {
   downtimeOverlapsBooking,
   downtimeTouchesDate,
   formatDowntimeLabel,
+  findBookingsOverlappingDowntime,
 } = require('../lib/downtime-overlap');
 
 const router = express.Router();
@@ -191,7 +192,12 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
       );
     }
 
-    res.status(201).json(result.rows[0]);
+    const overlapping_bookings = await findBookingsOverlappingDowntime(pool, parseInt(aircraft_id, 10), result.rows[0]);
+    res.status(201).json({
+      ...result.rows[0],
+      overlapping_bookings,
+      preserved_bookings: overlapping_bookings.length,
+    });
   } catch (err) {
     console.error('Downtime create error:', err);
     res.status(500).json({ error: 'Failed to create downtime record' });
