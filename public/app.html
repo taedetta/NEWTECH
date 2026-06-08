@@ -356,6 +356,7 @@
     tr.perm-changed td { background: rgba(245,158,11,0.03); }
     @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @keyframes flogPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
 
     /* ─── PERMISSION SECTION BANNER ─── */
     .perm-section-banner {
@@ -1758,6 +1759,7 @@
           <a onclick="navigate('maintenance')" data-page="maintenance"><span class="nav-icon">&#128295;</span> Maintenance</a>
           <a onclick="openOpsBilling()" data-page="billing" id="nav-billing"><span class="nav-icon">&#128176;</span> Billing</a>
           <a onclick="navigate('flight-log')" data-page="flight-log" id="nav-flight-log"><span class="nav-icon">&#128203;</span> Flight Log</a>
+          <a onclick="navigate('missing-hours')" data-page="missing-hours" id="nav-missing-hours" class="hidden" style="position:relative;font-weight:600;"><span class="nav-icon">&#9888;</span> Missing Hours <span id="missing-hours-badge" class="hidden" style="display:inline-block;background:#EF4444;color:#fff;font-size:0.6rem;font-weight:700;padding:0.05rem 0.4rem;border-radius:999px;min-width:16px;text-align:center;line-height:1.4;vertical-align:middle;margin-left:0.25rem;"></span></a>
           <a onclick="navigate('portal')" data-page="portal" id="nav-portal" class="hidden"><span class="nav-icon">&#127775;</span> My Portal</a>
           <a onclick="navigate('phone-app')" data-page="phone-app" id="nav-phone-app"><span class="nav-icon">&#128241;</span> Phone App</a>
           <a onclick="navigate('messages')" data-page="messages" id="nav-messages"><span class="nav-icon">&#128172;</span> Messages</a>
@@ -2778,11 +2780,13 @@
           </div>
 
           <!-- Results -->
+          <div id="flog-pending-banner" class="hidden" style="margin-bottom:1rem"></div>
           <div class="table-card" style="overflow-x:auto">
             <table class="data-table flog-table" id="flog-table">
               <thead>
                 <tr>
                   <th>Date</th>
+                  <th>Booking #</th>
                   <th>Aircraft</th>
                   <th>Type</th>
                   <th>Student</th>
@@ -2805,6 +2809,38 @@
           </div>
           <!-- Mobile card view (shown via CSS on small screens) -->
           <div id="flog-cards" class="flog-cards-wrap"></div>
+        </div>
+
+        <!-- ─── MISSING HOURS PAGE ─── -->
+        <div id="page-missing-hours" class="page hidden">
+          <div class="page-header">
+            <h1>Missing Hours</h1>
+            <p style="color:var(--gray-400);font-size:0.9rem;margin-top:0.35rem">Past flights that ended without Hobbs/Tach logged. Each row shows its booking number.</p>
+          </div>
+          <div id="missing-hours-empty" class="hidden table-card" style="padding:2.5rem;text-align:center;color:var(--gray-500)">
+            <div style="font-size:2rem;margin-bottom:0.5rem">&#10003;</div>
+            <div style="font-weight:600;color:var(--gray-300)">All caught up</div>
+            <div style="font-size:0.85rem;margin-top:0.35rem">No flights are waiting for hour entry.</div>
+          </div>
+          <div id="missing-hours-table-wrap" class="table-card hidden" style="overflow-x:auto">
+            <table class="data-table" id="missing-hours-table">
+              <thead>
+                <tr>
+                  <th>Booking #</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Aircraft</th>
+                  <th>Student</th>
+                  <th>Instructor</th>
+                  <th>Lesson</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="missing-hours-table-body"></tbody>
+            </table>
+          </div>
+          <div id="missing-hours-cards" class="mob-cards-wrap"></div>
         </div>
 
         <!-- ─── BOOKING HISTORY PAGE (owner/admin/instructor) ─── -->
@@ -2875,6 +2911,7 @@
               <thead>
                 <tr>
                   <th style="cursor:pointer;user-select:none" onclick="toggleHistoryDateSort()" id="history-date-th">Date <span id="history-sort-icon">&#9660;</span></th>
+                  <th>Booking #</th>
                   <th>Student</th>
                   <th>Instructor</th>
                   <th>Aircraft</th>
@@ -3978,7 +4015,7 @@
         </div>
         <div class="form-group">
           <label>Lesson Type</label>
-          <select id="booking-lesson-type">
+          <select id="booking-lesson-type" onchange="onBookingLessonTypeChange()">
             <option value="">Select type...</option>
             <option value="PPL">Private Pilot (PPL)</option>
             <option value="IFR">Instrument Rating (IFR)</option>
@@ -5313,6 +5350,7 @@ const MOBILE_PAGE_TITLES = {
   billing: 'Billing',
   'instructor-hours': 'Instructor Hours',
   'flight-log': 'Flight Log',
+  'missing-hours': 'Missing Hours',
   history: 'Booking History',
   'hours-audit': 'Hours Audit',
   'website-editor': 'Website Editor',
@@ -5968,6 +6006,13 @@ async function enterApp() {
     navIH.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
   }
 
+  // Missing Hours: staff who can log Hobbs (not students/maintenance)
+  const navMissingHours = document.getElementById('nav-missing-hours');
+  if (navMissingHours) {
+    navMissingHours.classList.toggle('hidden', ['student', 'maintenance'].includes(currentUser.role));
+  }
+  refreshMissingHoursBadge();
+
   // Booking History: visible to students, renters, instructors, admin, owner
   const navBH = document.getElementById('nav-history');
   if (navBH) navBH.classList.toggle('hidden', currentUser.role === 'maintenance');
@@ -6069,6 +6114,7 @@ function startAppPolling() {
     if (!token || !currentUser) return;
     if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
       loadApprovalsBadge();
+      refreshMissingHoursBadge();
       if (['owner', 'admin'].includes(currentUser.role)) {
         loadLeadsBadge();
         loadDiscrepanciesBadge();
@@ -6714,6 +6760,7 @@ function navigate(page) {
   else if (page === 'billing') loadBilling();
   else if (page === 'instructor-hours') loadInstructorHoursPage();
   else if (page === 'flight-log') { loadFlightLog(); loadFlogAircraftHours(); }
+  else if (page === 'missing-hours') loadMissingHours();
   else if (page === 'history') loadHistoryLegacyPage();
   else if (page === 'hours-audit') loadHoursAudit();
   else if (page === 'website-editor') loadWebsiteEditor();
@@ -8878,6 +8925,8 @@ function findCachedBooking(bookingId) {
     b = _dashboardBookingsCache.bookings.find(bk => bk.id === id);
     if (b) return b;
   }
+  b = completableBookings.find(bk => bk.id === id);
+  if (b) return b;
   return null;
 }
 
@@ -9101,16 +9150,25 @@ async function loadDashboard() {
         if (existing) existing.remove();
         const banner = document.createElement('div');
         banner.id = 'dashboard-pending-banner';
-        banner.style.cssText = 'background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:12px;padding:1rem 1.5rem;margin-top:1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;';
+        banner.style.cssText = 'background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;padding:1rem 1.5rem;margin-top:1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;';
+        const flightLines = pending.map(b => {
+          const d = new Date(b.start_time);
+          const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          const who = b.student_name || b.instructor_name || 'Solo';
+          return `<div style="font-size:0.85rem;color:var(--gray-200);margin-top:0.35rem"><strong style="color:var(--red)">${formatBookingLabel(b.id)}</strong> · ${escHtml(b.tail_number)} · ${dateStr} ${timeStr} · ${escHtml(who)}${b.lesson_type ? ' · ' + escHtml(b.lesson_type) : ''}</div>`;
+        }).join('');
         banner.innerHTML = `
           <div>
-            <div style="font-weight:600;color:var(--amber)">&#9888; ${pending.length} flight${pending.length !== 1 ? 's' : ''} need hours logged</div>
+            <div style="font-weight:600;color:var(--red)">&#9888; ${pending.length} flight${pending.length !== 1 ? 's' : ''} need hours logged</div>
             <div style="font-size:0.82rem;color:var(--gray-300);margin-top:0.2rem">Log Hobbs &amp; Tach hours to keep the aircraft record current</div>
+            ${flightLines}
           </div>
-          <button class="btn btn-sm btn-primary" onclick="navigate('flight-log')">Go to Flight Log</button>
+          <button class="btn btn-sm btn-primary" onclick="navigateToFlightLogPending()">View Missing Hours</button>
         `;
         document.getElementById('page-dashboard').appendChild(banner);
       }
+      refreshMissingHoursBadge();
     } catch {}
   }
 }
@@ -9882,7 +9940,9 @@ function toggleBookingMultiday() {
 // minTime: earliest selectable time as "HH:MM" (exclusive — slot must be > minTime)
 //          pass null to include all slots
 // forDate: "YYYY-MM-DD" — if it equals today's local date, also filters out past slots
-function buildTimeOptions(minTime, forDate) {
+// stepMinutes: slot interval (30 default; 20 for discovery flights)
+function buildTimeOptions(minTime, forDate, stepMinutes) {
+  const step = stepMinutes || 30;
   const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local TZ
   const isToday = forDate === todayStr;
 
@@ -9900,7 +9960,7 @@ function buildTimeOptions(minTime, forDate) {
 
   let opts = '';
   for (let h = 0; h <= 23; h++) {
-    for (let m = 0; m < 60; m += 30) {
+    for (let m = 0; m < 60; m += step) {
       // Skip past times when booking today
       if (isToday && (h < nowH || (h === nowH && m <= nowM))) continue;
       // Skip slots at or before minTime (for end-time picker)
@@ -9911,19 +9971,43 @@ function buildTimeOptions(minTime, forDate) {
   }
   // Add midnight (24:00) as last end-time option only for the end-time picker (minTime is set).
   // Start-time picker (minTime=null) should NOT include midnight as a start option.
-  if (minTime && minH < 24) {
+  if (minTime && minH < 24 && step === 30) {
     opts += `<option value="24:00">12:00 AM</option>`;
   }
   // Cross-midnight / overnight end times (00:00–05:59 next day)
-  if (minTime && minH >= 18) {
+  if (minTime && minH >= 18 && step === 30) {
     for (let h = 0; h <= 23; h++) {
-      for (let m = 0; m < 60; m += 30) {
+      for (let m = 0; m < 60; m += step) {
         const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         opts += `<option value="${time}">${formatTimeStr(h, m)} (+1 day)</option>`;
       }
     }
   }
   return opts;
+}
+
+function isDiscoveryBooking() {
+  const lt = document.getElementById('booking-lesson-type')?.value || '';
+  return /^discovery/i.test(lt.trim());
+}
+
+function getBookingTimeStepMinutes() {
+  return isDiscoveryBooking() ? 20 : 30;
+}
+
+function addMinutesToHm(hm, mins) {
+  let [h, m] = hm.split(':').map(Number);
+  m += mins;
+  while (m >= 60) { m -= 60; h++; }
+  if (h >= 24) {
+    return { time: `${String(h - 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`, nextDay: true };
+  }
+  return { time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, nextDay: false };
+}
+
+function onBookingLessonTypeChange() {
+  rebuildBookingTimePickers();
+  if (isDiscoveryBooking()) updateBookingEndTimes();
 }
 
 // Rebuild start + end time dropdowns based on current selected date.
@@ -9941,8 +10025,9 @@ function rebuildBookingTimePickers(options) {
   const isToday = dateVal === todayStr;
 
   const prevStart = forceStart || startSel.value;
+  const stepMin = getBookingTimeStepMinutes();
 
-  startSel.innerHTML = buildTimeOptions(null, dateVal);
+  startSel.innerHTML = buildTimeOptions(null, dateVal, stepMin);
   if (preserveTimes && forceStart) ensureTimeSelectOption(startSel, forceStart);
 
   if (preserveTimes && forceStart && startSel.querySelector(`option[value="${forceStart}"]`)) {
@@ -9956,11 +10041,21 @@ function rebuildBookingTimePickers(options) {
   const chosenStart = startSel.value;
   const multiday = document.getElementById('booking-multiday')?.checked;
   const endDateVal = document.getElementById('booking-end-date')?.value || dateVal;
+
+  if (isDiscoveryBooking() && !multiday && chosenStart) {
+    const end = addMinutesToHm(chosenStart, 20);
+    const [eh, em] = end.time.split(':').map(Number);
+    endSel.innerHTML = `<option value="${end.time}">${formatTimeStr(eh, em)} (20 min)</option>`;
+    endSel.value = end.time;
+    endSel.disabled = true;
+    return;
+  }
+
   let endOpts;
   if (multiday && endDateVal > dateVal) {
-    endOpts = buildTimeOptions(null, endDateVal);
+    endOpts = buildTimeOptions(null, endDateVal, stepMin);
   } else {
-    endOpts = buildTimeOptions(chosenStart, dateVal);
+    endOpts = buildTimeOptions(chosenStart, dateVal, stepMin);
   }
   if (endOpts === '') {
     endSel.innerHTML = '<option value="">— no valid end time —</option>';
@@ -10056,8 +10151,19 @@ function updateBookingEndTimes() {
   const dateVal = document.getElementById('booking-date').value;
   const chosenStart = startSel.value;
   const prevEnd = endSel.value;
+  const stepMin = getBookingTimeStepMinutes();
 
-  const opts = buildTimeOptions(chosenStart, dateVal);
+  if (isDiscoveryBooking() && chosenStart) {
+    const end = addMinutesToHm(chosenStart, 20);
+    const [eh, em] = end.time.split(':').map(Number);
+    endSel.innerHTML = `<option value="${end.time}">${formatTimeStr(eh, em)} (20 min)</option>`;
+    endSel.value = end.time;
+    endSel.disabled = true;
+    return;
+  }
+
+  endSel.disabled = false;
+  const opts = buildTimeOptions(chosenStart, dateVal, stepMin);
 
   if (opts === '') {
     endSel.innerHTML = '<option value="">— no valid end time —</option>';
@@ -10448,6 +10554,15 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     errEl.classList.remove('hidden');
     showToast('End must be after start', 'error');
     return;
+  }
+  if (isDiscoveryBooking()) {
+    const durMin = (new Date(end_time) - new Date(start_time)) / 60000;
+    if (Math.abs(durMin - 20) > 0.5) {
+      errEl.textContent = 'Discovery flights must be booked in exactly 20-minute blocks';
+      errEl.classList.remove('hidden');
+      showToast('Discovery flights are 20 minutes only', 'error');
+      return;
+    }
   }
 
   const payload = {
@@ -10869,8 +10984,10 @@ function pfwRemoveSquawk(n) {
 }
 
 function refreshAfterFlightComplete() {
+  refreshMissingHoursBadge();
   if (currentPage === 'schedule') loadCalendar();
   else if (currentPage === 'flight-log') loadFlightLog();
+  else if (currentPage === 'missing-hours') loadMissingHours();
   else if (currentPage === 'history') loadHistoryLegacyPage();
   else if (currentPage === 'billing') loadBilling();
   else loadDashboard();
@@ -15221,6 +15338,57 @@ async function init() {
 
 
 // ─── FLIGHT LOG PAGE ─────────────────────────────────────
+function flogEntryNeedsHours(entry) {
+  if (entry._pendingBooking) return true;
+  if (entry.hobbs_start == null || entry.hobbs_end == null) return true;
+  const delta = parseFloat(entry.hobbs_delta != null ? entry.hobbs_delta : (entry.hobbs_end - entry.hobbs_start));
+  return isNaN(delta) || delta <= 0;
+}
+
+function flogPendingMatchesFilters(b, acId, perId, startD, endD) {
+  if (acId && String(b.aircraft_id) !== String(acId)) return false;
+  if (perId && String(b.student_id) !== String(perId) && String(b.instructor_id) !== String(perId)) return false;
+  const flightDate = String(b.start_time).slice(0, 10);
+  if (startD && flightDate < startD) return false;
+  if (endD && flightDate > endD) return false;
+  return true;
+}
+
+function formatBookingLabel(id) {
+  if (id == null || id === '') return '—';
+  return 'Booking #' + id;
+}
+
+function bookingNumCell(id, highlight) {
+  if (id == null || id === '') return '<span style="color:var(--gray-500)">—</span>';
+  const style = highlight
+    ? 'font-family:\'Space Grotesk\',sans-serif;font-weight:700;color:var(--red);white-space:nowrap'
+    : 'font-family:\'Space Grotesk\',sans-serif;font-weight:600;color:var(--sky);white-space:nowrap';
+  return `<span style="${style}">${formatBookingLabel(id)}</span>`;
+}
+
+async function refreshMissingHoursBadge() {
+  const badge = document.getElementById('missing-hours-badge');
+  const nav = document.getElementById('nav-missing-hours');
+  if (!badge || !nav || nav.classList.contains('hidden') || !currentUser) return;
+  try {
+    const pending = await api('/api/bookings/completable');
+    completableBookings = pending || [];
+    if (pending.length > 0) {
+      badge.textContent = pending.length;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  } catch {
+    badge.classList.add('hidden');
+  }
+}
+
+function navigateToFlightLogPending() {
+  navigate('missing-hours');
+}
+
 async function loadFlightLog() {
   // Populate filter dropdowns
   const aircraftSel = document.getElementById('flog-aircraft-filter');
@@ -15248,98 +15416,169 @@ async function loadFlightLog() {
   if (endD) params.set('end_date', endD);
 
   try {
-    const logs = await api(`/api/flight-logs?${params}`);
+    const [logs, pendingRaw] = await Promise.all([
+      api(`/api/flight-logs?${params}`),
+      (currentUser && currentUser.role !== 'student')
+        ? api('/api/bookings/completable').catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    completableBookings = pendingRaw || [];
+
+    const pending = completableBookings.filter(b =>
+      flogPendingMatchesFilters(b, acId, perId, startD, endD)
+    );
+
+    const pendingBanner = document.getElementById('flog-pending-banner');
+    if (pendingBanner) {
+      if (pending.length > 0) {
+        pendingBanner.classList.remove('hidden');
+        pendingBanner.innerHTML = `<div class="table-card" style="padding:1rem 1.25rem;border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.06)">
+          <div style="font-weight:600;color:var(--red);margin-bottom:0.35rem">&#9888; ${pending.length} flight${pending.length !== 1 ? 's' : ''} missing Hobbs/Tach hours</div>
+          <div style="font-size:0.82rem;color:var(--gray-400)">Shown in red below with booking numbers — or open <a href="#" onclick="navigate('missing-hours');return false" style="color:var(--sky)">Missing Hours</a> for the full list.</div>
+        </div>`;
+      } else {
+        pendingBanner.classList.add('hidden');
+        pendingBanner.innerHTML = '';
+      }
+    }
+
     const tbody = document.getElementById('flog-table-body');
     const emptyEl = document.getElementById('flog-empty');
 
-    if (!logs.length) {
+    const pendingRows = pending.map(b => ({
+      _pendingBooking: true,
+      _bookingId: b.id,
+      flight_date: b.start_time,
+      tail_number: b.tail_number,
+      booking_type: b.booking_type,
+      student_name: b.student_name,
+      instructor_name: b.instructor_name,
+      hobbs_start: null,
+      hobbs_end: null,
+      hobbs_delta: null,
+      tach_start: null,
+      tach_end: null,
+      tach_delta: null,
+      submitted_by_name: null,
+      lesson_type: b.lesson_type,
+    }));
+
+    const allRows = [...pendingRows, ...logs];
+
+    if (!allRows.length) {
       tbody.innerHTML = '';
       emptyEl.classList.remove('hidden');
+      const cardsEl = document.getElementById('flog-cards');
+      if (cardsEl) cardsEl.innerHTML = '';
       return;
     }
     emptyEl.classList.add('hidden');
 
     // Show/hide actions column for admin/owner
     const canEditFlog = currentUser && ['owner', 'admin'].includes(currentUser.role);
+    const canComplete = currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
     const flogActTh = document.getElementById('flog-actions-th');
-    if (flogActTh) { flogActTh.classList.toggle('hidden', !canEditFlog); if (canEditFlog) flogActTh.textContent = 'Actions'; }
+    if (flogActTh) {
+      flogActTh.classList.toggle('hidden', !canEditFlog && !canComplete);
+      if (!flogActTh.classList.contains('hidden')) flogActTh.textContent = 'Actions';
+    }
 
     // Cache for modal pre-population
     window._flogCache = window._flogCache || {};
     logs.forEach(l => { window._flogCache[l.id] = l; });
 
-    tbody.innerHTML = logs.map(l => {
-      const typeLabel = l.booking_type === 'student_solo' ? '✈ Solo' :
-                        l.booking_type === 'instructor_solo' ? '✈ Instructor Solo' : 'Dual';
-      const typeColor = l.booking_type !== 'dual' ? 'color:var(--amber)' : '';
+    tbody.innerHTML = allRows.map(l => {
+      const needsHours = flogEntryNeedsHours(l);
+      const rowStyle = needsHours ? 'background:rgba(239,68,68,0.08);border-left:3px solid var(--red)' : '';
+      const typeLabel = l._pendingBooking
+        ? `<span style="color:var(--red);font-weight:600">Missing Hours</span>`
+        : (l.booking_type === 'student_solo' ? '✈ Solo' :
+           l.booking_type === 'instructor_solo' ? '✈ Instructor Solo' : 'Dual');
+      const typeColor = l._pendingBooking ? 'color:var(--red)' : (l.booking_type !== 'dual' ? 'color:var(--amber)' : '');
       const fmtVal = (v) => v != null ? parseFloat(v).toFixed(1) : '—';
       const fmtDelta = (v) => v != null ? `<strong>${parseFloat(v).toFixed(1)}</strong>` : '—';
       const dateStr = String(l.flight_date).slice(0,10);
-      const actionTd = canEditFlog
-        ? `<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditFlogModal(${l.id})">✏</button><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteFlogEntry(${l.id}, '${dateStr}')">🗑</button></td>`
-        : '';
-      return `<tr>
-        <td style="white-space:nowrap">${dateStr}</td>
+      let actionTd = '';
+      if (l._pendingBooking && canComplete) {
+        actionTd = `<td style="white-space:nowrap"><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${l._bookingId})">Log Hours</button></td>`;
+      } else if (canEditFlog && !l._pendingBooking) {
+        actionTd = `<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditFlogModal(${l.id})">✏</button><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteFlogEntry(${l.id}, '${dateStr}')">🗑</button></td>`;
+      } else {
+        actionTd = '';
+      }
+      const rowId = l._pendingBooking ? `flog-pending-${l._bookingId}` : '';
+      const bookingId = l._pendingBooking ? l._bookingId : l.booking_id;
+      return `<tr id="${rowId}" style="${rowStyle}" class="${needsHours ? 'flog-needs-hours' : ''}">
+        <td style="white-space:nowrap">${dateStr}${needsHours ? ' <span style="color:var(--red);font-size:0.72rem">⚠</span>' : ''}</td>
+        <td>${bookingNumCell(bookingId, needsHours)}</td>
         <td><strong>${escHtml(l.tail_number)}</strong></td>
-        <td style="${typeColor};font-size:0.85rem">${typeLabel}</td>
+        <td style="${typeColor};font-size:0.85rem">${typeLabel}${l.lesson_type && !l._pendingBooking ? `<div style="font-size:0.72rem;color:var(--gray-500)">${escHtml(l.lesson_type)}</div>` : ''}</td>
         <td>${escHtml(l.student_name || '—')}</td>
         <td>${escHtml(l.instructor_name || '—')}</td>
-        <td style="text-align:right;font-family:'Space Grotesk'">${fmtVal(l.hobbs_start)}</td>
-        <td style="text-align:right;font-family:'Space Grotesk'">${fmtVal(l.hobbs_end)}</td>
-        <td style="text-align:right;font-family:'Space Grotesk';color:var(--sky)">${fmtDelta(l.hobbs_delta)}</td>
-        <td style="text-align:right;font-family:'Space Grotesk'">${fmtVal(l.tach_start)}</td>
-        <td style="text-align:right;font-family:'Space Grotesk'">${fmtVal(l.tach_end)}</td>
-        <td style="text-align:right;font-family:'Space Grotesk';color:var(--sky)">${fmtDelta(l.tach_delta)}</td>
-        <td style="font-size:0.85rem;color:var(--gray-400)">${escHtml(l.submitted_by_name || '—')}</td>
+        <td style="text-align:right;font-family:'Space Grotesk';${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.hobbs_start)}</td>
+        <td style="text-align:right;font-family:'Space Grotesk';${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.hobbs_end)}</td>
+        <td style="text-align:right;font-family:'Space Grotesk';color:${needsHours ? 'var(--red)' : 'var(--sky)'}">${needsHours ? '—' : fmtDelta(l.hobbs_delta)}</td>
+        <td style="text-align:right;font-family:'Space Grotesk';${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.tach_start)}</td>
+        <td style="text-align:right;font-family:'Space Grotesk';${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.tach_end)}</td>
+        <td style="text-align:right;font-family:'Space Grotesk';color:${needsHours ? 'var(--red)' : 'var(--sky)'}">${needsHours ? '—' : fmtDelta(l.tach_delta)}</td>
+        <td style="font-size:0.85rem;color:var(--gray-400)">${l._pendingBooking ? '<span style="color:var(--red)">Not logged</span>' : escHtml(l.submitted_by_name || '—')}</td>
         ${actionTd}
       </tr>`;
     }).join('');
 
     // Render mobile card view
     const cardsEl = document.getElementById('flog-cards');
-    if (logs.length === 0) {
+    if (allRows.length === 0) {
       cardsEl.innerHTML = '<div class="flog-empty-card">No flight log entries yet.</div>';
     } else {
-      cardsEl.innerHTML = logs.map(l => {
-        const typeLabel = l.booking_type === 'student_solo' ? 'Solo' :
-                          l.booking_type === 'instructor_solo' ? 'Instr. Solo' : 'Dual';
-        const typeClass = l.booking_type !== 'dual' ? 'solo' : 'dual';
+      cardsEl.innerHTML = allRows.map(l => {
+        const needsHours = flogEntryNeedsHours(l);
+        const cardStyle = needsHours ? 'border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.06)' : '';
+        const typeLabel = l._pendingBooking ? 'Missing Hours' :
+          (l.booking_type === 'student_solo' ? 'Solo' :
+           l.booking_type === 'instructor_solo' ? 'Instr. Solo' : 'Dual');
+        const typeClass = l._pendingBooking ? 'missing' : (l.booking_type !== 'dual' ? 'solo' : 'dual');
         const fmtVal = (v) => v != null ? parseFloat(v).toFixed(1) : '—';
         const fmtDelta = (v) => v != null ? parseFloat(v).toFixed(1) : '—';
         const dateStr = String(l.flight_date).slice(0,10);
+        const bookingId = l._pendingBooking ? l._bookingId : l.booking_id;
         const peopleParts = [];
         if (l.student_name) peopleParts.push(`<span>Stu: ${escHtml(l.student_name)}</span>`);
         if (l.instructor_name) peopleParts.push(`<span>Instr: ${escHtml(l.instructor_name)}</span>`);
-        const actionsHtml = canEditFlog
-          ? `<div class="flog-card-actions">
+        let actionsHtml = '';
+        if (l._pendingBooking && canComplete) {
+          actionsHtml = `<div class="flog-card-actions"><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${l._bookingId})">Log Hours</button></div>`;
+        } else if (canEditFlog && !l._pendingBooking) {
+          actionsHtml = `<div class="flog-card-actions">
               <button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 8px" onclick="openEditFlogModal(${l.id})">✏ Edit</button>
               <button class="btn btn-sm" style="font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteFlogEntry(${l.id}, '${dateStr}')">🗑 Delete</button>
-            </div>`
-          : '';
-        return `<div class="flog-card" onclick="toggleFlogCard(this)">
+            </div>`;
+        }
+        return `<div class="flog-card ${needsHours ? 'flog-needs-hours' : ''}" style="${cardStyle}" ${l._pendingBooking ? `id="flog-pending-${l._bookingId}"` : ''} onclick="toggleFlogCard(this)">
   <div class="flog-card-hdr">
-    <span class="flog-card-date">${dateStr}</span>
+    <span class="flog-card-date">${dateStr}${needsHours ? ' <span style="color:var(--red)">⚠</span>' : ''}</span>
     <span style="display:flex;align-items:center;gap:0.5rem">
+      ${bookingId ? `<span style="font-size:0.72rem;font-weight:700;color:${needsHours ? 'var(--red)' : 'var(--sky)'}">${formatBookingLabel(bookingId)}</span>` : ''}
       <span class="flog-card-aircraft">${escHtml(l.tail_number)}</span>
-      <span class="flog-card-type ${typeClass}">${typeLabel}</span>
+      <span class="flog-card-type ${typeClass}" ${needsHours ? 'style="color:var(--red)"' : ''}>${typeLabel}</span>
     </span>
   </div>
   <div class="flog-card-metrics">
     <div class="flog-card-metric">
       <div class="flog-card-metric-lbl">Hobbs Start</div>
-      <div class="flog-card-metric-val">${fmtVal(l.hobbs_start)}</div>
+      <div class="flog-card-metric-val" style="${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.hobbs_start)}</div>
     </div>
     <div class="flog-card-metric">
       <div class="flog-card-metric-lbl">Hobbs End</div>
-      <div class="flog-card-metric-val highlight">${fmtVal(l.hobbs_end)}</div>
+      <div class="flog-card-metric-val highlight" style="${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.hobbs_end)}</div>
     </div>
     <div class="flog-card-metric">
       <div class="flog-card-metric-lbl">Tach Start</div>
-      <div class="flog-card-metric-val">${fmtVal(l.tach_start)}</div>
+      <div class="flog-card-metric-val" style="${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.tach_start)}</div>
     </div>
     <div class="flog-card-metric">
       <div class="flog-card-metric-lbl">Tach End</div>
-      <div class="flog-card-metric-val highlight">${fmtVal(l.tach_end)}</div>
+      <div class="flog-card-metric-val highlight" style="${needsHours ? 'color:var(--red)' : ''}">${fmtVal(l.tach_end)}</div>
     </div>
   </div>
   ${peopleParts.length ? `<div class="flog-card-people">${peopleParts.join('')}</div>` : ''}
@@ -15351,14 +15590,23 @@ async function loadFlightLog() {
   <div class="flog-card-detail">
     <div class="flog-card-detail-row"><span>Hobbs Start</span><span>${fmtVal(l.hobbs_start)}</span></div>
     <div class="flog-card-detail-row"><span>Hobbs End</span><span>${fmtVal(l.hobbs_end)}</span></div>
-    <div class="flog-card-detail-row"><span class="detail-highlight">Hobbs Δ</span><span class="detail-highlight">${fmtDelta(l.hobbs_delta)} hrs</span></div>
+    <div class="flog-card-detail-row"><span class="detail-highlight">Hobbs Δ</span><span class="detail-highlight">${needsHours ? '—' : fmtDelta(l.hobbs_delta) + ' hrs'}</span></div>
     <div class="flog-card-detail-row"><span>Tach Start</span><span>${fmtVal(l.tach_start)}</span></div>
     <div class="flog-card-detail-row"><span>Tach End</span><span>${fmtVal(l.tach_end)}</span></div>
-    <div class="flog-card-detail-row"><span class="detail-highlight">Tach Δ</span><span class="detail-highlight">${fmtDelta(l.tach_delta)} hrs</span></div>
-    <div class="flog-card-detail-row"><span>Submitted by</span><span>${escHtml(l.submitted_by_name || '—')}</span></div>
+    <div class="flog-card-detail-row"><span class="detail-highlight">Tach Δ</span><span class="detail-highlight">${needsHours ? '—' : fmtDelta(l.tach_delta) + ' hrs'}</span></div>
+    <div class="flog-card-detail-row"><span>Submitted by</span><span>${l._pendingBooking ? 'Not logged' : escHtml(l.submitted_by_name || '—')}</span></div>
   </div>
 </div>`;
       }).join('');
+    }
+
+    if (window._flogHighlightPending && pending.length > 0) {
+      window._flogHighlightPending = false;
+      const first = document.getElementById(`flog-pending-${pending[0].id}`);
+      if (first) {
+        first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        first.style.animation = 'flogPulse 1.2s ease 2';
+      }
     }
   } catch (err) {
     console.error('Flight log load error:', err);
@@ -15367,6 +15615,84 @@ async function loadFlightLog() {
 
 function toggleFlogCard(card) {
   card.classList.toggle('expanded');
+}
+
+async function loadMissingHours() {
+  const emptyEl = document.getElementById('missing-hours-empty');
+  const tableWrap = document.getElementById('missing-hours-table-wrap');
+  const tbody = document.getElementById('missing-hours-table-body');
+  const cardsEl = document.getElementById('missing-hours-cards');
+  if (!tbody) return;
+
+  try {
+    const pending = await api('/api/bookings/completable');
+    completableBookings = pending || [];
+    refreshMissingHoursBadge();
+
+    if (!pending.length) {
+      emptyEl.classList.remove('hidden');
+      tableWrap.classList.add('hidden');
+      tbody.innerHTML = '';
+      if (cardsEl) cardsEl.innerHTML = '';
+      return;
+    }
+
+    emptyEl.classList.add('hidden');
+    tableWrap.classList.remove('hidden');
+    const canComplete = currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
+
+    tbody.innerHTML = pending.map(b => {
+      const d = new Date(b.start_time);
+      const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      const actionBtn = canComplete
+        ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button>`
+        : '';
+      return `<tr id="missing-hours-row-${b.id}" style="background:rgba(239,68,68,0.06);border-left:3px solid var(--red)">
+        <td>${bookingNumCell(b.id, true)}</td>
+        <td style="white-space:nowrap">${dateStr}</td>
+        <td style="white-space:nowrap">${timeStr}</td>
+        <td><strong>${escHtml(b.tail_number)}</strong> <span style="font-size:0.78rem;color:var(--gray-500)">${escHtml(b.make_model || '')}</span></td>
+        <td>${escHtml(b.student_name || '—')}</td>
+        <td>${escHtml(b.instructor_name || '—')}</td>
+        <td>${escHtml(b.lesson_type || b.booking_type || 'Flight')}</td>
+        <td><span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red)">Needs Hours</span></td>
+        <td style="white-space:nowrap">${actionBtn}</td>
+      </tr>`;
+    }).join('');
+
+    if (cardsEl) {
+      cardsEl.innerHTML = pending.map(b => {
+        const d = new Date(b.start_time);
+        const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const actionBtn = canComplete
+          ? `<div class="mob-card-actions"><button class="btn btn-sm" style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button></div>`
+          : '';
+        return `<article class="mob-card" id="missing-hours-row-${b.id}" style="border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.06)">
+          <div class="mob-card-hdr">
+            <div>
+              <div class="mob-card-title" style="color:var(--red);font-weight:700">${formatBookingLabel(b.id)}</div>
+              <div class="mob-card-sub">${dateStr} · ${timeStr} · ${escHtml(b.tail_number)}</div>
+            </div>
+            <span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red)">Needs Hours</span>
+          </div>
+          <div class="mob-card-meta">
+            <span><span class="meta-label">Student</span> ${escHtml(b.student_name || '—')}</span>
+            <span><span class="meta-label">CFI</span> ${escHtml(b.instructor_name || '—')}</span>
+            <span><span class="meta-label">Lesson</span> ${escHtml(b.lesson_type || b.booking_type || 'Flight')}</span>
+          </div>
+          ${actionBtn}
+        </article>`;
+      }).join('');
+    }
+  } catch (err) {
+    console.error('Missing hours load error:', err);
+    if (emptyEl) {
+      emptyEl.classList.remove('hidden');
+      emptyEl.innerHTML = '<div style="color:var(--red)">Failed to load missing hours list.</div>';
+    }
+  }
 }
 
 function clearFlightLogFilters() {
@@ -15633,6 +15959,7 @@ async function loadHistoryLegacyPage() {
         : '';
       return `<tr>
         <td style="white-space:nowrap">${dateStr}</td>
+        <td>${bookingNumCell(r.id, needsHours)}</td>
         <td>${r.student_name ? escHtml(r.student_name) : '<span style="color:var(--gray-500)">—</span>'}</td>
         <td>${r.instructor_name ? escHtml(r.instructor_name) : '<span style="color:var(--gray-500)">—</span>'}</td>
         <td><strong>${escHtml(r.tail_number || '—')}</strong> <span style="font-size:0.78rem;color:var(--gray-500)">${escHtml(r.make_model || '')}</span></td>
@@ -15680,7 +16007,7 @@ function renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar) {
     ? '<div class="mob-card-sub" style="color:#F87171;margin-top:0.35rem">' + escHtml(r.cancellation_reason) + '</div>'
     : '';
   return '<article class="mob-card"><div class="mob-card-hdr"><div><div class="mob-card-title">' + dateStr + '</div>' +
-    '<div class="mob-card-sub">' + escHtml(r.tail_number || '—') + (r.make_model ? ' · ' + escHtml(r.make_model) : '') + '</div></div>' + statusTag + '</div>' +
+    '<div class="mob-card-sub">' + formatBookingLabel(r.id) + ' · ' + escHtml(r.tail_number || '—') + (r.make_model ? ' · ' + escHtml(r.make_model) : '') + '</div></div>' + statusTag + '</div>' +
     cancelNote +
     '<div class="mob-card-meta">' +
     '<span><span class="meta-label">Student</span> ' + (r.student_name ? escHtml(r.student_name) : '—') + '</span>' +

@@ -315,7 +315,7 @@ router.get('/policy', authenticateToken, async (req, res) => {
 // ─── Preflight validation preview (before submit) ───
 router.get('/preflight-check', authenticateToken, async (req, res) => {
   try {
-    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_start, local_end } = req.query;
+    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_start, local_end, lesson_type } = req.query;
     if (!aircraft_id || !start_time || !end_time) {
       return res.status(400).json({ error: 'aircraft_id, start_time, end_time required' });
     }
@@ -331,6 +331,7 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       start_time,
       end_time,
       booking_type,
+      lesson_type: lesson_type || null,
       local_start,
       local_end,
     }, req.user.role);
@@ -481,7 +482,7 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const timeCheck = validateBookingTimes({
-      start, end, policy, userRole: req.user.role, isAdmin,
+      start, end, policy, userRole: req.user.role, isAdmin, lesson_type: b.lesson_type,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
@@ -580,7 +581,7 @@ async function createBookingInternal(client, req) {
   if (end <= start) return { error: 'End time must be after start time' };
   const policy = await getPolicySettings();
   const isAdmin = ['owner', 'admin'].includes(req.user.role);
-  const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin });
+  const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
   if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
 
   const grounding = await checkGroundingSquawk(client, aircraft_id);
@@ -634,7 +635,7 @@ router.post('/', authenticateToken, async (req, res) => {
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin });
+    const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
     let booking_type = 'dual';
@@ -665,6 +666,7 @@ router.post('/', authenticateToken, async (req, res) => {
       start_time,
       end_time,
       booking_type,
+      lesson_type: lesson_type || null,
       local_start,
       local_end,
     }, req.user.role);
@@ -771,6 +773,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const enTime = new Date(et);
     if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return res.status(400).json({ error: 'Invalid date format' });
     if (enTime <= stTime) return res.status(400).json({ error: 'End time must be after start time' });
+    const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
+    const policy = await getPolicySettings();
+    const timeCheck = validateBookingTimes({
+      start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
+    });
+    if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Duration cap on updates
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
