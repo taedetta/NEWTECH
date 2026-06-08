@@ -163,6 +163,28 @@ router.get('/by-date', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/downtime/range?start=2026-06-01&end=2026-06-30 — calendar month view
+router.get('/range', authenticateToken, async (req, res) => {
+  try {
+    const start = normalizeDateInput(req.query.start);
+    const end = normalizeDateInput(req.query.end);
+    if (!start || !end) return res.status(400).json({ error: 'start and end are required' });
+    if (end < start) return res.status(400).json({ error: 'end must be on or after start' });
+    const result = await pool.query(
+      `SELECT d.*, a.tail_number, a.make_model
+       FROM aircraft_downtime d
+       JOIN aircraft a ON d.aircraft_id = a.id
+       WHERE d.start_date <= $2::date AND d.end_date >= $1::date
+       ORDER BY d.start_date, d.aircraft_id, d.start_time NULLS FIRST`,
+      [start, end]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Downtime range error:', err);
+    res.status(500).json({ error: 'Failed to fetch downtime range' });
+  }
+});
+
 // POST /api/downtime — create a downtime entry
 router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {

@@ -389,6 +389,12 @@
     .calendar-event.ifr { background: rgba(139,92,246,0.15); color: #A78BFA; }
     .calendar-event.cpl { background: rgba(245,158,11,0.15); color: var(--amber); }
     .calendar-event.default { background: rgba(34,197,94,0.15); color: var(--green); }
+    .calendar-event.downtime { background: rgba(239,68,68,0.12); color: #f87171; border-left: 2px solid rgba(239,68,68,0.45); cursor: default; pointer-events: none; }
+    .calendar-event.downtime-indefinite { background: rgba(245,158,11,0.15); color: var(--amber); border-left: 2px solid rgba(245,158,11,0.5); cursor: default; pointer-events: none; }
+    .day-downtime-banner { margin-bottom: 1rem; padding: 0.75rem; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.22); border-radius: 8px; }
+    .day-downtime-banner h4 { margin: 0 0 0.5rem; font-size: 0.82rem; color: #f87171; font-weight: 600; }
+    .day-downtime-item { font-size: 0.82rem; color: var(--gray-300); padding: 0.35rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .day-downtime-item:last-child { border-bottom: none; }
     .schedule-filter-bar { display: flex; align-items: center; gap: 0.65rem; margin-bottom: 1rem; flex-wrap: wrap; }
     .schedule-filter-label { font-size: 0.78rem; color: var(--gray-500); font-weight: 600; white-space: nowrap; }
     .schedule-ac-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; flex: 1; min-width: 0; }
@@ -4552,6 +4558,7 @@
   <div id="day-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeDayModal()">
     <div class="modal">
       <h3 id="day-modal-title"></h3>
+      <div id="day-downtime-list" class="hidden"></div>
       <div id="day-bookings-list" class="day-bookings"></div>
       <div class="modal-actions">
         <button class="btn btn-secondary" onclick="closeDayModal()">Close</button>
@@ -5010,6 +5017,75 @@ function getScheduleFilteredBookings(bookings) {
 }
 
 let scheduleDowntimeToday = [];
+let scheduleDowntimeRange = [];
+
+function calendarDateStr(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function downtimeTouchesCalendarDay(d, year, month, day) {
+  const dateStr = calendarDateStr(year, month, day);
+  const start = downtimeDateLabel(d.start_date);
+  const end = downtimeDateLabel(d.end_date);
+  return start && end && dateStr >= start && dateStr <= end;
+}
+
+function downtimeLabelOnDay(d, year, month, day) {
+  const dateStr = calendarDateStr(year, month, day);
+  const start = downtimeDateLabel(d.start_date);
+  const end = downtimeDateLabel(d.end_date);
+  if (isAllDayDowntimeRow(d)) return 'All day';
+  if (start !== end && dateStr > start && dateStr < end) return 'All day';
+  const st = downtimeTimeLabel(d.start_time) || '00:00';
+  const et = downtimeTimeLabel(d.end_time) || '23:59';
+  if (start === end) return `${st}–${et}`;
+  if (dateStr === start) return `${st} →`;
+  if (dateStr === end) return `→ ${et}`;
+  return 'All day';
+}
+
+function getScheduleDowntimeForDay(year, month, day) {
+  const acFilter = scheduleAircraftFilter && scheduleAircraftFilter !== 'all'
+    ? String(scheduleAircraftFilter) : null;
+  let entries = (scheduleDowntimeRange || []).filter(d => downtimeTouchesCalendarDay(d, year, month, day));
+  if (acFilter) entries = entries.filter(d => String(d.aircraft_id) === acFilter);
+  let indefinite = (allAircraft || []).filter(a => a.status === 'maintenance');
+  if (acFilter) indefinite = indefinite.filter(a => String(a.id) === acFilter);
+  return { entries, indefinite };
+}
+
+function renderDayDowntimeBanner(year, month, day) {
+  const el = document.getElementById('day-downtime-list');
+  if (!el) return;
+  const { entries, indefinite } = getScheduleDowntimeForDay(year, month, day);
+  if (!entries.length && !indefinite.length) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('hidden');
+  let html = '<div class="day-downtime-banner"><h4>Aircraft out of service this day</h4>';
+  indefinite.forEach(a => {
+    html += `<div class="day-downtime-item"><strong>${escHtml(a.tail_number)}</strong> — All day (indefinite)${a.maintenance_reason ? ` · ${escHtml(a.maintenance_reason)}` : ''}</div>`;
+  });
+  entries.forEach(d => {
+    const times = downtimeLabelOnDay(d, year, month, day);
+    html += `<div class="day-downtime-item"><strong>${escHtml(d.tail_number || '')}</strong> — ${escHtml(times)}${d.reason ? ` · ${escHtml(d.reason)}` : ''}</div>`;
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderCalendarDowntimeEvent(d, year, month, day) {
+  const times = downtimeLabelOnDay(d, year, month, day);
+  const tip = `${d.tail_number} down ${times}${d.reason ? ' — ' + d.reason : ''}`;
+  return `<div class="calendar-event downtime" title="${escHtml(tip)}">&#128295; ${escHtml(d.tail_number)} ${escHtml(times)}</div>`;
+}
+
+function renderCalendarIndefiniteEvent(a) {
+  const tip = a.maintenance_reason || 'Indefinite — out of service';
+  return `<div class="calendar-event downtime-indefinite" title="${escHtml(tip)}">&#9888; ${escHtml(a.tail_number)} down</div>`;
+}
 
 function renderScheduleAircraftFilter() {
   const el = document.getElementById('schedule-aircraft-filter');
@@ -9410,8 +9486,14 @@ function loadCalendar() {
   const startOffset = firstDay.getDay();
   const fetchStart = new Date(year, month, 1 - startOffset);
   const fetchEnd = new Date(year, month + 1, 7);
+  const rangeStart = fetchStart.toLocaleDateString('en-CA');
+  const rangeEnd = fetchEnd.toLocaleDateString('en-CA');
 
-  loadBookings(fetchStart.toISOString(), fetchEnd.toISOString()).then(bookings => {
+  Promise.all([
+    loadBookings(fetchStart.toISOString(), fetchEnd.toISOString()),
+    api(`/api/downtime/range?start=${rangeStart}&end=${rangeEnd}`).catch(() => []),
+  ]).then(([bookings, downtimeRows]) => {
+    scheduleDowntimeRange = Array.isArray(downtimeRows) ? downtimeRows : [];
     const liveBookings = bookings.filter(b => b.status !== 'completed');
     allBookings = liveBookings;
     renderCalendar(year, month, startOffset, new Date(year, month + 1, 0).getDate(), getScheduleFilteredBookings(liveBookings));
@@ -9434,8 +9516,17 @@ function renderCalendar(year, month, startOffset, daysInMonth, bookings) {
     const date = new Date(year, month, day);
     const isToday = date.toDateString() === today.toDateString();
     const dayBookings = bookings.filter(b => bookingOverlapsLocalDay(b, year, month, day));
+    const { entries: dayDowntime, indefinite: dayIndefinite } = getScheduleDowntimeForDay(year, month, day);
 
-    const eventsHtml = dayBookings.slice(0, 3).map(b => {
+    const downtimeHtml = [
+      ...dayIndefinite.map(a => renderCalendarIndefiniteEvent(a)),
+      ...dayDowntime.map(d => renderCalendarDowntimeEvent(d, year, month, day)),
+    ];
+    const maxBookingSlots = Math.max(0, 3 - downtimeHtml.length);
+    const visibleDowntime = downtimeHtml.slice(0, 3);
+    const visibleBookings = dayBookings.slice(0, maxBookingSlots);
+
+    const eventsHtml = visibleDowntime.join('') + visibleBookings.map(b => {
       const cls = b.status === 'completed' ? 'default' : getEventClass(b.lesson_type);
       const time = bookingDayTimeLabel(b, year, month, day);
       const prefix = b.status === 'completed' ? '✓ ' : (bookingIsStudentSolo(b) || bookingIsInstructorSolo(b) ? '✈ ' : '');
@@ -9449,9 +9540,11 @@ function renderCalendar(year, month, startOffset, daysInMonth, bookings) {
       return `<div class="calendar-event ${cls}" style="${style}${bookedStyle}" title="${tooltipLabel}">${prefix}${time} ${b.tail_number || ''}${b.lesson_type ? ' · ' + escHtml(b.lesson_type) : ''}</div>`;
     }).join('');
 
-    const moreHtml = dayBookings.length > 3 ? `<div style="font-size:0.6rem;color:var(--gray-500)">+${dayBookings.length - 3} more</div>` : '';
+    const totalEvents = dayDowntime.length + dayIndefinite.length + dayBookings.length;
+    const shownEvents = visibleDowntime.length + visibleBookings.length;
+    const moreHtml = totalEvents > shownEvents ? `<div style="font-size:0.6rem;color:var(--gray-500)">+${totalEvents - shownEvents} more</div>` : '';
 
-    const hasEvts = dayBookings.length > 0 ? ' has-events' : '';
+    const hasEvts = totalEvents > 0 ? ' has-events' : '';
     html += `<div class="calendar-day${isToday ? ' today' : ''}${hasEvts}" onclick="openDayDetail(${year},${month},${day})">
       <div class="day-number">${day}</div>${eventsHtml}${moreHtml}
     </div>`;
@@ -9488,6 +9581,7 @@ function openDayDetail(year, month, day) {
 
   const title = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   document.getElementById('day-modal-title').textContent = title;
+  renderDayDowntimeBanner(year, month, day);
 
   const dayBookings = getScheduleFilteredBookings(allBookings).filter(b => bookingOverlapsLocalDay(b, year, month, day));
   console.log('[FlightSlate v2026.05.05] dayBookings:', dayBookings.map(b => ({ id: b.id, status: b.status })));
@@ -9540,11 +9634,6 @@ function openDayDetail(year, month, day) {
       const viewOnlyTag = (!isOwnBooking && ['student', 'renter', 'maintenance'].includes(currentUser.role))
         ? '<span class="tag" style="background:rgba(148,163,184,0.12);color:var(--gray-400);font-size:0.68rem">School booking — view only</span>' : '';
 
-      const ac = allAircraft.find(x => x.id === b.aircraft_id);
-      const acMaintNote = ac && ac.status === 'maintenance' && ac.maintenance_reason
-        ? `<div style="font-size:0.75rem;color:var(--amber);margin-top:0.2rem">&#9888; Aircraft down: ${escHtml(ac.maintenance_reason)}</div>`
-        : '';
-
       return `<div class="booking-card">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.25rem;">
           <div class="booking-time">${formatTime(start)} - ${formatTime(end)}</div>
@@ -9552,7 +9641,6 @@ function openDayDetail(year, month, day) {
         </div>
         <div class="booking-details">${peopleLine}</div>
         <div class="booking-aircraft">${b.tail_number} - ${b.make_model}</div>
-        ${acMaintNote}
         ${b.notes ? `<div style="font-size:0.8rem;color:var(--gray-500);margin-top:0.25rem">${escHtml(b.notes)}</div>` : ''}
         ${b.cancellation_reason ? `<div style="font-size:0.8rem;color:#F87171;margin-top:0.25rem">Reason: ${escHtml(b.cancellation_reason)}</div>` : ''}
         ${actionBtns}
