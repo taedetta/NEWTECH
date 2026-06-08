@@ -15389,6 +15389,33 @@ function navigateToFlightLogPending() {
   navigate('missing-hours');
 }
 
+function canRemoveMissingHoursBooking() {
+  return currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
+}
+
+function missingHoursDeleteBtn(bookingId, inline) {
+  if (!canRemoveMissingHoursBooking()) return '';
+  const style = inline
+    ? 'font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2);margin-left:0.35rem'
+    : 'font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)';
+  return `<button class="btn btn-sm" style="${style}" onclick="confirmDeleteMissingBooking(${bookingId})">Delete</button>`;
+}
+
+async function confirmDeleteMissingBooking(bookingId) {
+  const label = formatBookingLabel(bookingId);
+  if (!confirm(`Delete ${label}? This cancels the booking and removes it from missing hours.`)) return;
+  try {
+    await api(`/api/bookings/${bookingId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason: 'Cancelled — missing hours entry removed' }),
+    });
+    showToast(`${label} deleted`, 'success');
+    refreshAfterFlightComplete();
+  } catch (e) {
+    showToast(e.error || e.message || 'Failed to delete booking', 'error');
+  }
+}
+
 async function loadFlightLog() {
   // Populate filter dropdowns
   const aircraftSel = document.getElementById('flog-aircraft-filter');
@@ -15479,7 +15506,7 @@ async function loadFlightLog() {
     const canComplete = currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
     const flogActTh = document.getElementById('flog-actions-th');
     if (flogActTh) {
-      flogActTh.classList.toggle('hidden', !canEditFlog && !canComplete);
+      flogActTh.classList.toggle('hidden', !canEditFlog && !canComplete && !canRemoveMissingHoursBooking());
       if (!flogActTh.classList.contains('hidden')) flogActTh.textContent = 'Actions';
     }
 
@@ -15500,9 +15527,11 @@ async function loadFlightLog() {
       const dateStr = String(l.flight_date).slice(0,10);
       let actionTd = '';
       if (l._pendingBooking && canComplete) {
-        actionTd = `<td style="white-space:nowrap"><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${l._bookingId})">Log Hours</button></td>`;
+        actionTd = `<td style="white-space:nowrap"><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${l._bookingId})">Log Hours</button>${missingHoursDeleteBtn(l._bookingId, true)}</td>`;
       } else if (canEditFlog && !l._pendingBooking) {
         actionTd = `<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditFlogModal(${l.id})">✏</button><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteFlogEntry(${l.id}, '${dateStr}')">🗑</button></td>`;
+      } else if (needsHours && l.booking_id && canRemoveMissingHoursBooking()) {
+        actionTd = `<td style="white-space:nowrap">${missingHoursDeleteBtn(l.booking_id, true)}</td>`;
       } else {
         actionTd = '';
       }
@@ -15547,7 +15576,10 @@ async function loadFlightLog() {
         if (l.instructor_name) peopleParts.push(`<span>Instr: ${escHtml(l.instructor_name)}</span>`);
         let actionsHtml = '';
         if (l._pendingBooking && canComplete) {
-          actionsHtml = `<div class="flog-card-actions"><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${l._bookingId})">Log Hours</button></div>`;
+          actionsHtml = `<div class="flog-card-actions">
+              <button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${l._bookingId})">Log Hours</button>
+              ${missingHoursDeleteBtn(l._bookingId, false)}
+            </div>`;
         } else if (canEditFlog && !l._pendingBooking) {
           actionsHtml = `<div class="flog-card-actions">
               <button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 8px" onclick="openEditFlogModal(${l.id})">✏ Edit</button>
@@ -15646,8 +15678,8 @@ async function loadMissingHours() {
       const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
       const actionBtn = canComplete
-        ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button>`
-        : '';
+        ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button>${missingHoursDeleteBtn(b.id, true)}`
+        : missingHoursDeleteBtn(b.id, true);
       return `<tr id="missing-hours-row-${b.id}" style="background:rgba(239,68,68,0.06);border-left:3px solid var(--red)">
         <td>${bookingNumCell(b.id, true)}</td>
         <td style="white-space:nowrap">${dateStr}</td>
@@ -15666,8 +15698,11 @@ async function loadMissingHours() {
         const d = new Date(b.start_time);
         const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
         const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-        const actionBtn = canComplete
-          ? `<div class="mob-card-actions"><button class="btn btn-sm" style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button></div>`
+        const actionBtn = (canComplete || canRemoveMissingHoursBooking())
+          ? `<div class="mob-card-actions">
+              ${canComplete ? `<button class="btn btn-sm" style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button>` : ''}
+              ${missingHoursDeleteBtn(b.id, false)}
+            </div>`
           : '';
         return `<article class="mob-card" id="missing-hours-row-${b.id}" style="border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.06)">
           <div class="mob-card-hdr">
