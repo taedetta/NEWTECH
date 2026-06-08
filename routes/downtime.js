@@ -18,6 +18,19 @@ const {
 
 const router = express.Router();
 
+function normalizeDowntimeRow(row) {
+  if (!row) return row;
+  const st = timeToHHMM(row.start_time);
+  const et = timeToHHMM(row.end_time);
+  if (st && et) return { ...row, all_day: false, start_time: st, end_time: et };
+  if (row.all_day === false) return row;
+  return { ...row, all_day: isAllDayDowntime(row) };
+}
+
+function mapDowntimeRows(rows) {
+  return (rows || []).map(normalizeDowntimeRow);
+}
+
 function downtimeListQuery(aircraft_id) {
   const base = `
     SELECT d.*,
@@ -69,11 +82,11 @@ function validateDowntimePayload({ start_date, end_date, start_time, end_time, a
     return { error: 'end_date must be on or after start_date' };
   }
 
-  const allDay = all_day === true || all_day === 'true';
-  const st = allDay ? null : normalizeTimeInput(start_time);
-  const et = allDay ? null : normalizeTimeInput(end_time);
+  const st = normalizeTimeInput(start_time);
+  const et = normalizeTimeInput(end_time);
+  const effectiveAllDay = (all_day === true || all_day === 'true') && !st && !et;
 
-  if (!allDay) {
+  if (!effectiveAllDay) {
     if (!st || !et) {
       return { error: 'Start time and end time are required unless blocking entire day(s)' };
     }
@@ -95,9 +108,9 @@ function validateDowntimePayload({ start_date, end_date, start_time, end_time, a
   return {
     start_date: startDate,
     end_date: endDate,
-    start_time: st,
-    end_time: et,
-    all_day: allDay,
+    start_time: effectiveAllDay ? null : st,
+    end_time: effectiveAllDay ? null : et,
+    all_day: effectiveAllDay,
   };
 }
 
@@ -106,7 +119,7 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { aircraft_id } = req.query;
     const result = await queryDowntimeList(pool, aircraft_id);
-    res.json(result.rows);
+    res.json(mapDowntimeRows(result.rows));
   } catch (err) {
     console.error('Downtime list error:', err);
     res.status(500).json({ error: 'Failed to fetch downtime records' });
@@ -129,13 +142,13 @@ router.get('/check', authenticateToken, async (req, res) => {
     const rows = result.rows.filter((r) => downtimeTouchesDate(r, dateStr));
     if (!start_time || !end_time) {
       const hit = rows.find((r) => isAllDayDowntime(r)) || rows[0];
-      if (hit) return res.json({ unavailable: true, downtime: hit, label: formatDowntimeLabel(hit) });
+      if (hit) return res.json({ unavailable: true, downtime: normalizeDowntimeRow(hit), label: formatDowntimeLabel(hit) });
       return res.json({ unavailable: false });
     }
     const bookingStart = new Date(`${dateStr}T${timeToHHMM(start_time) || '00:00'}:00`);
     const bookingEnd = new Date(`${dateStr}T${timeToHHMM(end_time) || '23:59'}:00`);
     const hit = rows.find((r) => downtimeOverlapsBooking(r, bookingStart, bookingEnd));
-    if (hit) return res.json({ unavailable: true, downtime: hit, label: formatDowntimeLabel(hit) });
+    if (hit) return res.json({ unavailable: true, downtime: normalizeDowntimeRow(hit), label: formatDowntimeLabel(hit) });
     return res.json({ unavailable: false });
   } catch (err) {
     console.error('Downtime check error:', err);
@@ -156,7 +169,7 @@ router.get('/by-date', authenticateToken, async (req, res) => {
        ORDER BY d.aircraft_id, d.start_date`,
       [date]
     );
-    res.json(result.rows);
+    res.json(mapDowntimeRows(result.rows));
   } catch (err) {
     console.error('Downtime by-date error:', err);
     res.status(500).json({ error: 'Failed to fetch downtime by date' });
@@ -178,7 +191,7 @@ router.get('/range', authenticateToken, async (req, res) => {
        ORDER BY d.start_date, d.aircraft_id, d.start_time NULLS FIRST`,
       [start, end]
     );
-    res.json(result.rows);
+    res.json(mapDowntimeRows(result.rows));
   } catch (err) {
     console.error('Downtime range error:', err);
     res.status(500).json({ error: 'Failed to fetch downtime range' });
@@ -231,8 +244,16 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     }
 
     const overlapping_bookings = await findBookingsOverlappingDowntime(pool, parseInt(aircraft_id, 10), result.rows[0]);
+
+    // Timed/scheduled downtime — clear global maintenance flag so aircraft stays bookable outside the window
+    await pool.query(
+      `UPDATE aircraft SET status = 'available', maintenance_reason = NULL, updated_at = NOW()
+       WHERE id = $1 AND status = 'maintenance'`,
+      [parseInt(aircraft_id, 10)]
+    );
+
     res.status(201).json({
-      ...result.rows[0],
+      ...normalizeDowntimeRow(result.rows[0]),
       overlapping_bookings,
       preserved_bookings: overlapping_bookings.length,
     });

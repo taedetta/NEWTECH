@@ -5027,7 +5027,25 @@ function downtimeTouchesCalendarDay(d, year, month, day) {
   const dateStr = calendarDateStr(year, month, day);
   const start = downtimeDateLabel(d.start_date);
   const end = downtimeDateLabel(d.end_date);
-  return start && end && dateStr >= start && dateStr <= end;
+  if (!start || !end || dateStr < start || dateStr > end) return false;
+  return downtimeStillActiveOnDay(d, year, month, day);
+}
+
+function downtimeStillActiveOnDay(d, year, month, day, now = new Date()) {
+  const bounds = downtimeRowBounds(d);
+  if (!bounds) return false;
+  const dateStr = calendarDateStr(year, month, day);
+  const start = downtimeDateLabel(d.start_date);
+  const end = downtimeDateLabel(d.end_date);
+  const dayStart = new Date(`${dateStr}T00:00:00`);
+  const dayEnd = new Date(`${dateStr}T23:59:59`);
+  if (dayEnd <= now) return false;
+  if (dateStr === end && !isAllDayDowntimeRow(d)) {
+    const et = downtimeTimeLabel(d.end_time) || '23:59';
+    const windowEnd = new Date(`${dateStr}T${et}:00`);
+    if (windowEnd <= now) return false;
+  }
+  return bounds.end > now && bounds.start < dayEnd && bounds.end > dayStart;
 }
 
 function downtimeLabelOnDay(d, year, month, day) {
@@ -5116,6 +5134,8 @@ function renderScheduleMaintenanceNotice() {
   for (const d of scheduleDowntimeToday || []) {
     const ac = (allAircraft || []).find(a => a.id === d.aircraft_id);
     if (!ac || ac.status === 'maintenance') continue;
+    const now = new Date();
+    if (!downtimeStillActiveOnDay(d, now.getFullYear(), now.getMonth(), now.getDate())) continue;
     const label = formatDowntimeRowLabel(d);
     scheduledLines.push(`<div style="margin-top:0.2rem"><strong>${escHtml(ac.tail_number)}</strong> — ${escHtml(label)}${d.reason ? ` · ${escHtml(d.reason)}` : ''}</div>`);
   }
@@ -11402,22 +11422,21 @@ async function confirmDeleteAircraft() {
 // ─── AIRCRAFT DOWNTIME ──────────────────────────────────────────────────────
 function isAllDayDowntimeRow(d) {
   if (!d) return false;
+  if (downtimeTimeLabel(d.start_time) && downtimeTimeLabel(d.end_time)) return false;
   if (d.all_day === true) return true;
   if (d.all_day === false) return false;
   return !d.start_time && !d.end_time;
 }
 
 function downtimeDateLabel(v) {
-  if (!v) return '';
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    const y = v.getFullYear();
-    const m = String(v.getMonth() + 1).padStart(2, '0');
-    const d = String(v.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
+  if (v == null || v === '') return '';
   const s = String(v).trim();
   const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  return iso ? iso[1] : s.slice(0, 10);
+  if (iso) return iso[1];
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return v.toISOString().slice(0, 10);
+  }
+  return '';
 }
 
 function downtimeTimeLabel(t) {
@@ -12914,16 +12933,18 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
           errEl.classList.remove('hidden');
           return;
         }
+        // Same-day partial window: keep end date aligned with start date
+        const effectiveEndDate = (!all_day && start_date === end_date) ? start_date : end_date;
 
         const dtResult = await api('/api/downtime', {
           method: 'POST',
           body: JSON.stringify({
             aircraft_id: parseInt(id, 10),
             start_date,
-            end_date,
+            end_date: effectiveEndDate,
             start_time,
             end_time,
-            all_day,
+            all_day: !!all_day,
             reason: reason || 'Maintenance',
             create_squawk: !!reason,
           })

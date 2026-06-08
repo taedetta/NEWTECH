@@ -95,6 +95,8 @@ async function ensureSchemaPatches(pool) {
       ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS end_time TIME;
       ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS all_day BOOLEAN DEFAULT TRUE;
       UPDATE aircraft_downtime SET all_day = TRUE WHERE all_day IS NULL;
+      UPDATE aircraft_downtime SET all_day = FALSE
+        WHERE start_time IS NOT NULL AND end_time IS NOT NULL AND all_day = TRUE;
       ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS maintenance_reason TEXT;
     `);
   } catch (err) {
