@@ -1878,6 +1878,7 @@
             <span class="schedule-filter-label">Show aircraft</span>
             <div id="schedule-aircraft-filter" class="schedule-ac-chips"></div>
           </div>
+          <div id="schedule-maint-notice" class="hidden" style="margin-bottom:0.75rem;padding:0.65rem 0.85rem;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:8px;font-size:0.82rem;color:var(--amber)"></div>
           <div class="schedule-calendar-wrap" aria-label="Monthly schedule calendar">
             <div class="calendar-grid" id="calendar-grid"></div>
           </div>
@@ -5020,10 +5021,30 @@ function renderScheduleAircraftFilter() {
   let html = `<button type="button" class="schedule-ac-chip${active === 'all' ? ' active' : ''}" onclick="setScheduleAircraftFilter('all')">All aircraft</button>`;
   html += aircraft.map(a => {
     const id = String(a.id);
-    const label = escHtml(a.tail_number) + (a.status && a.status !== 'available' ? ' ⚠' : '');
-    return `<button type="button" class="schedule-ac-chip${active === id ? ' active' : ''}" onclick="setScheduleAircraftFilter(${a.id})" title="${escHtml(a.make_model || '')}">${label}</button>`;
+    const st = aircraftStatusDisplay(a);
+    const label = escHtml(a.tail_number) + (st.down ? ' ⚠' : '');
+    const tip = st.down ? escHtml(st.reason) : escHtml(a.make_model || '');
+    return `<button type="button" class="schedule-ac-chip${active === id ? ' active' : ''}" onclick="setScheduleAircraftFilter(${a.id})" title="${tip}">${label}</button>`;
   }).join('');
   el.innerHTML = html;
+  renderScheduleMaintenanceNotice();
+}
+
+function renderScheduleMaintenanceNotice() {
+  const el = document.getElementById('schedule-maint-notice');
+  if (!el) return;
+  const down = (allAircraft || []).filter(a => aircraftStatusDisplay(a).down);
+  if (!down.length) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('hidden');
+  el.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem">Aircraft out of service</div>'
+    + down.map(a => {
+      const st = aircraftStatusDisplay(a);
+      return `<div style="margin-top:0.2rem"><strong>${escHtml(a.tail_number)}</strong> — ${escHtml(st.reason)}</div>`;
+    }).join('');
 }
 
 function setScheduleAircraftFilter(id) {
@@ -9496,6 +9517,11 @@ function openDayDetail(year, month, day) {
       const viewOnlyTag = (!isOwnBooking && ['student', 'renter', 'maintenance'].includes(currentUser.role))
         ? '<span class="tag" style="background:rgba(148,163,184,0.12);color:var(--gray-400);font-size:0.68rem">School booking — view only</span>' : '';
 
+      const ac = allAircraft.find(x => x.id === b.aircraft_id);
+      const acMaintNote = ac && ac.status === 'maintenance' && ac.maintenance_reason
+        ? `<div style="font-size:0.75rem;color:var(--amber);margin-top:0.2rem">&#9888; Aircraft down: ${escHtml(ac.maintenance_reason)}</div>`
+        : '';
+
       return `<div class="booking-card">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.25rem;">
           <div class="booking-time">${formatTime(start)} - ${formatTime(end)}</div>
@@ -9503,6 +9529,7 @@ function openDayDetail(year, month, day) {
         </div>
         <div class="booking-details">${peopleLine}</div>
         <div class="booking-aircraft">${b.tail_number} - ${b.make_model}</div>
+        ${acMaintNote}
         ${b.notes ? `<div style="font-size:0.8rem;color:var(--gray-500);margin-top:0.25rem">${escHtml(b.notes)}</div>` : ''}
         ${b.cancellation_reason ? `<div style="font-size:0.8rem;color:#F87171;margin-top:0.25rem">Reason: ${escHtml(b.cancellation_reason)}</div>` : ''}
         ${actionBtns}
@@ -10978,10 +11005,10 @@ async function loadFleet() {
 }
 
 function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
-  const statusClass = a.status === 'available' ? 'tag-green' : a.status === 'maintenance' ? 'tag-amber' : 'tag-red';
+  const st = aircraftStatusDisplay(a);
   return `<tr>
     <td style="font-family:'Space Grotesk';font-weight:600">${a.tail_number}</td>
-    <td>${a.make_model}</td>
+    <td>${a.make_model}${st.down ? `<div style="font-size:0.72rem;color:var(--red);margin-top:0.15rem">${escHtml(st.reason)}</div>` : ''}</td>
     <td>${a.type.replace('_', ' ')}</td>
     <td>${a.year || '-'}</td>
     <td>${a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) : '-'}</td>
@@ -10990,7 +11017,7 @@ function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
       ${canEditHours ? `<button class="btn btn-secondary btn-sm" style="margin-left:0.4rem;padding:2px 7px;font-size:0.7rem" onclick="openInspectionModalHoursOnly(${a.id}, '${escHtml(a.tail_number)}')">Edit</button>` : ''}
     </td>
     <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">${(() => { const t = aircraftMeterTach(a); return t != null ? t.toFixed(1) : '0.0'; })()}</td>
-    <td><span class="tag ${statusClass}">${a.status}</span></td>
+    <td><span class="tag ${st.tagClass}">${st.label}</span></td>
     <td style="white-space:nowrap">
       ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
       <button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}" title="Aircraft documents">Docs</button>
@@ -11004,16 +11031,17 @@ function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
 }
 
 function renderFleetCard(a, canEdit, canEditHours, canDelete) {
-  const statusClass = a.status === 'available' ? 'tag-green' : a.status === 'maintenance' ? 'tag-amber' : 'tag-red';
+  const st = aircraftStatusDisplay(a);
   const hobbs = (() => { const h = aircraftMeterHobbs(a); return h != null ? h.toFixed(1) : '0.0'; })();
   const tach = (() => { const t = aircraftMeterTach(a); return t != null ? t.toFixed(1) : '0.0'; })();
   const rate = a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) + '/hr' : '—';
   return `<article class="fleet-card">
     <div class="fleet-card-hdr">
       <span class="fleet-card-tail">${escHtml(a.tail_number)}</span>
-      <span class="tag ${statusClass}">${a.status}</span>
+      <span class="tag ${st.tagClass}">${st.label}</span>
     </div>
     <div class="fleet-card-model">${escHtml(a.make_model)} · ${escHtml(a.type.replace('_', ' '))}${a.year ? ' · ' + a.year : ''}</div>
+    ${st.down ? `<div style="font-size:0.78rem;color:var(--red);margin:0.35rem 0">${escHtml(st.reason)}</div>` : ''}
     <div class="fleet-card-stats">
       <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Rate</div><div class="fleet-card-stat-val">${rate}</div></div>
       <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Hobbs</div><div class="fleet-card-stat-val">${hobbs}</div></div>
@@ -11359,6 +11387,27 @@ function notifyPreservedBookings(result) {
 function refreshScheduleAfterFleetChange() {
   if (currentPage === 'schedule') loadCalendar();
   else if (currentPage === 'dashboard') loadDashboard();
+}
+
+function aircraftStatusDisplay(a) {
+  if (!a) return { down: false, label: 'Available', tagClass: 'tag-green', reason: null };
+  if (a.status === 'maintenance') {
+    return {
+      down: true,
+      label: 'Down for Maintenance',
+      tagClass: 'tag-amber',
+      reason: a.maintenance_reason || 'Out of service',
+    };
+  }
+  return { down: false, label: 'Available', tagClass: 'tag-green', reason: null };
+}
+
+function aircraftStatusReasonHtml(a, opts) {
+  opts = opts || {};
+  const s = aircraftStatusDisplay(a);
+  if (!s.down || !s.reason) return '';
+  const style = opts.small ? 'font-size:0.75rem' : 'font-size:0.82rem';
+  return `<div style="${style};color:var(--red);margin-top:0.2rem" title="Out of service">${escHtml(s.reason)}</div>`;
 }
 
 async function openDowntimeModal(aircraftId) {
@@ -12341,9 +12390,10 @@ async function loadMaintenanceFleet() {
   } catch {}
 
   el.innerHTML = allAircraft.map(a => {
-    const isDown = a.status === 'maintenance';
+    const st = aircraftStatusDisplay(a);
+    const isDown = st.down;
     const statusTag = isDown
-      ? `<span class="tag tag-red">&#128308; Down for Maint</span>`
+      ? `<span class="tag tag-red" title="${escHtml(st.reason)}">&#128308; Down for Maint</span>`
       : `<span class="tag tag-green">&#128994; Available</span>`;
 
     // Use total_tach_hours for inspection due calculations (100-hr, ADs) (synced with Fleet page)
@@ -12372,7 +12422,7 @@ async function loadMaintenanceFleet() {
       <div>
         <div class="ac-tail">${escHtml(a.tail_number)}</div>
         <div class="ac-model">${escHtml(a.make_model)}</div>
-        ${isDown && a.maintenance_reason ? `<div style="font-size:0.75rem;color:var(--red);margin-top:0.2rem">${escHtml(a.maintenance_reason)}</div>` : ''}
+        ${isDown ? `<div style="font-size:0.75rem;color:var(--red);margin-top:0.2rem">${escHtml(st.reason)}</div>` : ''}
       </div>
       ${statusTag}
       <div class="maint-stat">
@@ -12702,19 +12752,15 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
   try {
     if (status === 'maintenance') {
       const indefinite = document.getElementById('maint-indefinite').checked;
-      if (indefinite) {
-        const result = await api(`/api/aircraft/${id}/maintenance`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status, reason })
-        });
-        notifyPreservedBookings(result);
-        if (!result?.preserved_bookings) showToast('Aircraft marked down', 'success');
-      } else {
-        const start_date = document.getElementById('maint-start-date').value;
-        const end_date = document.getElementById('maint-end-date').value;
-        const all_day = document.getElementById('maint-all-day').checked;
-        const start_time = all_day ? null : document.getElementById('maint-start-time').value;
-        const end_time = all_day ? null : document.getElementById('maint-end-time').value;
+      const start_date = document.getElementById('maint-start-date').value;
+      const end_date = document.getElementById('maint-end-date').value;
+      const all_day = document.getElementById('maint-all-day').checked;
+      const start_time = all_day ? null : document.getElementById('maint-start-time').value;
+      const end_time = all_day ? null : document.getElementById('maint-end-time').value;
+
+      let fullReason = reason || 'Maintenance';
+
+      if (!indefinite) {
         if (!start_date || !end_date) {
           errEl.textContent = 'Select a start and end date for the out-of-service window';
           errEl.classList.remove('hidden');
@@ -12725,7 +12771,12 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
           errEl.classList.remove('hidden');
           return;
         }
-        const result = await api('/api/downtime', {
+        const scheduleLabel = formatDowntimeRowLabel({
+          start_date, end_date, start_time, end_time, all_day,
+        });
+        fullReason = reason ? `${reason} · ${scheduleLabel}` : scheduleLabel;
+
+        const dtResult = await api('/api/downtime', {
           method: 'POST',
           body: JSON.stringify({
             aircraft_id: parseInt(id, 10),
@@ -12734,13 +12785,21 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
             start_time,
             end_time,
             all_day,
-            reason,
+            reason: reason || 'Maintenance',
             create_squawk: !!reason,
           })
         });
-        notifyPreservedBookings(result);
-        if (!result?.preserved_bookings) showToast('Out-of-service window scheduled', 'success');
+        notifyPreservedBookings(dtResult);
+      } else {
+        fullReason = reason || 'Indefinite — out of service until marked available';
       }
+
+      const result = await api(`/api/aircraft/${id}/maintenance`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'maintenance', reason: fullReason })
+      });
+      notifyPreservedBookings(result);
+      showToast('Aircraft marked down', 'success');
     } else {
       await api(`/api/aircraft/${id}/maintenance`, {
         method: 'PATCH',
