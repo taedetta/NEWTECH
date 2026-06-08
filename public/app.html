@@ -5009,6 +5009,8 @@ function getScheduleFilteredBookings(bookings) {
   return (bookings || []).filter(b => b.aircraft_id === acId);
 }
 
+let scheduleDowntimeToday = [];
+
 function renderScheduleAircraftFilter() {
   const el = document.getElementById('schedule-aircraft-filter');
   if (!el) return;
@@ -5033,18 +5035,38 @@ function renderScheduleAircraftFilter() {
 function renderScheduleMaintenanceNotice() {
   const el = document.getElementById('schedule-maint-notice');
   if (!el) return;
-  const down = (allAircraft || []).filter(a => aircraftStatusDisplay(a).down);
-  if (!down.length) {
+  const downIndefinite = (allAircraft || []).filter(a => a.status === 'maintenance');
+  const scheduledLines = [];
+  for (const d of scheduleDowntimeToday || []) {
+    const ac = (allAircraft || []).find(a => a.id === d.aircraft_id);
+    if (!ac || ac.status === 'maintenance') continue;
+    const label = formatDowntimeRowLabel(d);
+    scheduledLines.push(`<div style="margin-top:0.2rem"><strong>${escHtml(ac.tail_number)}</strong> — ${escHtml(label)}${d.reason ? ` · ${escHtml(d.reason)}` : ''}</div>`);
+  }
+  if (!downIndefinite.length && !scheduledLines.length) {
     el.classList.add('hidden');
     el.innerHTML = '';
     return;
   }
   el.classList.remove('hidden');
-  el.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem">Aircraft out of service</div>'
-    + down.map(a => {
-      const st = aircraftStatusDisplay(a);
-      return `<div style="margin-top:0.2rem"><strong>${escHtml(a.tail_number)}</strong> — ${escHtml(st.reason)}</div>`;
-    }).join('');
+  let html = '<div style="font-weight:600;margin-bottom:0.35rem">Aircraft out of service</div>';
+  html += downIndefinite.map(a => {
+    const st = aircraftStatusDisplay(a);
+    return `<div style="margin-top:0.2rem"><strong>${escHtml(a.tail_number)}</strong> — ${escHtml(st.reason)} (indefinite)</div>`;
+  }).join('');
+  html += scheduledLines.join('');
+  el.innerHTML = html;
+}
+
+async function loadScheduleDowntimeNotice() {
+  try {
+    const today = new Date().toLocaleDateString('en-CA');
+    const data = await api(`/api/downtime/by-date?date=${today}`);
+    scheduleDowntimeToday = Array.isArray(data) ? data : [];
+  } catch {
+    scheduleDowntimeToday = [];
+  }
+  renderScheduleMaintenanceNotice();
 }
 
 function setScheduleAircraftFilter(id) {
@@ -9382,6 +9404,7 @@ function loadCalendar() {
   const month = calendarDate.getMonth();
   updateCalendarTitle();
   renderScheduleAircraftFilter();
+  loadScheduleDowntimeNotice();
 
   const firstDay = new Date(year, month, 1);
   const startOffset = firstDay.getDay();
@@ -11405,9 +11428,12 @@ function notifyPreservedBookings(result) {
   }
 }
 
-function refreshScheduleAfterFleetChange() {
-  if (currentPage === 'schedule') loadCalendar();
-  else if (currentPage === 'dashboard') loadDashboard();
+async function refreshScheduleAfterFleetChange() {
+  if (currentPage === 'schedule') {
+    loadCalendar();
+  } else if (currentPage === 'dashboard') {
+    loadDashboard();
+  }
 }
 
 function aircraftStatusDisplay(a) {
@@ -12800,10 +12826,6 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
           errEl.classList.remove('hidden');
           return;
         }
-        const scheduleLabel = formatDowntimeRowLabel({
-          start_date, end_date, start_time, end_time, all_day,
-        });
-        fullReason = reason ? `${reason} · ${scheduleLabel}` : scheduleLabel;
 
         const dtResult = await api('/api/downtime', {
           method: 'POST',
@@ -12819,16 +12841,22 @@ document.getElementById('maint-status-form').addEventListener('submit', async (e
           })
         });
         notifyPreservedBookings(dtResult);
+
+        // Scheduled window only — keep aircraft bookable outside the blocked period
+        await api(`/api/aircraft/${id}/maintenance`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'available', reason: null })
+        });
+        showToast('Maintenance window scheduled — aircraft stays bookable outside this period', 'success');
       } else {
         fullReason = reason || 'Indefinite — out of service until marked available';
+        const result = await api(`/api/aircraft/${id}/maintenance`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'maintenance', reason: fullReason })
+        });
+        notifyPreservedBookings(result);
+        showToast('Aircraft marked down', 'success');
       }
-
-      const result = await api(`/api/aircraft/${id}/maintenance`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'maintenance', reason: fullReason })
-      });
-      notifyPreservedBookings(result);
-      showToast('Aircraft marked down', 'success');
     } else {
       await api(`/api/aircraft/${id}/maintenance`, {
         method: 'PATCH',

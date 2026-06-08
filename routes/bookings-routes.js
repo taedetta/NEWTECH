@@ -586,6 +586,9 @@ async function createBookingInternal(client, req) {
   const grounding = await checkGroundingSquawk(client, aircraft_id);
   if (grounding.blocked) return { error: `Aircraft grounded: ${grounding.reason}` };
 
+  const downtimeHit = await findOverlappingDowntime(client, aircraft_id, start_time, end_time);
+  if (downtimeHit) return { error: 'Aircraft is scheduled for maintenance during this period' };
+
   let booking_type = 'dual';
   if (sid && !iid) {
     const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
