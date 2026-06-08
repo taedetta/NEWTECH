@@ -4307,7 +4307,7 @@
       <div class="form-group" style="margin-bottom:0.75rem">
         <label style="font-size:0.82rem;color:var(--gray-400);margin-bottom:0.25rem;display:block">Aircraft</label>
         <select id="downtime-aircraft" onchange="loadDowntimeEntries()">
-          ${allAircraft.map(a => `<option value="${a.id}">${escHtml(a.tail_number)} - ${escHtml(a.make_model)}</option>`).join('')}
+          <option value="">Select aircraft…</option>
         </select>
       </div>
 
@@ -11296,15 +11296,36 @@ function isAllDayDowntimeRow(d) {
   return !d.start_time && !d.end_time;
 }
 
+function downtimeDateLabel(v) {
+  if (!v) return '';
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return iso ? iso[1] : s.slice(0, 10);
+}
+
 function downtimeTimeLabel(t) {
   if (!t) return null;
-  return String(t).slice(0, 5);
+  if (t instanceof Date && !Number.isNaN(t.getTime())) {
+    const h = String(t.getHours()).padStart(2, '0');
+    const m = String(t.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  }
+  const s = String(t).trim();
+  const match = s.match(/^(\d{1,2}):(\d{2})/);
+  if (match) return `${match[1].padStart(2, '0')}:${match[2]}`;
+  return s.slice(0, 5);
 }
 
 function formatDowntimeRowLabel(d) {
   if (!d) return '';
-  const start = String(d.start_date).slice(0, 10);
-  const end = String(d.end_date).slice(0, 10);
+  const start = downtimeDateLabel(d.start_date);
+  const end = downtimeDateLabel(d.end_date);
   if (isAllDayDowntimeRow(d)) {
     return start === end ? `${start} (all day)` : `${start} → ${end} (all day)`;
   }
@@ -11315,8 +11336,8 @@ function formatDowntimeRowLabel(d) {
 }
 
 function downtimeRowBounds(d) {
-  const start = String(d.start_date).slice(0, 10);
-  const end = String(d.end_date).slice(0, 10);
+  const start = downtimeDateLabel(d.start_date);
+  const end = downtimeDateLabel(d.end_date);
   const allDay = isAllDayDowntimeRow(d);
   const st = allDay ? '00:00' : (downtimeTimeLabel(d.start_time) || '00:00');
   const et = allDay ? '23:59' : (downtimeTimeLabel(d.end_time) || '23:59');
@@ -11440,16 +11461,24 @@ function closeDowntimeModal() {
 async function loadDowntimeEntries() {
   const aircraftId = document.getElementById('downtime-aircraft').value;
   const el = document.getElementById('downtime-entries');
+  if (!aircraftId) {
+    el.innerHTML = '<div style="color:var(--gray-500);font-size:0.82rem;text-align:center;padding:0.75rem">Select an aircraft</div>';
+    return;
+  }
   try {
     const data = await api(`/api/downtime?aircraft_id=${aircraftId}`);
-    if (!data || data.length === 0) {
+    if (!Array.isArray(data)) {
+      throw new Error(data?.error || 'Unexpected response from server');
+    }
+    if (data.length === 0) {
       el.innerHTML = '<div style="color:var(--gray-500);font-size:0.82rem;text-align:center;padding:0.75rem">No scheduled downtime</div>';
       return;
     }
     const today = new Date().toISOString().slice(0, 10);
     const canManageDowntime = currentUser && (['owner','admin','maintenance'].includes(currentUser.role) || currentUser.permissions?.can_manage_aircraft);
     el.innerHTML = data.map(d => {
-      const isPast = String(d.end_date).slice(0, 10) < today;
+      const endStr = downtimeDateLabel(d.end_date);
+      const isPast = endStr && endStr < today;
       const removeBtn = canManageDowntime
         ? `<button class="btn btn-sm" style="padding:2px 8px;font-size:0.7rem;background:rgba(239,68,68,0.15);color:#f87171;border:none" onclick="deleteDowntimeEntry(${d.id})">Remove</button>`
         : '';
@@ -11461,8 +11490,8 @@ async function loadDowntimeEntries() {
         ${removeBtn}
       </div>`;
     }).join('');
-  } catch {
-    el.innerHTML = '<div style="color:var(--gray-500);font-size:0.82rem;text-align:center;padding:0.75rem">Failed to load entries</div>';
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--red);font-size:0.82rem;text-align:center;padding:0.75rem">${escHtml(err.error || err.message || 'Failed to load entries')}</div>`;
   }
 }
 

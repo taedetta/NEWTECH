@@ -90,6 +90,17 @@ async function ensureDatabaseSchema(pool) {
 
 async function ensureSchemaPatches(pool) {
   try {
+    await pool.query(`
+      ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS start_time TIME;
+      ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS end_time TIME;
+      ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS all_day BOOLEAN DEFAULT TRUE;
+      UPDATE aircraft_downtime SET all_day = TRUE WHERE all_day IS NULL;
+      ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS maintenance_reason TEXT;
+    `);
+  } catch (err) {
+    console.error('[bootstrap] Downtime column patch error:', err.message);
+  }
+  try {
     const patchPath = path.join(__dirname, '..', 'scripts', 'schema-patches.sql');
     if (!fs.existsSync(patchPath)) return;
     await pool.query(fs.readFileSync(patchPath, 'utf8'));

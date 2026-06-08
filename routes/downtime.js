@@ -7,6 +7,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const {
+  normalizeDateInput,
   timeToHHMM,
   isAllDayDowntime,
   downtimeOverlapsBooking,
@@ -17,9 +18,38 @@ const {
 
 const router = express.Router();
 
-function normalizeDateInput(v) {
-  if (!v) return null;
-  return String(v).slice(0, 10);
+function downtimeListQuery(aircraft_id) {
+  const base = `
+    SELECT d.*,
+      a.tail_number, a.make_model,
+      u.name as created_by_name
+    FROM aircraft_downtime d
+    JOIN aircraft a ON d.aircraft_id = a.id
+    LEFT JOIN users u ON d.created_by = u.id
+  `;
+  const params = [];
+  let where = '';
+  if (aircraft_id) {
+    where = ' WHERE d.aircraft_id = $1';
+    params.push(parseInt(aircraft_id, 10));
+  }
+  return { base, where, params };
+}
+
+async function queryDowntimeList(pool, aircraft_id) {
+  const { base, where, params } = downtimeListQuery(aircraft_id);
+  try {
+    return await pool.query(
+      `${base}${where} ORDER BY d.start_date DESC, d.start_time DESC NULLS LAST, d.created_at DESC`,
+      params
+    );
+  } catch (err) {
+    if (!/start_time|end_time|all_day/i.test(err.message)) throw err;
+    return pool.query(
+      `${base}${where} ORDER BY d.start_date DESC, d.created_at DESC`,
+      params
+    );
+  }
 }
 
 function normalizeTimeInput(v) {
@@ -75,21 +105,7 @@ function validateDowntimePayload({ start_date, end_date, start_time, end_time, a
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { aircraft_id } = req.query;
-    let query = `
-      SELECT d.*,
-        a.tail_number, a.make_model,
-        u.name as created_by_name
-      FROM aircraft_downtime d
-      JOIN aircraft a ON d.aircraft_id = a.id
-      LEFT JOIN users u ON d.created_by = u.id
-    `;
-    const params = [];
-    if (aircraft_id) {
-      query += ' WHERE d.aircraft_id = $1';
-      params.push(parseInt(aircraft_id, 10));
-    }
-    query += ' ORDER BY d.start_date DESC, d.start_time DESC NULLS LAST, d.created_at DESC';
-    const result = await pool.query(query, params);
+    const result = await queryDowntimeList(pool, aircraft_id);
     res.json(result.rows);
   } catch (err) {
     console.error('Downtime list error:', err);
