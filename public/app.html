@@ -5018,6 +5018,59 @@ function getScheduleFilteredBookings(bookings) {
 
 let scheduleDowntimeToday = [];
 let scheduleDowntimeRange = [];
+let fleetDowntimeCache = [];
+let downtimeStatusTimer = null;
+
+function isDowntimeActiveNow(d, now = new Date()) {
+  const bounds = downtimeRowBounds(d);
+  if (!bounds) return false;
+  return now >= bounds.start && now < bounds.end;
+}
+
+function activeDowntimeForAircraft(aircraftId, now = new Date()) {
+  return (fleetDowntimeCache || []).find(
+    (d) => d.aircraft_id === aircraftId && isDowntimeActiveNow(d, now)
+  );
+}
+
+async function loadFleetDowntimeCache() {
+  const start = new Date();
+  start.setDate(start.getDate() - 1);
+  const end = new Date();
+  end.setDate(end.getDate() + 120);
+  const startStr = start.toLocaleDateString('en-CA');
+  const endStr = end.toLocaleDateString('en-CA');
+  try {
+    fleetDowntimeCache = await api(`/api/downtime/range?start=${startStr}&end=${endStr}`);
+    if (!Array.isArray(fleetDowntimeCache)) fleetDowntimeCache = [];
+  } catch {
+    fleetDowntimeCache = [];
+  }
+  scheduleDowntimeStatusRefresh();
+}
+
+function scheduleDowntimeStatusRefresh() {
+  if (downtimeStatusTimer) clearTimeout(downtimeStatusTimer);
+  const now = Date.now();
+  let nextMs = 60000;
+  for (const d of fleetDowntimeCache || []) {
+    const bounds = downtimeRowBounds(d);
+    if (!bounds) continue;
+    if (bounds.end > now) nextMs = Math.min(nextMs, bounds.end - now + 1000);
+    if (bounds.start > now) nextMs = Math.min(nextMs, bounds.start - now + 1000);
+  }
+  downtimeStatusTimer = setTimeout(async () => {
+    await loadFleetDowntimeCache();
+    if (currentPage === 'fleet') loadFleet();
+    else if (currentPage === 'maintenance') loadMaintenanceFleet();
+    else if (currentPage === 'dashboard') loadDashboard();
+    else if (currentPage === 'schedule') loadCalendar();
+  }, Math.max(5000, nextMs));
+}
+
+function isAircraftCurrentlyDown(a) {
+  return aircraftStatusDisplay(a).down;
+}
 
 function calendarDateStr(year, month, day) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -8370,6 +8423,7 @@ async function loadUsers() {
 
 async function loadAircraft() {
   try { allAircraft = await api('/api/aircraft'); } catch { allAircraft = []; }
+  await loadFleetDowntimeCache();
 }
 
 async function loadBookings(start, end) {
@@ -8975,7 +9029,7 @@ async function loadDashboard() {
 
   const instructorCount = allUsers.filter(isInstructorUser).length;
   const studentCount = allUsers.filter(u => u.role === 'student').length;
-  const availableAircraft = allAircraft.filter(a => a.status === 'available').length;
+  const availableAircraft = allAircraft.filter(a => !isAircraftCurrentlyDown(a)).length;
 
   const hobbsHrs = parseFloat(currentUser.total_hobbs_hours || 0).toFixed(1);
   const tachHrs = parseFloat(currentUser.total_tach_hours || 0).toFixed(1);
@@ -11549,8 +11603,18 @@ function aircraftStatusDisplay(a) {
     return {
       down: true,
       label: 'Down for Maintenance',
-      tagClass: 'tag-amber',
+      tagClass: 'tag-red',
       reason: a.maintenance_reason || 'Out of service',
+    };
+  }
+  const active = activeDowntimeForAircraft(a.id);
+  if (active) {
+    const windowLabel = formatDowntimeRowLabel(active);
+    return {
+      down: true,
+      label: 'Down for Maintenance',
+      tagClass: 'tag-red',
+      reason: active.reason ? `${active.reason} · ${windowLabel}` : windowLabel,
     };
   }
   return { down: false, label: 'Available', tagClass: 'tag-green', reason: null };
@@ -13156,7 +13220,7 @@ async function loadInspections() {
       <div class="aircraft-insp-header" onclick="toggleInspCard(${a.id})">
         <span style="font-family:'Space Grotesk';font-weight:700;font-size:1.05rem">${escHtml(a.tail_number)}</span>
         <span style="color:var(--gray-300);font-size:0.85rem">${escHtml(a.make_model)}</span>
-        <span class="tag ${a.status === 'maintenance' ? 'tag-red' : 'tag-green'}" style="margin-left:0.5rem">${a.status}</span>
+        <span class="tag ${aircraftStatusDisplay(a).tagClass}" style="margin-left:0.5rem">${escHtml(aircraftStatusDisplay(a).label)}</span>
         <span style="margin-left:auto;color:var(--gray-500);font-size:0.8rem">▼</span>
       </div>
       <div class="aircraft-insp-body ${expandedInspections[a.id] ? 'open' : ''}" id="insp-body-${a.id}">
