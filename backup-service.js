@@ -27,11 +27,9 @@ const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
-// ── Timezone helpers (Central Time) ────────────────────────────────────────
-// formatDateCT / formatDateTimeCT from lib/timezone-ct.js
-
+// School timezone (Eastern — Dublin, VA)
 function toCentral(date) {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  return new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
 }
 
 function isoDate(date) {
@@ -61,7 +59,7 @@ function getDateRange(frequency) {
   } else if (frequency === 'monthly') {
     const firstOfThisMonth = new Date(ct.getFullYear(), ct.getMonth(), 1);
     const lastOfPriorMonth = new Date(firstOfThisMonth - 1);
-    const monthName = lastOfPriorMonth.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'America/Chicago' });
+    const monthName = lastOfPriorMonth.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'America/New_York' });
     label = monthName.replace(' ', '_');
   } else if (frequency === 'yearly') {
     label = String(ct.getFullYear() - 1);
@@ -191,7 +189,7 @@ function drawPageHeader(doc, title, generatedAt, totalRecords) {
   // Generated date + record count — top right
   const metaX = pageWidth - 54 - 155;
   doc.fillColor(COLORS.darkGray).font('Helvetica').fontSize(8)
-    .text(`Generated: ${generatedAt} CT`, metaX, 102, { width: 155, align: 'right' });
+    .text(`Generated: ${generatedAt} ET`, metaX, 102, { width: 155, align: 'right' });
   doc.fillColor(COLORS.medGray).font('Helvetica').fontSize(8)
     .text(`Total records: ${totalRecords}`, metaX, 114, { width: 155, align: 'right' });
 
@@ -1003,7 +1001,7 @@ async function uploadPdfToR2(pdfBuffer, filename) {
 async function sendBackupEmail(frequency, label, downloadLinks, recordCounts, zipAttachment) {
   const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
   const subject = `New Tech Aviation — ${freqLabel} Data Backup — ${label}`;
-  const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
+  const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
 
   const bodyHtml = buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
   const bodyText = buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
@@ -1064,7 +1062,7 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
           <td style="padding:32px;">
             <h2 style="margin:0 0 8px;color:#0F1D2F;font-size:22px;">${freqLabel} Data Backup</h2>
             <p style="margin:0 0 6px;color:#6B7280;font-size:13px;">Backup ID: <strong>${label}</strong></p>
-            <p style="margin:0 0 24px;color:#6B7280;font-size:13px;">Generated: <strong>${generatedAt} CT</strong></p>
+            <p style="margin:0 0 24px;color:#6B7280;font-size:13px;">Generated: <strong>${generatedAt} ET</strong></p>
             <p style="color:#374151;font-size:15px;margin:0 0 20px;">
               Your ${freqLabel.toLowerCase()} backup reports are ready. Each PDF contains <strong>complete historical data</strong> — not just recent activity.
             </p>
@@ -1096,7 +1094,7 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
           <td style="background:#0F1D2F;padding:20px 32px;">
             <p style="margin:0;color:#9CA3AF;font-size:12px;">
               New Tech Aviation · 179 Airport Circle, Dublin, VA 24084 · KPSK<br>
-              Automated backup generated ${generatedAt} CT
+              Automated backup generated ${generatedAt} ET
             </p>
           </td>
         </tr>
@@ -1115,7 +1113,7 @@ function buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downl
   }).join('\n');
   const rcLines = recordCounts.map(rc => `  - ${rc.name}: ${rc.count} records`).join('\n');
   return `New Tech Aviation — ${freqLabel} Data Backup (${label})
-Generated: ${generatedAt} CT
+Generated: ${generatedAt} ET
 ${zipAttachment ? `\nAttachment: ${zipAttachment.name} (all 6 PDF reports)\n` : ''}
 Full history backup — ALL records from the database.
 
@@ -1138,7 +1136,7 @@ async function runBackup(pool, frequency) {
   try {
     const { label } = getDateRange(frequency);
     const generatedAt = new Date().toLocaleString('en-US', {
-      timeZone: 'America/Chicago',
+      timeZone: 'America/New_York',
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', hour12: true,
     });
@@ -1205,7 +1203,7 @@ async function runBackup(pool, frequency) {
       'New Tech Aviation — PDF Data Backup',
       `Frequency: ${frequency}`,
       `Label: ${label}`,
-      `Generated: ${generatedAt} CT`,
+      `Generated: ${generatedAt} ET`,
       '',
       'Each folder contains one PDF report with complete historical data.',
       '',
@@ -1238,7 +1236,7 @@ function startBackupScheduler(pool) {
     return;
   }
 
-  console.log('[backup] Scheduler started. Daily 2:00 CT · Weekly Sun 3:00 CT · Monthly 1st 3:30 CT · Yearly Jan 1 4:00 CT');
+  console.log('[backup] Scheduler started. Daily 2:00 ET · Weekly Sun 3:00 ET · Monthly 1st 3:30 ET · Yearly Jan 1 4:00 ET');
 
   const lastRun = { daily: null, weekly: null, monthly: null, yearly: null };
 
@@ -1270,7 +1268,7 @@ function startBackupScheduler(pool) {
     }
   }, 60 * 1000);
 
-  // Start nightly CSV export at 11 PM CT (separate from PDF backup)
+  // Start nightly CSV export at 11 PM ET (separate from PDF backup)
   startExportScheduler(pool);
 }
 

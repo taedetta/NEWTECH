@@ -16,7 +16,7 @@ const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
 // migrateDataUriImagesToR2 is provided inline below
 
 function toCentral(date) {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  return new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
 }
 
 function isoDate(date) {
