@@ -132,6 +132,44 @@ async function ensureUserIdSequence(pool) {
   }
 }
 
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+async function ensureSerialSequences(pool) {
+  try {
+    const result = await pool.query(`
+      SELECT
+        table_name,
+        column_name,
+        COALESCE(
+          pg_get_serial_sequence(format('%I.%I', table_schema, table_name), column_name),
+          (regexp_match(column_default, 'nextval\\(''([^'']+)''::regclass\\)'))[1]
+        ) AS sequence_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND column_default LIKE 'nextval(%'
+      ORDER BY table_name, column_name
+    `);
+
+    for (const row of result.rows) {
+      if (!row.sequence_name) continue;
+      const tableName = quoteIdent(row.table_name);
+      const columnName = quoteIdent(row.column_name);
+      await pool.query(
+        `SELECT setval(
+          $1::regclass,
+          GREATEST(COALESCE((SELECT MAX(${columnName})::bigint FROM ${tableName}), 1), 1),
+          COALESCE((SELECT MAX(${columnName}) FROM ${tableName}), 0) > 0
+        )`,
+        [row.sequence_name]
+      );
+    }
+  } catch (err) {
+    console.error('[bootstrap] serial sequence sync error:', err.message);
+  }
+}
+
 async function ensureDefaultAdminAccount(pool) {
   const email = getPlatformAdminEmail();
   try {
@@ -291,6 +329,7 @@ async function runStartup({ pool }) {
     await ensureDatabaseSchema(pool);
     await ensureSchemaPatches(pool);
     await ensureUserIdSequence(pool);
+    await ensureSerialSequences(pool);
     await ensureDefaultAdminAccount(pool);
     await syncAllAircraftMeterFields(pool);
   } catch (err) {
