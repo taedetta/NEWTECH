@@ -21,34 +21,17 @@ const { sanitizeUploadUrl } = require('./lib/upload-url');
 const { prod, assertProductionExport } = require('./lib/production-query');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
+const { formatDateCT, formatDateTimeCT } = require('./lib/timezone-ct');
 
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
 // ── Timezone helpers (Central Time) ────────────────────────────────────────
+// formatDateCT / formatDateTimeCT from lib/timezone-ct.js
 
 function toCentral(date) {
   return new Date(date.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-}
-
-function formatDateCT(dateVal) {
-  // Returns MM/DD/YYYY from a date string or Date object
-  if (!dateVal) return '—';
-  const d = new Date(dateVal);
-  if (isNaN(d.getTime())) return '—';
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const year = d.getUTCFullYear();
-  return `${month}/${day}/${year}`;
-}
-
-function formatDateTimeCT(date) {
-  return new Date(date).toLocaleString('en-US', {
-    timeZone: 'America/Chicago',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
 }
 
 function isoDate(date) {
@@ -146,13 +129,40 @@ const COLORS = {
 
 // ── PDF document factory ────────────────────────────────────────────────────
 
-function createPdfDoc() {
+function createPdfDoc(options = {}) {
   return new PDFDocument({
     size: 'LETTER',
+    layout: options.landscape ? 'landscape' : 'portrait',
     margins: { top: 72, bottom: 72, left: 54, right: 54 },
     bufferPages: true,
     info: { Author: 'New Tech Aviation', Creator: 'FlightSlate Backup System' },
   });
+}
+
+function contentWidth(doc, lm, rightEdge) {
+  return rightEdge - lm;
+}
+
+/** Scale column widths so the table fits inside printable area. */
+function fitColWidths(colWidths, maxWidth) {
+  const sum = colWidths.reduce((a, b) => a + b, 0);
+  if (sum <= maxWidth) return colWidths.slice();
+  const minCol = 24;
+  let scaled = colWidths.map((w) => Math.max(minCol, Math.floor((w / sum) * maxWidth)));
+  let used = scaled.reduce((a, b) => a + b, 0);
+  let i = 0;
+  while (used < maxWidth && i < 500) {
+    scaled[i % scaled.length]++;
+    used++;
+    i++;
+  }
+  while (used > maxWidth) {
+    const idx = scaled.findIndex((w) => w > minCol);
+    if (idx < 0) break;
+    scaled[idx]--;
+    used--;
+  }
+  return scaled;
 }
 
 // ── Page header ─────────────────────────────────────────────────────────────
@@ -246,8 +256,23 @@ function drawSummaryBox(doc, lines, lm, rightEdge) {
 const ROW_H = 17;
 const HDR_H = 20;
 
-function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments) {
-  const rowH = isHeader ? HDR_H : ROW_H;
+function measureCellHeight(doc, text, width, font, fontSize) {
+  doc.font(font).fontSize(fontSize);
+  return doc.heightOfString(String(text ?? '—'), { width: Math.max(10, width - 6) });
+}
+
+function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments, wrapMask) {
+  const fontSize = isHeader ? 7.5 : 7;
+  const font = isHeader ? 'Helvetica-Bold' : 'Helvetica';
+  let rowH = isHeader ? HDR_H : ROW_H;
+  if (wrapMask) {
+    for (let i = 0; i < cols.length; i++) {
+      if (wrapMask[i]) {
+        rowH = Math.max(rowH, measureCellHeight(doc, cols[i], colWidths[i], font, fontSize) + 8);
+      }
+    }
+  }
+
   const bgColor = isHeader ? COLORS.navy : (isAlt ? COLORS.rowAlt : COLORS.white);
   const textColor = isHeader ? COLORS.white : COLORS.darkGray;
 
@@ -255,13 +280,14 @@ function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments) 
   for (let i = 0; i < cols.length; i++) {
     doc.rect(x, y, colWidths[i], rowH).fill(bgColor);
     const align = alignments && alignments[i] ? alignments[i] : 'left';
+    const wrap = wrapMask && wrapMask[i];
     doc.fillColor(textColor)
-      .font(isHeader ? 'Helvetica-Bold' : 'Helvetica')
-      .fontSize(isHeader ? 7.5 : 7)
-      .text(String(cols[i] ?? '—'), x + 3, y + (isHeader ? 6 : 5), {
+      .font(font)
+      .fontSize(fontSize)
+      .text(String(cols[i] ?? '—'), x + 3, y + (isHeader ? 6 : 4), {
         width: colWidths[i] - 6,
-        ellipsis: true,
-        lineBreak: false,
+        ellipsis: !wrap,
+        lineBreak: !!wrap,
         align,
       });
     x += colWidths[i];
@@ -273,9 +299,10 @@ function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments) 
  * Draw a full table, paginating as needed.
  * pageInfo: { title, generatedAt, totalRecords, pageCounter, lm, rightEdge }
  */
-function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryRows) {
+function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryRows, wrapMask) {
   const { title, generatedAt, totalRecords, pageCounter, lm, rightEdge } = pageInfo;
   const pageBottomLimit = doc.page.height - 60;
+  const widths = fitColWidths(colWidths, contentWidth(doc, lm, rightEdge));
 
   let y = doc.y;
 
@@ -286,24 +313,28 @@ function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryR
     drawPageHeader(doc, title, generatedAt, totalRecords);
     y = doc.y;
   }
-  y = drawTableRow(doc, headers, colWidths, y, true, false, lm, alignments);
+  y = drawTableRow(doc, headers, widths, y, true, false, lm, alignments, null);
 
   // Draw data rows
   for (let i = 0; i < rows.length; i++) {
-    if (y + ROW_H > pageBottomLimit) {
+    const estH = wrapMask
+      ? Math.max(ROW_H, ...rows[i].map((cell, ci) => (wrapMask[ci]
+        ? measureCellHeight(doc, cell, widths[ci], 'Helvetica', 7) + 8 : ROW_H)))
+      : ROW_H;
+    if (y + estH > pageBottomLimit) {
       pageCounter.count++;
       doc.addPage();
       drawPageHeader(doc, title, generatedAt, totalRecords);
       y = doc.y;
-      y = drawTableRow(doc, headers, colWidths, y, true, false, lm, alignments);
+      y = drawTableRow(doc, headers, widths, y, true, false, lm, alignments, null);
     }
-    y = drawTableRow(doc, rows[i], colWidths, y, false, i % 2 === 1, lm, alignments);
+    y = drawTableRow(doc, rows[i], widths, y, false, i % 2 === 1, lm, alignments, wrapMask);
   }
 
   // Empty state
   if (rows.length === 0) {
-    const emptyRow = headers.map((_, i) => i === 0 ? 'No records found' : '');
-    y = drawTableRow(doc, emptyRow, colWidths, y, false, false, lm, null);
+    const emptyRow = headers.map((_, idx) => (idx === 0 ? 'No records found' : ''));
+    y = drawTableRow(doc, emptyRow, widths, y, false, false, lm, null, null);
   }
 
   // Summary footer row
@@ -315,19 +346,18 @@ function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryR
         drawPageHeader(doc, title, generatedAt, totalRecords);
         y = doc.y;
       }
-      // Bold summary row with light navy bg
       const rowH = HDR_H;
       let x = lm;
       for (let i = 0; i < sr.length; i++) {
-        doc.rect(x, y, colWidths[i], rowH).fill(COLORS.lightGray);
+        doc.rect(x, y, widths[i], rowH).fill(COLORS.lightGray);
         doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(7.5)
           .text(String(sr[i] ?? ''), x + 3, y + 6, {
-            width: colWidths[i] - 6,
+            width: widths[i] - 6,
             ellipsis: true,
             lineBreak: false,
             align: alignments && alignments[i] ? alignments[i] : 'left',
           });
-        x += colWidths[i];
+        x += widths[i];
       }
       y += rowH;
     }
@@ -371,7 +401,7 @@ function addFootersAndFinalize(doc, title, generatedAt, totalRecords, pageCounte
 // ── PDF builders ─────────────────────────────────────────────────────────────
 
 async function buildBillingPdf(pool, generatedAt) {
-  const doc = createPdfDoc();
+  const doc = createPdfDoc({ landscape: true });
   const lm = 54;
   const rightEdge = doc.page.width - 54;
   const pageCounter = { count: 1 };
@@ -604,7 +634,7 @@ async function buildInstructorHoursPdf(pool, generatedAt) {
 }
 
 async function buildFlightLogsPdf(pool, generatedAt) {
-  const doc = createPdfDoc();
+  const doc = createPdfDoc({ landscape: true });
   const lm = 54;
   const rightEdge = doc.page.width - 54;
   const pageCounter = { count: 1 };
@@ -809,10 +839,7 @@ async function buildEndorsementsPdf(pool, generatedAt) {
         r.student_signed_flag ? 'Yes' : 'No',
       ];
     });
-    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null);
-  }
-
-  return addFootersAndFinalize(doc, 'Endorsements Report', generatedAt, totalRecords, pageCounter);
+    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null, [false, false, false, false, true, true, false, false, false, false]);
 }
 
 async function buildStudentDirectoryPdf(pool, generatedAt) {
@@ -954,7 +981,7 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
       r.expected_downtime || '—',
       r.updated_at ? formatDateCT(r.updated_at) : '—',
     ]);
-    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null);
+    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null, [false, false, false, true, false, false, true, false, false]);
   }
 
   return addFootersAndFinalize(doc, 'Maintenance Logs Report', generatedAt, totalRecords, pageCounter);
