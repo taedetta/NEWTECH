@@ -4000,7 +4000,7 @@
         </div>
         <div class="form-group hidden" id="booking-end-date-group">
           <label>End Date</label>
-          <input type="date" id="booking-end-date" onchange="rebuildBookingTimePickers()">
+          <input type="date" id="booking-end-date" onchange="onBookingEndDateChange()">
         </div>
         <div id="booking-avail-notice" class="avail-notice hidden"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
@@ -5045,6 +5045,18 @@ let scheduleAircraftFilter = localStorage.getItem('fs_schedule_aircraft_filter')
 let dashboardFlightsScope = 'mine';
 let dashboardAircraftFilter = localStorage.getItem('fs_dashboard_aircraft_filter') || 'all';
 let _dashboardBookingsCache = null;
+
+/** How far ahead the dashboard loads upcoming bookings (days). */
+function getDashboardHorizonDays(scope) {
+  if (scope === 'all') return 90;
+  return 30;
+}
+
+function getDashboardRangeEnd(now, scope) {
+  const end = new Date(now);
+  end.setDate(end.getDate() + getDashboardHorizonDays(scope));
+  return end;
+}
 
 function getScheduleFilteredBookings(bookings) {
   if (!scheduleAircraftFilter || scheduleAircraftFilter === 'all') return bookings;
@@ -8784,6 +8796,9 @@ function setDashboardAircraftFilter(id) {
 function refreshDashboardFlightStats(cache) {
   const now = cache.now;
   const filtered = getDashboardFilteredBookings(cache);
+  const showTabs = dashboardShowsFlightTabs();
+  const scope = showTabs ? dashboardFlightsScope : 'all';
+  const horizonLabel = scope === 'all' ? 'next 90 days' : 'next 30 days';
   const todayCount = filtered.filter(b => new Date(b.start_time).toDateString() === now.toDateString()).length;
   const stats = document.getElementById('dashboard-stats');
   if (!stats) return;
@@ -8792,7 +8807,7 @@ function refreshDashboardFlightStats(cache) {
     const val = cards[0].querySelector('.stat-value');
     const sub = cards[0].querySelector('.stat-sub');
     if (val) val.textContent = todayCount;
-    if (sub) sub.textContent = `${filtered.length} this week`;
+    if (sub) sub.textContent = `${filtered.length} in ${horizonLabel}`;
   }
 }
 
@@ -8819,7 +8834,14 @@ function dashboardBookingMatchesScope(b, scope) {
 }
 
 function setDashboardFlightsScope(scope) {
-  dashboardFlightsScope = scope === 'all' ? 'all' : 'mine';
+  const nextScope = scope === 'all' ? 'all' : 'mine';
+  if (dashboardFlightsScope !== nextScope) {
+    dashboardFlightsScope = nextScope;
+    _dashboardBookingsCache = null;
+    loadDashboard();
+    return;
+  }
+  dashboardFlightsScope = nextScope;
   if (_dashboardBookingsCache) {
     refreshDashboardFlightsView(_dashboardBookingsCache);
   } else {
@@ -8850,7 +8872,7 @@ function renderDashboardUpcomingTable(cache) {
   renderDashboardAircraftFilter();
 
   const upcomingAll = bookings.filter(b => new Date(b.start_time) >= now);
-  const upcoming = getDashboardFilteredBookings(cache).slice(0, 10);
+  const upcoming = getDashboardFilteredBookings(cache);
 
   const tbody = document.getElementById('upcoming-bookings-list');
   const cardsEl = document.getElementById('dashboard-bookings-cards');
@@ -8906,7 +8928,14 @@ function renderDashboardUpcomingTable(cache) {
   }
 
   if (emptyEl) emptyEl.classList.add('hidden');
-  if (actualHeader) actualHeader.classList.remove('hidden');
+  if (actualHeader) {
+    actualHeader.classList.remove('hidden');
+    const hdrTitle = actualHeader.querySelector('h3');
+    if (hdrTitle) {
+      const label = scope === 'all' ? 'All Upcoming Flights' : 'Your Upcoming Flights';
+      hdrTitle.textContent = `${label} (${upcoming.length})`;
+    }
+  }
   if (actualTableCard) actualTableCard.classList.remove('hidden');
   if (cardsEl) cardsEl.classList.remove('hidden');
 
@@ -9050,10 +9079,11 @@ async function loadDashboard() {
   if (emptyEl) emptyEl.classList.add('hidden');
 
   const now = new Date();
-  const weekEnd = new Date(now);
-  weekEnd.setDate(weekEnd.getDate() + 7);
+  const showTabs = dashboardShowsFlightTabs();
+  const scope = showTabs ? dashboardFlightsScope : 'all';
+  const rangeEnd = getDashboardRangeEnd(now, scope);
 
-  const bookings = await loadBookings(now.toISOString(), weekEnd.toISOString());
+  const bookings = await loadBookings(now.toISOString(), rangeEnd.toISOString());
   bookings.forEach(function(b) {
     const idx = allBookings.findIndex(function(x) { return x.id === b.id; });
     if (idx >= 0) allBookings[idx] = Object.assign({}, allBookings[idx], b);
@@ -9066,7 +9096,7 @@ async function loadDashboard() {
   } catch {}
 
   const filteredUpcoming = getDashboardFilteredBookings({ bookings, now });
-  const upcoming = filteredUpcoming.slice(0, 10);
+  const horizonLabel = scope === 'all' ? 'next 90 days' : 'next 30 days';
 
   const todayBookings = filteredUpcoming.filter(b => {
     const d = new Date(b.start_time);
@@ -9087,7 +9117,7 @@ async function loadDashboard() {
     <div class="stat-card">
       <div class="stat-label">Today's Flights</div>
       <div class="stat-value">${todayBookings.length}</div>
-      <div class="stat-sub">${filteredUpcoming.length} this week</div>
+      <div class="stat-sub">${filteredUpcoming.length} in ${horizonLabel}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Active Aircraft</div>
@@ -9921,8 +9951,29 @@ function onBookingStartDateChange() {
     endDateEl.min = dateVal || '';
     if (dateVal && (!endDateEl.value || endDateEl.value < dateVal)) endDateEl.value = dateVal;
   }
-  rebuildBookingTimePickers();
+  const startSel = document.getElementById('booking-start');
+  const endSel = document.getElementById('booking-end');
+  const prevStart = startSel?.value || '';
+  const prevEnd = endSel?.value || '';
+  rebuildBookingTimePickers({
+    preserveTimes: !!(prevStart || prevEnd),
+    startTime: prevStart || null,
+    endTime: prevEnd || null,
+  });
   refreshBookingAvailability();
+  refreshBookingAircraft();
+}
+
+function onBookingEndDateChange() {
+  const startSel = document.getElementById('booking-start');
+  const endSel = document.getElementById('booking-end');
+  const prevStart = startSel?.value || '';
+  const prevEnd = endSel?.value || '';
+  rebuildBookingTimePickers({
+    preserveTimes: !!(prevStart || prevEnd),
+    startTime: prevStart || null,
+    endTime: prevEnd || null,
+  });
   refreshBookingAircraft();
 }
 
@@ -10404,7 +10455,7 @@ async function refreshBookingAircraft() {
     setTimeout(() => { errEl.classList.add('hidden'); }, 4000);
   }
 
-  // Save current selection so we can try to restore it
+  // Save current selection so we can restore it after downtime filtering
   const prevSelected = aircraftSel.value;
 
   // Re-populate aircraft dropdown
@@ -10412,8 +10463,10 @@ async function refreshBookingAircraft() {
     availableAircraft.map(a => `<option value="${a.id}">${a.tail_number} - ${a.make_model}</option>`).join('') :
     '<option value="">No aircraft available</option>';
 
-  // If previously selected aircraft is now in downtime, clear it and warn
-  if (prevSelected && !availableAircraft.some(a => a.id == prevSelected)) {
+  // Restore previous selection when still valid (fixes 172 → 150 reset bug)
+  if (prevSelected && availableAircraft.some(a => String(a.id) === String(prevSelected))) {
+    aircraftSel.value = prevSelected;
+  } else if (prevSelected && !availableAircraft.some(a => String(a.id) === String(prevSelected))) {
     aircraftSel.value = '';
     errEl.textContent = 'Previously selected aircraft is in maintenance for this date. Please choose another.';
     errEl.classList.remove('hidden');
