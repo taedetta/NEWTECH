@@ -8955,9 +8955,6 @@ function buildBookingActionButtons(b, options) {
       actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="openEditBookingModal(${b.id})">Edit</button>`;
       actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}openCancelModal(${b.id})">✗ Cancel Flight</button>`;
     }
-    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
-      actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-left:0.4rem" onclick="duplicateBooking(${b.id})">Duplicate +1wk</button>`;
-    }
   } else if (b.status === 'completed' && ['owner', 'admin'].includes(currentUser.role)) {
     actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
     actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
@@ -10375,18 +10372,6 @@ function exportMyCalendar() {
       a.click();
     })
     .catch(() => alert('Failed to export calendar'));
-}
-
-async function duplicateBooking(id) {
-  if (!confirm('Duplicate this booking for next week?')) return;
-  try {
-    await api('/api/bookings/duplicate/' + id, { method: 'POST', body: JSON.stringify({ offset_days: 7 }) });
-    showToast('Booking duplicated (+7 days)', 'success');
-    closeDayModal();
-    if (currentPage === 'schedule') loadCalendar();
-  } catch (e) {
-    if (!handleBookingConflictError(e)) alert(e.error || 'Could not duplicate booking');
-  }
 }
 
 // Re-filter aircraft dropdown when date changes — maintains downtime window filtering
