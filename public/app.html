@@ -3945,11 +3945,11 @@
         </div>
         <div class="form-group">
           <label>Instructor</label>
-          <select id="booking-instructor" onchange="refreshBookingAvailability()"></select>
+          <select id="booking-instructor" onchange="captureBookingFormDraft(); refreshBookingAvailability()"></select>
         </div>
         <div class="form-group">
           <label>Aircraft</label>
-          <select id="booking-aircraft" onchange="refreshBookingPreflight()"></select>
+          <select id="booking-aircraft" onchange="captureBookingFormDraft(); refreshBookingPreflight()"></select>
         </div>
         <div class="form-group">
           <label>Start Date</label>
@@ -3973,7 +3973,7 @@
           </div>
           <div class="form-group">
             <label>End Time</label>
-            <select id="booking-end" onchange="refreshBookingAircraft(); refreshBookingPreflight()"></select>
+            <select id="booking-end" onchange="captureBookingFormDraft(); refreshBookingAircraft(); refreshBookingPreflight()"></select>
           </div>
         </div>
         <div class="form-group">
@@ -5011,8 +5011,8 @@ let _dashboardBookingsCache = null;
 
 /** How far ahead the dashboard loads upcoming bookings (days). */
 function getDashboardHorizonDays(scope) {
-  if (scope === 'all') return 90;
-  return 30;
+  if (scope === 'all') return 365;
+  return 90;
 }
 
 function getDashboardRangeEnd(now, scope) {
@@ -5278,6 +5278,8 @@ let currentBookingAvailSlots = null; // null = no restriction, Set = restricted 
 let pendingPermChanges = {}; // { [userId]: { can_manage_aircraft: bool, ... } }
 let completableBookings = []; // bookings awaiting hour entry
 let bookingEditId = null;
+let _bookingAircraftRefreshSeq = 0;
+let bookingFormDraft = { aircraftId: '', startTime: '', endTime: '' };
 let billingNavSource = 'ops';
 let historyNavSource = 'ops';
 
@@ -8691,7 +8693,7 @@ function wxBuildDetail(wxData, flightStart, flightEnd, detailId, flightLabel) {
 // ─── DASHBOARD ───
 function dashboardShowsFlightTabs() {
   if (!currentUser) return false;
-  return ['student', 'renter', 'instructor', 'admin', 'owner'].includes(currentUser.role);
+  return ['student', 'renter', 'instructor', 'admin', 'owner', 'maintenance'].includes(currentUser.role);
 }
 
 function dashboardBookingMatchesAircraft(b) {
@@ -8751,7 +8753,7 @@ function refreshDashboardFlightStats(cache) {
   const filtered = getDashboardFilteredBookings(cache);
   const showTabs = dashboardShowsFlightTabs();
   const scope = showTabs ? dashboardFlightsScope : 'all';
-  const horizonLabel = scope === 'all' ? 'next 90 days' : 'next 30 days';
+  const horizonLabel = scope === 'all' ? 'next 12 months' : 'next 90 days';
   const todayCount = filtered.filter(b => new Date(b.start_time).toDateString() === now.toDateString()).length;
   const stats = document.getElementById('dashboard-stats');
   if (!stats) return;
@@ -9047,7 +9049,7 @@ async function loadDashboard() {
   } catch {}
 
   const filteredUpcoming = getDashboardFilteredBookings({ bookings, now });
-  const horizonLabel = scope === 'all' ? 'next 90 days' : 'next 30 days';
+  const horizonLabel = scope === 'all' ? 'next 12 months' : 'next 90 days';
 
   const todayBookings = filteredUpcoming.filter(b => {
     const d = new Date(b.start_time);
@@ -9760,9 +9762,24 @@ function closeDayModal() {
 }
 
 // ─── BOOKING MODAL ───
+function captureBookingFormDraft() {
+  const ac = document.getElementById('booking-aircraft');
+  const st = document.getElementById('booking-start');
+  const en = document.getElementById('booking-end');
+  if (ac?.value) bookingFormDraft.aircraftId = ac.value;
+  if (st?.value) bookingFormDraft.startTime = st.value;
+  if (en?.value) bookingFormDraft.endTime = en.value;
+}
+
+function clearBookingFormDraft() {
+  bookingFormDraft = { aircraftId: '', startTime: '', endTime: '' };
+  _bookingAircraftRefreshSeq = 0;
+}
+
 async function openBookingModal(editBookingId) {
   if (!allUsers || allUsers.length === 0) await loadUsers();
   bookingEditId = editBookingId || null;
+  clearBookingFormDraft();
 
   let preloadedBooking = null;
   if (bookingEditId) {
@@ -9791,7 +9808,8 @@ async function openBookingModal(editBookingId) {
 
   const students = allUsers.filter(u => u.role === 'student' || u.role === 'renter');
   const instructors = allUsers.filter(isBookableInstructor);
-  let aircraft = allAircraft.filter(a => a.status === 'available');
+  let aircraft = allAircraft.filter(a => a.status === 'available')
+    .slice().sort((a, b) => (a.tail_number || '').localeCompare(b.tail_number || ''));
 
   if (preloadedBooking?.aircraft_id) {
     const bookedAc = allAircraft.find(a => a.id === preloadedBooking.aircraft_id);
@@ -9872,6 +9890,7 @@ async function openBookingModal(editBookingId) {
   } else {
     rebuildBookingTimePickers();
   }
+  captureBookingFormDraft();
 
   document.getElementById('booking-modal').classList.remove('hidden');
   const recGroup = document.getElementById('booking-recurring-group');
@@ -9879,6 +9898,7 @@ async function openBookingModal(editBookingId) {
   document.getElementById('booking-preflight')?.classList.add('hidden');
 
   refreshBookingAvailability();
+  refreshBookingAircraft();
 }
 
 async function openEditBookingModal(bookingId) {
@@ -9887,35 +9907,35 @@ async function openEditBookingModal(bookingId) {
 }
 
 function onBookingStartDateChange() {
+  captureBookingFormDraft();
   const dateVal = document.getElementById('booking-date').value;
   const endDateEl = document.getElementById('booking-end-date');
   if (endDateEl) {
     endDateEl.min = dateVal || '';
     if (dateVal && (!endDateEl.value || endDateEl.value < dateVal)) endDateEl.value = dateVal;
   }
-  const startSel = document.getElementById('booking-start');
-  const endSel = document.getElementById('booking-end');
-  const prevStart = startSel?.value || '';
-  const prevEnd = endSel?.value || '';
+  const prevStart = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
+  const prevEnd = document.getElementById('booking-end')?.value || bookingFormDraft.endTime || '';
   rebuildBookingTimePickers({
     preserveTimes: !!(prevStart || prevEnd),
     startTime: prevStart || null,
     endTime: prevEnd || null,
   });
+  captureBookingFormDraft();
   refreshBookingAvailability();
   refreshBookingAircraft();
 }
 
 function onBookingEndDateChange() {
-  const startSel = document.getElementById('booking-start');
-  const endSel = document.getElementById('booking-end');
-  const prevStart = startSel?.value || '';
-  const prevEnd = endSel?.value || '';
+  captureBookingFormDraft();
+  const prevStart = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
+  const prevEnd = document.getElementById('booking-end')?.value || bookingFormDraft.endTime || '';
   rebuildBookingTimePickers({
     preserveTimes: !!(prevStart || prevEnd),
     startTime: prevStart || null,
     endTime: prevEnd || null,
   });
+  captureBookingFormDraft();
   refreshBookingAircraft();
 }
 
@@ -10095,6 +10115,7 @@ function populateBookingFormFromRecord(b) {
   if (b.lesson_type) document.getElementById('booking-lesson-type').value = b.lesson_type;
   if (b.notes) document.getElementById('booking-notes').value = b.notes;
   else document.getElementById('booking-notes').value = '';
+  captureBookingFormDraft();
 }
 
 // Called when start time changes — rebuilds end-time options to ensure end > start
@@ -10175,10 +10196,12 @@ function updateBookingEndTimes() {
       endSel.value = endSel.options[endSel.options.length - 1].value;
     }
   }
+  captureBookingFormDraft();
 }
 
 function closeBookingModal() {
   bookingEditId = null;
+  clearBookingFormDraft();
   document.getElementById('booking-modal').classList.add('hidden');
   currentBookingAvailSlots = null;
 }
@@ -10330,18 +10353,24 @@ async function refreshBookingAircraft() {
   if (!modal || modal.classList.contains('hidden')) return;
   if (!date) return;
 
+  const seq = ++_bookingAircraftRefreshSeq;
+  const prevSelected = aircraftSel.value || bookingFormDraft.aircraftId || '';
+
   // Start with all available aircraft (matching openBookingModal logic)
-  let availableAircraft = allAircraft.filter(a => a.status === 'available');
+  let availableAircraft = allAircraft.filter(a => a.status === 'available')
+    .slice().sort((a, b) => (a.tail_number || '').localeCompare(b.tail_number || ''));
 
   // Filter out aircraft blocked by maintenance downtime for this date/time
   try {
     const downtimeEntries = await api(`/api/downtime/by-date?date=${date}`);
-    const startTime = document.getElementById('booking-start')?.value;
-    const endTime = document.getElementById('booking-end')?.value;
+    if (seq !== _bookingAircraftRefreshSeq) return;
+    const startTime = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
+    const endTime = document.getElementById('booking-end')?.value || bookingFormDraft.endTime || '';
     availableAircraft = availableAircraft.filter(a =>
       !aircraftBlockedByDowntime(downtimeEntries, a.id, date, startTime, endTime)
     );
   } catch (err) {
+    if (seq !== _bookingAircraftRefreshSeq) return;
     // Downtime check failed — warn user and fall back to status-only filtering
     console.error('[refreshBookingAircraft] downtime API failed:', err);
     errEl.textContent = 'Warning: Could not verify maintenance schedule. Aircraft may be unavailable.';
@@ -10349,8 +10378,7 @@ async function refreshBookingAircraft() {
     setTimeout(() => { errEl.classList.add('hidden'); }, 4000);
   }
 
-  // Save current selection so we can restore it after downtime filtering
-  const prevSelected = aircraftSel.value;
+  if (seq !== _bookingAircraftRefreshSeq) return;
 
   // Re-populate aircraft dropdown
   aircraftSel.innerHTML = availableAircraft.length ?
@@ -10360,8 +10388,10 @@ async function refreshBookingAircraft() {
   // Restore previous selection when still valid (fixes 172 → 150 reset bug)
   if (prevSelected && availableAircraft.some(a => String(a.id) === String(prevSelected))) {
     aircraftSel.value = prevSelected;
+    bookingFormDraft.aircraftId = prevSelected;
   } else if (prevSelected && !availableAircraft.some(a => String(a.id) === String(prevSelected))) {
     aircraftSel.value = '';
+    bookingFormDraft.aircraftId = '';
     errEl.textContent = 'Previously selected aircraft is in maintenance for this date. Please choose another.';
     errEl.classList.remove('hidden');
   }
@@ -10381,7 +10411,11 @@ function ensureBookingEndTime(startTime) {
   if (!endSel) return null;
   if (endSel.disabled) endSel.disabled = false;
   if (!endSel.value || endSel.value === '') {
-    rebuildBookingTimePickers();
+    rebuildBookingTimePickers({
+      preserveTimes: true,
+      startTime,
+      endTime: bookingFormDraft.endTime || null,
+    });
     if (!endSel.value && endSel.options.length) {
       const pick = Array.from(endSel.options).find(o => o.value && o.value > startTime);
       endSel.value = pick ? pick.value : (endSel.options[0]?.value || '');
