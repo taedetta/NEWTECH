@@ -8253,6 +8253,7 @@ async function loadApprovals() {
       return;
     }
     if (listEl) listEl.classList.remove('hidden');
+    const canProcessApprovals = currentUser && ['owner', 'admin'].includes(currentUser.role);
     if (tbody) tbody.innerHTML = data.users.map(u => `
       <tr>
         <td><strong>${u.name}</strong></td>
@@ -8260,10 +8261,10 @@ async function loadApprovals() {
         <td><span class="tag ${u.role === 'maintenance' ? 'tag-amber' : u.role === 'instructor' ? 'tag-sky' : 'tag-green'}">${u.role}</span></td>
         <td style="color:var(--gray-500);font-size:0.82rem">${new Date(u.created_at).toLocaleDateString()}</td>
         <td>
-          <div style="display:flex;gap:0.5rem;">
+          ${canProcessApprovals ? `<div style="display:flex;gap:0.5rem;">
             <button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick="approveUser(${u.id})">&#10003; Approve</button>
             <button class="btn btn-sm btn-danger" onclick="rejectUser(${u.id})">&#10005; Reject</button>
-          </div>
+          </div>` : `<span style="color:var(--gray-500);font-size:0.82rem;">Owner/admin approval required</span>`}
         </td>
       </tr>`).join('');
   } catch (err) {

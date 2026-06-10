@@ -2,7 +2,7 @@
 
 const express = require('express');
 const pool = require('../db/index');
-const { authenticateToken, requirePermission } = require('../middleware/auth');
+const { authenticateToken, requirePermission, getUserPermissions } = require('../middleware/auth');
 const { sendEmail } = require('../email-templates');
 
 const router = express.Router();
@@ -37,6 +37,15 @@ router.post('/squawks', authenticateToken, async (req, res) => {
     const { aircraft_id, description, severity, expected_downtime } = req.body;
     if (!aircraft_id || !description) return res.status(400).json({ error: 'Aircraft and description are required' });
     const validSeverity = ['minor', 'major', 'grounding'].includes(severity) ? severity : 'minor';
+    if (validSeverity === 'grounding' && !['owner', 'admin', 'maintenance'].includes(req.user.role)) {
+      if (req.user.role !== 'instructor') {
+        return res.status(403).json({ error: 'Only staff with aircraft management permission can ground aircraft' });
+      }
+      const perms = await getUserPermissions(req.user.id, req.user.role);
+      if (!perms.can_manage_aircraft) {
+        return res.status(403).json({ error: 'Only staff with aircraft management permission can ground aircraft' });
+      }
+    }
     const validDowntimes = ['1 day', '2 days', '3 days', '4 days', '5 days', '1 week', '2 weeks', 'Unknown/TBD'];
     const downtimeValue = (expected_downtime && validDowntimes.includes(expected_downtime)) ? expected_downtime : null;
     const result = await pool.query(

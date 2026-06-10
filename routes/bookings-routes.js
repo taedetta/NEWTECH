@@ -23,6 +23,21 @@ const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
 
+async function lockBookingEntities(client, { aircraft_id, instructor_id, student_id }) {
+  const locks = [
+    ['aircraft', 4101, aircraft_id],
+    ['instructor', 4102, instructor_id],
+    ['student', 4103, student_id],
+  ]
+    .map(([, namespace, id]) => ({ namespace, id: normBookingUserId(id) }))
+    .filter((lock) => lock.id != null)
+    .sort((a, b) => (a.namespace - b.namespace) || (a.id - b.id));
+
+  for (const lock of locks) {
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [lock.namespace, lock.id]);
+  }
+}
+
 async function findOverlappingDowntime(client, aircraftId, bookingStart, bookingEnd) {
   const db = client || pool;
   const startDate = new Date(bookingStart).toISOString().slice(0, 10);
@@ -572,44 +587,55 @@ router.post('/recurring', authenticateToken, async (req, res) => {
 
 async function createBookingInternal(client, req) {
   const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
-  let sid = student_id ? parseInt(student_id, 10) : null;
-  const iid = instructor_id ? parseInt(instructor_id, 10) : null;
-  if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
-  if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
-  const start = new Date(start_time);
-  const end = new Date(end_time);
-  if (end <= start) return { error: 'End time must be after start time' };
-  const policy = await getPolicySettings();
-  const isAdmin = ['owner', 'admin'].includes(req.user.role);
-  const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
-  if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
+  try {
+    let sid = student_id ? parseInt(student_id, 10) : null;
+    const iid = instructor_id ? parseInt(instructor_id, 10) : null;
+    if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
+    if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
+    const start = new Date(start_time);
+    const end = new Date(end_time);
+    if (end <= start) return { error: 'End time must be after start time' };
+    const policy = await getPolicySettings();
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
+    if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
 
-  const grounding = await checkGroundingSquawk(client, aircraft_id);
-  if (grounding.blocked) return { error: `Aircraft grounded: ${grounding.reason}` };
+    const grounding = await checkGroundingSquawk(client, aircraft_id);
+    if (grounding.blocked) return { error: `Aircraft grounded: ${grounding.reason}` };
 
-  const downtimeHit = await findOverlappingDowntime(client, aircraft_id, start_time, end_time);
-  if (downtimeHit) return { error: 'Aircraft is scheduled for maintenance during this period' };
+    const downtimeHit = await findOverlappingDowntime(client, aircraft_id, start_time, end_time);
+    if (downtimeHit) return { error: 'Aircraft is scheduled for maintenance during this period' };
 
-  let booking_type = 'dual';
-  if (sid && !iid) {
-    const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
-    booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
-  } else if (!sid && iid) booking_type = 'instructor_solo';
+    let booking_type = 'dual';
+    if (sid && !iid) {
+      const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
+      booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
+    } else if (!sid && iid) booking_type = 'instructor_solo';
 
-  const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
-  if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
-  if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
+    const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
+    if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
+    if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
 
-  const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
-  if (conflicts.length) return { error: 'Scheduling conflict', conflicts };
+    await client.query('BEGIN');
+    await lockBookingEntities(client, { aircraft_id, instructor_id: iid, student_id: sid });
+    const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
+    if (conflicts.length) {
+      await client.query('ROLLBACK');
+      return { error: 'Scheduling conflict', conflicts };
+    }
 
-  const result = await client.query(
-    `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
-  );
-  sendBookingConfirmationEmails(result.rows[0].id, client).catch((err) => console.error('[booking-email] create:', err.message));
-  return { booking: result.rows[0] };
+    const result = await client.query(
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [sid, iid, aircraft_id, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+    );
+    await client.query('COMMIT');
+    sendBookingConfirmationEmails(result.rows[0].id, client).catch((err) => console.error('[booking-email] create:', err.message));
+    return { booking: result.rows[0] };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  }
 }
 
 router.post('/', authenticateToken, async (req, res) => {
@@ -679,6 +705,7 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: `Aircraft is currently ${aircraft.rows[0].status}` });
     }
     await client.query('BEGIN');
+    await lockBookingEntities(client, { aircraft_id, instructor_id: iid, student_id: sid });
     const conflicts = await checkConflicts(client, { aircraft_id, instructor_id: iid, student_id: sid, start_time, end_time });
     if (conflicts.length > 0) {
       await client.query('ROLLBACK');
@@ -789,13 +816,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
+    await client.query('BEGIN');
+    await lockBookingEntities(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
     if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
       const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: st, end_time: et, excludeBookingId: bookingId });
       if (conflicts.length > 0) {
+        await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Scheduling conflict', conflicts });
       }
     }
-    await client.query('BEGIN');
     // If start_time changed, reset reminder_sent so a new reminder fires for the new time
     const timeChanged = st !== b.start_time || et !== b.end_time;
     const booking_type = await deriveBookingType(client, sid, iid);
