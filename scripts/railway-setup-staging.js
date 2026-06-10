@@ -56,6 +56,7 @@ async function createService(name, source) {
     'mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id name } }',
     { input: { projectId: PROJECT_ID, name, source, environmentId: ENV_ID } }
   );
+  if (!r.serviceCreate) throw new Error('serviceCreate returned empty');
   return r.serviceCreate;
 }
 
@@ -108,7 +109,7 @@ async function createService(name, source) {
   }
 
   await upsertVar(webSvc.id, 'APP_ENV', 'staging');
-  await upsertVar(webSvc.id, 'APP_URL', 'https://staging.newtechaviation.com');
+  await upsertVar(webSvc.id, 'APP_URL', 'https://flightslate-staging-production.up.railway.app');
   await upsertVar(webSvc.id, 'DATABASE_URL', '${{flightslate-staging-db.DATABASE_URL}}');
   await upsertVar(webSvc.id, 'NODE_ENV', 'production');
 
