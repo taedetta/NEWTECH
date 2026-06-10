@@ -12,11 +12,12 @@ const { sendEmail, approvalConfirmationEmail, rejectionEmail } = require('../ema
 
 const router = express.Router();
 
-// All approval endpoints require auth; accessible to owner/admin/instructor
-const canApprove = [authenticateToken, requireRole('owner', 'admin', 'instructor')];
+// Instructors can review the queue, but only owner/admin may activate or reject accounts.
+const canReviewApprovals = [authenticateToken, requireRole('owner', 'admin', 'instructor')];
+const canMutateApprovals = [authenticateToken, requireRole('owner', 'admin')];
 
 // GET /api/approvals/pending — list all pending users
-router.get('/pending', ...canApprove, async (req, res) => {
+router.get('/pending', ...canReviewApprovals, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, name, email, role, created_at
@@ -32,7 +33,7 @@ router.get('/pending', ...canApprove, async (req, res) => {
 });
 
 // GET /api/approvals/count — badge count for sidebar notification
-router.get('/count', ...canApprove, async (req, res) => {
+router.get('/count', ...canReviewApprovals, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT COUNT(*) AS cnt FROM users WHERE approval_status = 'pending' AND deleted_at IS NULL`
@@ -45,7 +46,7 @@ router.get('/count', ...canApprove, async (req, res) => {
 });
 
 // POST /api/approvals/:id/approve — approve a pending user
-router.post('/:id/approve', ...canApprove, async (req, res) => {
+router.post('/:id/approve', ...canMutateApprovals, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
@@ -79,7 +80,7 @@ router.post('/:id/approve', ...canApprove, async (req, res) => {
 });
 
 // POST /api/approvals/:id/reject — reject (soft-delete) a pending user
-router.post('/:id/reject', ...canApprove, async (req, res) => {
+router.post('/:id/reject', ...canMutateApprovals, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(

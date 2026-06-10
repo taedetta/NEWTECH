@@ -130,13 +130,18 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
       await client.query('BEGIN');
-      await client.query(
-        `UPDATE bookings SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+      const completed = await client.query(
+        `UPDATE bookings SET status = 'completed', updated_at = NOW()
+         WHERE id = $1 AND status = 'confirmed'
+         RETURNING *`,
         [req.params.id]
       );
+      if (completed.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Booking has already been completed or is no longer confirmed' });
+      }
       await client.query('COMMIT');
-      const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-      res.json({ booking: updated.rows[0], log_id: null });
+      res.json({ booking: completed.rows[0], log_id: null });
 
       // Send flight completed email (no_change — no hobbs/tach data)
       sendFlightCompletedEmail(req.params.id, req.user.id, req.user.role, null, null, null);
@@ -308,11 +313,17 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       }
     }
     // Update booking — persist hobbs/tach on booking row for billing queries
-    await client.query(
+    const completed = await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, updated_at = NOW() WHERE id = $5`,
+       tach_start = $3, tach_end = $4, updated_at = NOW()
+       WHERE id = $5 AND status = 'confirmed'
+       RETURNING *`,
       [hStart, hEnd, tStart, tEnd, req.params.id]
     );
+    if (completed.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Booking has already been completed or is no longer confirmed' });
+    }
 
     // Auto-sync instructor hours log from completed flight
     if (b.instructor_id && (hobbsFlown > 0 || dualHrs > 0)) {
@@ -343,8 +354,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     recordHobbsReading(parseInt(req.params.id), req.user.id, hobbsRole, hStart, hEnd)
       .catch(e => console.error('[bookings-completion] hobbs reading error:', e.message));
 
-    const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    res.json({ booking: updated.rows[0], log_id: logId });
+    res.json({ booking: completed.rows[0], log_id: logId });
 
     // Send flight completed email to student + instructor (fire-and-forget)
     sendFlightCompletedEmail(req.params.id, req.user.id, req.user.role, hobbsFlown, tachFlown, dualHrs);
