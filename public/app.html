@@ -10074,8 +10074,15 @@ function addMinutesToHm(hm, mins) {
 }
 
 function onBookingLessonTypeChange() {
-  rebuildBookingTimePickers();
-  if (isDiscoveryBooking()) updateBookingEndTimes();
+  captureBookingFormDraft();
+  const prevStart = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
+  rebuildBookingTimePickers({
+    preserveTimes: !!prevStart,
+    startTime: prevStart || null,
+  });
+  captureBookingFormDraft();
+  refreshBookingAircraft();
+  refreshBookingPreflight();
 }
 
 // Rebuild start + end time dropdowns based on current selected date.
@@ -10116,6 +10123,7 @@ function rebuildBookingTimePickers(options) {
     endSel.innerHTML = `<option value="${end.time}">${formatTimeStr(eh, em)} (20 min)</option>`;
     endSel.value = end.time;
     endSel.disabled = true;
+    captureBookingFormDraft();
     return;
   }
 
@@ -10205,9 +10213,9 @@ function populateBookingFormFromRecord(b) {
 
   const startHM = getLocalHmFromIso(b.start_time);
   const endHM = getLocalHmFromIso(b.end_time);
+  if (b.lesson_type) document.getElementById('booking-lesson-type').value = b.lesson_type;
   rebuildBookingTimePickers({ preserveTimes: true, startTime: startHM, endTime: endHM });
 
-  if (b.lesson_type) document.getElementById('booking-lesson-type').value = b.lesson_type;
   if (b.notes) document.getElementById('booking-notes').value = b.notes;
   else document.getElementById('booking-notes').value = '';
   captureBookingFormDraft();
@@ -10228,6 +10236,7 @@ function updateBookingEndTimes() {
     endSel.innerHTML = `<option value="${end.time}">${formatTimeStr(eh, em)} (20 min)</option>`;
     endSel.value = end.time;
     endSel.disabled = true;
+    captureBookingFormDraft();
     return;
   }
 
@@ -10392,6 +10401,8 @@ async function refreshBookingPreflight() {
     });
     if (studentVal) q.set('student_id', studentVal);
     if (instructorVal) q.set('instructor_id', instructorVal);
+    const lessonType = document.getElementById('booking-lesson-type')?.value;
+    if (lessonType) q.set('lesson_type', lessonType);
     const data = await api('/api/bookings/preflight-check?' + q.toString());
     if (!data.errors?.length && !data.warnings?.length) { el.classList.add('hidden'); return; }
     let html = '';
