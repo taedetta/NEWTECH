@@ -9820,6 +9820,10 @@ function closeDayModal() {
 }
 
 // ─── BOOKING MODAL ───
+function bookingStaffCanUsePastDates() {
+  return currentUser && ['owner', 'admin', 'instructor', 'maintenance'].includes(currentUser.role);
+}
+
 function captureBookingFormDraft() {
   const ac = document.getElementById('booking-aircraft');
   const st = document.getElementById('booking-start');
@@ -9932,7 +9936,7 @@ async function openBookingModal(editBookingId) {
 
   const todayISO = new Date().toLocaleDateString('en-CA');
   const dateInput = document.getElementById('booking-date');
-  dateInput.min = todayISO;
+  dateInput.min = bookingStaffCanUsePastDates() ? '' : todayISO;
 
   const finalDate = (savedDate && (savedDate >= todayISO || bookingEditId)) ? savedDate : todayISO;
   dateInput.value = finalDate;
@@ -10574,12 +10578,11 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     return;
   }
 
-  // Block past dates — use current date at submission time (handles midnight edge case)
+  // Block past dates for students/renters only — staff may backdate or edit past bookings
   const todayAtSubmit = new Date().toLocaleDateString('en-CA');
-  if (date < todayAtSubmit) {
+  if (!bookingStaffCanUsePastDates() && date < todayAtSubmit) {
     errEl.textContent = 'Cannot book a flight for a past date. Please select today or a future date.';
     errEl.classList.remove('hidden');
-    // Also refresh the min attribute in case the modal was open past midnight
     document.getElementById('booking-date').min = todayAtSubmit;
     return;
   }
