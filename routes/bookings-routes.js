@@ -773,12 +773,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const enTime = new Date(et);
     if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return res.status(400).json({ error: 'Invalid date format' });
     if (enTime <= stTime) return res.status(400).json({ error: 'End time must be after start time' });
-    const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
-    const policy = await getPolicySettings();
-    const timeCheck = validateBookingTimes({
-      start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-    });
-    if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Duration cap on updates
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
