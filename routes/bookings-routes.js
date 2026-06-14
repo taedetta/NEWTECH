@@ -785,6 +785,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
+      skipDiscoveryDurationCheck: isAdmin && (b.status === 'completed' || b.status === 'confirmed'),
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap

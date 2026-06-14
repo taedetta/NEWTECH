@@ -6,7 +6,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
-const { computeFlightCharges } = require('../lib/flight-charges');
+const { resolveFlightCharges } = require('../lib/flight-charges');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 
 const router = express.Router();
@@ -210,43 +210,42 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     const hobbsDelta = parseFloat((hEnd - hStart).toFixed(2));
     const tachDelta = (tStart != null && tEnd != null) ? parseFloat((tEnd - tStart).toFixed(2)) : null;
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
-    const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
+    const effectiveLessonType = lesson_type !== undefined && lesson_type !== ''
+      ? lesson_type
+      : b.lesson_type;
     const instrRate = b.instructor_id
       ? (await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]?.instructor_rate
       : null;
-    const defaultCharges = computeFlightCharges({
+    const { aircraftChargeAmount: acCharge, instructionChargeAmount: instrCharge } = resolveFlightCharges({
       lessonType: effectiveLessonType,
       hobbsDelta,
       dualHrs,
       hourlyRate: b.hourly_rate,
       instructorRate: instrRate,
+      aircraftChargeAmount,
+      instructionChargeAmount,
     });
-    const acCharge = aircraft_charge_amount != null
-      ? parseFloat(aircraft_charge_amount)
-      : defaultCharges.aircraftChargeAmount;
-    const instrCharge = instruction_charge_amount != null
-      ? parseFloat(instruction_charge_amount)
-      : defaultCharges.instructionChargeAmount;
-    const dateVal = flight_date || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null);
+    const dateVal = flight_date
+      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
+      || new Date().toISOString().slice(0, 10);
 
     const client = await pool.connect();
+    let inTxn = false;
     try {
       await client.query('BEGIN');
+      inTxn = true;
 
-      if (dateVal) {
-        const startTime = new Date(dateVal + 'T12:00:00Z');
-        const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
-        await client.query(
-          `UPDATE bookings SET start_time = $1, end_time = $2 WHERE id = $3`,
-          [startTime.toISOString(), endTime.toISOString(), bookingId]
-        );
-      }
-
+      const startTime = new Date(dateVal + 'T12:00:00Z');
+      const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
       await client.query(
-        `UPDATE bookings SET hobbs_start = $1, hobbs_end = $2, tach_start = $3, tach_end = $4,
-         lesson_type = COALESCE($5, lesson_type), updated_at = NOW()
-         WHERE id = $6`,
-        [hStart, hEnd, tStart, tEnd, lesson_type !== undefined ? lesson_type : null, bookingId]
+        `UPDATE bookings SET
+           start_time = $1, end_time = $2,
+           hobbs_start = $3, hobbs_end = $4, tach_start = $5, tach_end = $6,
+           lesson_type = CASE WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7 ELSE lesson_type END,
+           updated_at = NOW()
+         WHERE id = $8`,
+        [startTime.toISOString(), endTime.toISOString(), hStart, hEnd, tStart, tEnd,
+         lesson_type !== undefined ? lesson_type : null, bookingId]
       );
 
       const bkAfter = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
@@ -259,9 +258,12 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
             flight_date = $1, hobbs_start = $2, hobbs_end = $3, hobbs_delta = $4,
             tach_start = $5, tach_end = $6, tach_delta = $7,
             dual_instruction_hours = $8, aircraft_charge_amount = $9, instruction_charge_amount = $10,
+            student_id = $11, instructor_id = $12, aircraft_id = $13, booking_type = $14,
             updated_at = NOW()
-           WHERE booking_id = $11`,
-          [dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, acCharge, instrCharge, bookingId]
+           WHERE booking_id = $15`,
+          [dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, acCharge, instrCharge,
+           updatedBooking.student_id, updatedBooking.instructor_id, updatedBooking.aircraft_id,
+           updatedBooking.booking_type || 'dual', bookingId]
         );
       } else {
         await client.query(
@@ -282,28 +284,33 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
           const sn = await client.query('SELECT name FROM users WHERE id = $1', [updatedBooking.student_id]);
           studentName = sn.rows[0]?.name || null;
         }
-        await syncInstructorHoursFromFlight(client, {
-          booking: updatedBooking,
-          hobbsFlown: hobbsDelta,
-          dualHrs,
-          flightDate: dateVal,
-          studentName,
-        });
+        try {
+          await syncInstructorHoursFromFlight(client, {
+            booking: updatedBooking,
+            hobbsFlown: hobbsDelta,
+            dualHrs,
+            flightDate: dateVal,
+            studentName,
+          });
+        } catch (syncErr) {
+          console.error('[booking-history] instructor hours sync warning:', syncErr.message);
+        }
       } else {
-        await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
+        await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]).catch(() => {});
       }
 
       await client.query('COMMIT');
-      res.json({ ok: true, booking_id: bookingId });
+      inTxn = false;
+      res.json({ ok: true, booking_id: bookingId, aircraft_charge_amount: acCharge, instruction_charge_amount: instrCharge });
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (inTxn) await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
       client.release();
     }
   } catch (err) {
     console.error('Booking history flight update error:', err);
-    res.status(500).json({ error: 'Failed to update booking record' });
+    res.status(500).json({ error: err.message || 'Failed to update booking record' });
   }
 });
 
