@@ -333,6 +333,7 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
     const iid = instructor_id ? parseInt(instructor_id, 10) : null;
     const excludeId = exclude_booking_id ? parseInt(exclude_booking_id, 10) : null;
     const isReschedule = Number.isFinite(excludeId);
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
     let booking_type = 'dual';
     if (sid && !iid) booking_type = 'student_solo';
     else if (!sid && iid) booking_type = 'instructor_solo';
@@ -347,26 +348,29 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       local_date,
       local_start,
       local_end,
-      skipPastTimeCheck: isReschedule,
-      skipInstructorAvailability: isReschedule,
+      skipPastTimeCheck: isReschedule || isAdmin,
+      skipInstructorAvailability: isReschedule || isAdmin,
+      skipDiscoveryDurationCheck: isReschedule || isAdmin,
     }, req.user.role);
-    const client = await pool.connect();
-    try {
-      const conflicts = await checkConflicts(client, {
-        aircraft_id: parseInt(aircraft_id, 10),
-        instructor_id: iid,
-        student_id: sid,
-        start_time,
-        end_time,
-        excludeBookingId: isReschedule ? excludeId : null,
-      });
-      for (const c of conflicts) {
-        const who = c.type === 'aircraft' ? 'Aircraft' : c.type === 'instructor' ? 'Instructor' : 'Student';
-        result.errors.push(`${who} conflict: ${c.entity} is already booked during this time`);
+    if (!isAdmin) {
+      const client = await pool.connect();
+      try {
+        const conflicts = await checkConflicts(client, {
+          aircraft_id: parseInt(aircraft_id, 10),
+          instructor_id: iid,
+          student_id: sid,
+          start_time,
+          end_time,
+          excludeBookingId: isReschedule ? excludeId : null,
+        });
+        for (const c of conflicts) {
+          const who = c.type === 'aircraft' ? 'Aircraft' : c.type === 'instructor' ? 'Instructor' : 'Student';
+          result.errors.push(`${who} conflict: ${c.entity} is already booked during this time`);
+        }
+        result.ok = result.errors.length === 0;
+      } finally {
+        client.release();
       }
-      result.ok = result.errors.length === 0;
-    } finally {
-      client.release();
     }
     res.json(result);
   } catch (err) {
@@ -836,27 +840,34 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-      skipDiscoveryDurationCheck: isAdmin && (b.status === 'completed' || b.status === 'confirmed'),
-      skipPastTimeCheck: !isAdmin && b.status === 'confirmed' && rescheduleRequested,
+      skipDiscoveryDurationCheck: isAdmin,
+      skipPastTimeCheck: isAdmin,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
-    // Downtime check on updates — time-aware overlap
-    if (acId) {
+    // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
+    if (acId && !isAdmin) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
-    if (rescheduleRequested || acId !== b.aircraft_id || stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString()) {
+    const scheduleChanged = acId !== b.aircraft_id
+      || sid !== b.student_id
+      || iid !== b.instructor_id
+      || stIso !== new Date(b.start_time).toISOString()
+      || etIso !== new Date(b.end_time).toISOString();
+    const needsConflictCheck = scheduleChanged && !isAdmin;
+    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
-        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-        if (conflicts.length > 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
+        if (needsConflictCheck) {
+          await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+          const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+          if (conflicts.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Scheduling conflict', conflicts });
+          }
         }
-        // If start_time changed, reset reminder_sent so a new reminder fires for the new time
         const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
         let booking_type = await deriveBookingType(client, sid, iid);
         if (isAdmin && req.body.booking_type) {
@@ -883,7 +894,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     await client.query('BEGIN');
-    // Notes-only or non-schedule updates
+    // Metadata-only updates (lesson type, notes) — no conflict check needed
     const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
     let booking_type = await deriveBookingType(client, sid, iid);
     if (isAdmin && req.body.booking_type) {

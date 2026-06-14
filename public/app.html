@@ -9707,7 +9707,7 @@ function openDayDetail(year, month, day) {
   const date = new Date(year, month, day);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  if (date < today) {
+  if (date < today && !bookingMgmtCanUsePastDates()) {
     alert('Cannot schedule flights in the past.');
     return;
   }
@@ -9798,6 +9798,14 @@ function bookingMgmtCanUsePastDates() {
 
 function bookingStaffCanUsePastDates() {
   return bookingMgmtCanUsePastDates();
+}
+
+function adminEditingBooking() {
+  return !!(bookingEditId && currentUser && ['owner', 'admin'].includes(currentUser.role));
+}
+
+function shouldForceDiscoveryDuration() {
+  return isDiscoveryBooking() && !adminEditingBooking();
 }
 
 function captureBookingFormDraft() {
@@ -10104,7 +10112,7 @@ function rebuildBookingTimePickers(options) {
   const multiday = document.getElementById('booking-multiday')?.checked;
   const endDateVal = document.getElementById('booking-end-date')?.value || dateVal;
 
-  if (isDiscoveryBooking() && !multiday && chosenStart) {
+  if (shouldForceDiscoveryDuration() && !multiday && chosenStart) {
     const end = addMinutesToHm(chosenStart, 20);
     const [eh, em] = end.time.split(':').map(Number);
     endSel.innerHTML = `<option value="${end.time}">${formatTimeStr(eh, em)} (20 min)</option>`;
@@ -10217,7 +10225,7 @@ function updateBookingEndTimes() {
   const prevEnd = endSel.value;
   const stepMin = getBookingTimeStepMinutes();
 
-  if (isDiscoveryBooking() && chosenStart) {
+  if (shouldForceDiscoveryDuration() && chosenStart) {
     const end = addMinutesToHm(chosenStart, 20);
     const [eh, em] = end.time.split(':').map(Number);
     endSel.innerHTML = `<option value="${end.time}">${formatTimeStr(eh, em)} (20 min)</option>`;
@@ -10519,7 +10527,7 @@ async function refreshBookingAircraft() {
 
     const bookedAcIds = await getBookedAircraftIdsForSlot(date, startTime, endTime);
     if (seq !== _bookingAircraftRefreshSeq) return;
-    if (bookedAcIds.size > 0) {
+    if (bookedAcIds.size > 0 && !adminEditingBooking()) {
       availableAircraft = availableAircraft.filter(a =>
         a.id === editAcId || !bookedAcIds.has(a.id)
       );
@@ -10672,7 +10680,7 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     showToast('End must be after start', 'error');
     return;
   }
-  if (isDiscoveryBooking() && !(bookingEditId && currentUser && ['owner', 'admin'].includes(currentUser.role))) {
+  if (shouldForceDiscoveryDuration()) {
     const durMin = (new Date(end_time) - new Date(start_time)) / 60000;
     if (Math.abs(durMin - 20) > 0.5) {
       errEl.textContent = 'Discovery flights must be booked in exactly 20-minute blocks';
