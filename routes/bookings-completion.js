@@ -7,10 +7,11 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
-const { checkConflicts, isInstructorAvailable, findNextAvailableSlots } = require('./bookings-routes');
 const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail, sendEmail } = require('../email-templates');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
+const { computeFlightCharges } = require('../lib/flight-charges');
+const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 
 const router = express.Router();
@@ -66,6 +67,16 @@ function validateHobbsValue(val, fieldName) {
   return null;
 }
 
+/** When a flight finishes before its scheduled end, shrink end_time so the slot can be rebooked. */
+function completionEndTime(booking) {
+  const now = new Date();
+  const scheduledEnd = new Date(booking.end_time);
+  const start = new Date(booking.start_time);
+  const effective = scheduledEnd > now ? now : scheduledEnd;
+  if (effective <= start) return start.toISOString();
+  return effective.toISOString();
+}
+
 router.patch('/:id/end-early', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -83,17 +94,58 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const originalEnd = new Date(b.end_time);
     if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
     await client.query('BEGIN');
-    await client.query(
-      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2`,
-      [endTime.toISOString(), req.params.id]
+    const newEndIso = endTime.toISOString();
+    const updated = await client.query(
+      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [newEndIso, req.params.id]
     );
     await client.query('COMMIT');
-    res.json({ ok: true, new_end_time: endTime.toISOString() });
+    res.json({ ok: true, new_end_time: newEndIso, booking: updated.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     const ts = new Date().toISOString();
     console.error(`[bookings-completion] [${ts}] PATCH /:id/end-early — user=${req.user?.id} error: ${err.message}`);
     res.status(500).json({ code: 'END_EARLY_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.patch('/:id/hours', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!['owner', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only owners and admins can edit completed booking hours' });
+    }
+    const bookingId = parseInt(req.params.id, 10);
+    const existing = await client.query('SELECT id, status FROM bookings WHERE id = $1', [bookingId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (existing.rows[0].status !== 'completed') {
+      return res.status(400).json({ error: 'Only completed bookings support direct hour edits' });
+    }
+
+    const { hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, lesson_type, flight_date } = req.body;
+    if (hobbs_start != null && hobbs_end != null && parseFloat(hobbs_end) <= parseFloat(hobbs_start)) {
+      return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
+    }
+
+    await client.query('BEGIN');
+    const synced = await syncFlightRecord(client, bookingId, {
+      hobbs_start,
+      hobbs_end,
+      tach_start,
+      tach_end,
+      dual_instruction_hours,
+      lesson_type,
+      flight_date,
+      submitted_by: req.user.id,
+    });
+    await client.query('COMMIT');
+    res.json({ ok: true, booking: synced.booking, flight_log: synced.flightLog });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[bookings-completion] PATCH /:id/hours error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to update booking hours' });
   } finally {
     client.release();
   }
@@ -129,10 +181,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
+      const finishedEnd = completionEndTime(b);
       await client.query('BEGIN');
       await client.query(
-        `UPDATE bookings SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-        [req.params.id]
+        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
+        [finishedEnd, req.params.id]
       );
       await client.query('COMMIT');
       const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
@@ -241,8 +294,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrRate = b.instructor_id
       ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]
       : null;
-    const aircraftChargeAmt = acRate ? Math.round(hobbsFlown * parseFloat(acRate.hourly_rate || 0) * 100) / 100 : 0;
-    const instrChargeAmt = (dualHrs > 0 && instrRate) ? Math.round(dualHrs * parseFloat(instrRate.instructor_rate || 0) * 100) / 100 : 0;
+    const { aircraftChargeAmount: aircraftChargeAmt, instructionChargeAmount: instrChargeAmt } = computeFlightCharges({
+      lessonType: b.lesson_type,
+      hobbsDelta: hobbsFlown,
+      dualHrs,
+      hourlyRate: acRate?.hourly_rate,
+      instructorRate: instrRate?.instructor_rate,
+    });
     // Upsert flight_log — aircraft_id, student_id, instructor_id, booking_type are required
     const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [req.params.id]);
     let logId;
@@ -307,11 +365,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         );
       }
     }
+    const finishedEnd = completionEndTime(b);
     // Update booking — persist hobbs/tach on booking row for billing queries
     await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, updated_at = NOW() WHERE id = $5`,
-      [hStart, hEnd, tStart, tEnd, req.params.id]
+       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW() WHERE id = $6`,
+      [hStart, hEnd, tStart, tEnd, finishedEnd, req.params.id]
     );
 
     // Auto-sync instructor hours log from completed flight

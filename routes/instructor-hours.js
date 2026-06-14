@@ -9,6 +9,7 @@ const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { recordHobbsReading } = require('../db/discrepancies');
 const { auditInstructorHoursEntry } = require('../lib/hours-audit');
+const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
 
 const router = express.Router();
 
@@ -181,10 +182,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 router.put('/:id', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
     const { role, id: userId } = req.user;
     const entryId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT * FROM instructor_hours WHERE id = $1', [entryId]);
+    const existing = await client.query('SELECT * FROM instructor_hours WHERE id = $1', [entryId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
     if (role === 'student') return res.status(403).json({ error: 'Access denied' });
     if (role === 'instructor' && existing.rows[0].instructor_id !== userId) {
@@ -208,7 +210,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       studentName: student_name ?? row.student_name,
       bookingId: row.booking_id,
     });
-    const result = await pool.query(`
+
+    await client.query('BEGIN');
+    const result = await client.query(`
       UPDATE instructor_hours SET entry_date = COALESCE($1, entry_date), aircraft_hours = $2, instruction_hours = $3,
         aircraft_rate = $4, instructor_rate = $5, notes = $6, student_name = $7,
         audit_status = $8, audit_message = $9, updated_at = NOW()
@@ -219,10 +223,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
+
+    if (result.rows[0].booking_id) {
+      await syncFlightRecordFromInstructorHours(client, result.rows[0]);
+    }
+
+    await client.query('COMMIT');
     res.json({ ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Instructor hours update error:', err);
-    res.status(500).json({ error: 'Failed to update entry' });
+    res.status(500).json({ error: err.message || 'Failed to update entry' });
+  } finally {
+    client.release();
   }
 });
 

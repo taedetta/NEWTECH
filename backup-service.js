@@ -21,48 +21,53 @@ const { sanitizeUploadUrl } = require('./lib/upload-url');
 const { prod, assertProductionExport } = require('./lib/production-query');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
-const { formatDateCT, formatDateTimeCT } = require('./lib/timezone-ct');
+const { calendarDateFromDate, formatDate, getParts, SCHOOL_TZ } = require('./lib/school-timezone');
 
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
-// School timezone (Eastern — Dublin, VA)
-function toCentral(date) {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-}
+// ── Timezone helpers (US Eastern — Virginia) ───────────────────────────────
 
 function isoDate(date) {
-  const d = toCentral(date);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return calendarDateFromDate(date instanceof Date ? date : new Date(date));
+}
+
+function formatDateET(dateVal) {
+  if (!dateVal) return '—';
+  return formatDate(dateVal, { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function formatDateTimeET(date) {
+  return formatDate(date, {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }) + ' ET';
+}
+
+function easternNowParts() {
+  return getParts(new Date(), SCHOOL_TZ);
 }
 
 // ── Date range computation ──────────────────────────────────────────────────
 
 function getDateRange(frequency) {
   const now = new Date();
-  const ct = toCentral(now);
+  const p = easternNowParts();
 
   let label;
 
   if (frequency === 'daily') {
     label = isoDate(now);
   } else if (frequency === 'weekly') {
-    const end = new Date(ct.getFullYear(), ct.getMonth(), ct.getDate(), 23, 59, 59, 999);
-    const start = new Date(end);
-    start.setDate(start.getDate() - 6);
-    start.setHours(0, 0, 0, 0);
-    label = `${isoDate(start)}_to_${isoDate(end)}`;
+    const endStr = isoDate(now);
+    const startStr = calendarDateFromDate(new Date(now.getTime() - 6 * 86400000));
+    label = `${startStr}_to_${endStr}`;
   } else if (frequency === 'monthly') {
-    const firstOfThisMonth = new Date(ct.getFullYear(), ct.getMonth(), 1);
-    const lastOfPriorMonth = new Date(firstOfThisMonth - 1);
-    const monthName = lastOfPriorMonth.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'America/New_York' });
+    const monthName = formatDate(now, { month: 'long', year: 'numeric' });
     label = monthName.replace(' ', '_');
   } else if (frequency === 'yearly') {
-    label = String(ct.getFullYear() - 1);
+    label = String(p.year - 1);
   } else {
     label = isoDate(now);
   }
@@ -127,40 +132,13 @@ const COLORS = {
 
 // ── PDF document factory ────────────────────────────────────────────────────
 
-function createPdfDoc(options = {}) {
+function createPdfDoc() {
   return new PDFDocument({
     size: 'LETTER',
-    layout: options.landscape ? 'landscape' : 'portrait',
     margins: { top: 72, bottom: 72, left: 54, right: 54 },
     bufferPages: true,
     info: { Author: 'New Tech Aviation', Creator: 'FlightSlate Backup System' },
   });
-}
-
-function contentWidth(doc, lm, rightEdge) {
-  return rightEdge - lm;
-}
-
-/** Scale column widths so the table fits inside printable area. */
-function fitColWidths(colWidths, maxWidth) {
-  const sum = colWidths.reduce((a, b) => a + b, 0);
-  if (sum <= maxWidth) return colWidths.slice();
-  const minCol = 24;
-  let scaled = colWidths.map((w) => Math.max(minCol, Math.floor((w / sum) * maxWidth)));
-  let used = scaled.reduce((a, b) => a + b, 0);
-  let i = 0;
-  while (used < maxWidth && i < 500) {
-    scaled[i % scaled.length]++;
-    used++;
-    i++;
-  }
-  while (used > maxWidth) {
-    const idx = scaled.findIndex((w) => w > minCol);
-    if (idx < 0) break;
-    scaled[idx]--;
-    used--;
-  }
-  return scaled;
 }
 
 // ── Page header ─────────────────────────────────────────────────────────────
@@ -189,7 +167,7 @@ function drawPageHeader(doc, title, generatedAt, totalRecords) {
   // Generated date + record count — top right
   const metaX = pageWidth - 54 - 155;
   doc.fillColor(COLORS.darkGray).font('Helvetica').fontSize(8)
-    .text(`Generated: ${generatedAt} ET`, metaX, 102, { width: 155, align: 'right' });
+    .text(`Generated: ${generatedAt} CT`, metaX, 102, { width: 155, align: 'right' });
   doc.fillColor(COLORS.medGray).font('Helvetica').fontSize(8)
     .text(`Total records: ${totalRecords}`, metaX, 114, { width: 155, align: 'right' });
 
@@ -254,23 +232,8 @@ function drawSummaryBox(doc, lines, lm, rightEdge) {
 const ROW_H = 17;
 const HDR_H = 20;
 
-function measureCellHeight(doc, text, width, font, fontSize) {
-  doc.font(font).fontSize(fontSize);
-  return doc.heightOfString(String(text ?? '—'), { width: Math.max(10, width - 6) });
-}
-
-function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments, wrapMask) {
-  const fontSize = isHeader ? 7.5 : 7;
-  const font = isHeader ? 'Helvetica-Bold' : 'Helvetica';
-  let rowH = isHeader ? HDR_H : ROW_H;
-  if (wrapMask) {
-    for (let i = 0; i < cols.length; i++) {
-      if (wrapMask[i]) {
-        rowH = Math.max(rowH, measureCellHeight(doc, cols[i], colWidths[i], font, fontSize) + 8);
-      }
-    }
-  }
-
+function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments) {
+  const rowH = isHeader ? HDR_H : ROW_H;
   const bgColor = isHeader ? COLORS.navy : (isAlt ? COLORS.rowAlt : COLORS.white);
   const textColor = isHeader ? COLORS.white : COLORS.darkGray;
 
@@ -278,14 +241,13 @@ function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments, 
   for (let i = 0; i < cols.length; i++) {
     doc.rect(x, y, colWidths[i], rowH).fill(bgColor);
     const align = alignments && alignments[i] ? alignments[i] : 'left';
-    const wrap = wrapMask && wrapMask[i];
     doc.fillColor(textColor)
-      .font(font)
-      .fontSize(fontSize)
-      .text(String(cols[i] ?? '—'), x + 3, y + (isHeader ? 6 : 4), {
+      .font(isHeader ? 'Helvetica-Bold' : 'Helvetica')
+      .fontSize(isHeader ? 7.5 : 7)
+      .text(String(cols[i] ?? '—'), x + 3, y + (isHeader ? 6 : 5), {
         width: colWidths[i] - 6,
-        ellipsis: !wrap,
-        lineBreak: !!wrap,
+        ellipsis: true,
+        lineBreak: false,
         align,
       });
     x += colWidths[i];
@@ -297,10 +259,9 @@ function drawTableRow(doc, cols, colWidths, y, isHeader, isAlt, lm, alignments, 
  * Draw a full table, paginating as needed.
  * pageInfo: { title, generatedAt, totalRecords, pageCounter, lm, rightEdge }
  */
-function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryRows, wrapMask) {
+function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryRows) {
   const { title, generatedAt, totalRecords, pageCounter, lm, rightEdge } = pageInfo;
   const pageBottomLimit = doc.page.height - 60;
-  const widths = fitColWidths(colWidths, contentWidth(doc, lm, rightEdge));
 
   let y = doc.y;
 
@@ -311,28 +272,24 @@ function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryR
     drawPageHeader(doc, title, generatedAt, totalRecords);
     y = doc.y;
   }
-  y = drawTableRow(doc, headers, widths, y, true, false, lm, alignments, null);
+  y = drawTableRow(doc, headers, colWidths, y, true, false, lm, alignments);
 
   // Draw data rows
   for (let i = 0; i < rows.length; i++) {
-    const estH = wrapMask
-      ? Math.max(ROW_H, ...rows[i].map((cell, ci) => (wrapMask[ci]
-        ? measureCellHeight(doc, cell, widths[ci], 'Helvetica', 7) + 8 : ROW_H)))
-      : ROW_H;
-    if (y + estH > pageBottomLimit) {
+    if (y + ROW_H > pageBottomLimit) {
       pageCounter.count++;
       doc.addPage();
       drawPageHeader(doc, title, generatedAt, totalRecords);
       y = doc.y;
-      y = drawTableRow(doc, headers, widths, y, true, false, lm, alignments, null);
+      y = drawTableRow(doc, headers, colWidths, y, true, false, lm, alignments);
     }
-    y = drawTableRow(doc, rows[i], widths, y, false, i % 2 === 1, lm, alignments, wrapMask);
+    y = drawTableRow(doc, rows[i], colWidths, y, false, i % 2 === 1, lm, alignments);
   }
 
   // Empty state
   if (rows.length === 0) {
-    const emptyRow = headers.map((_, idx) => (idx === 0 ? 'No records found' : ''));
-    y = drawTableRow(doc, emptyRow, widths, y, false, false, lm, null, null);
+    const emptyRow = headers.map((_, i) => i === 0 ? 'No records found' : '');
+    y = drawTableRow(doc, emptyRow, colWidths, y, false, false, lm, null);
   }
 
   // Summary footer row
@@ -344,18 +301,19 @@ function drawTable(doc, headers, colWidths, rows, alignments, pageInfo, summaryR
         drawPageHeader(doc, title, generatedAt, totalRecords);
         y = doc.y;
       }
+      // Bold summary row with light navy bg
       const rowH = HDR_H;
       let x = lm;
       for (let i = 0; i < sr.length; i++) {
-        doc.rect(x, y, widths[i], rowH).fill(COLORS.lightGray);
+        doc.rect(x, y, colWidths[i], rowH).fill(COLORS.lightGray);
         doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(7.5)
           .text(String(sr[i] ?? ''), x + 3, y + 6, {
-            width: widths[i] - 6,
+            width: colWidths[i] - 6,
             ellipsis: true,
             lineBreak: false,
             align: alignments && alignments[i] ? alignments[i] : 'left',
           });
-        x += widths[i];
+        x += colWidths[i];
       }
       y += rowH;
     }
@@ -399,7 +357,7 @@ function addFootersAndFinalize(doc, title, generatedAt, totalRecords, pageCounte
 // ── PDF builders ─────────────────────────────────────────────────────────────
 
 async function buildBillingPdf(pool, generatedAt) {
-  const doc = createPdfDoc({ landscape: true });
+  const doc = createPdfDoc();
   const lm = 54;
   const rightEdge = doc.page.width - 54;
   const pageCounter = { count: 1 };
@@ -482,7 +440,7 @@ async function buildBillingPdf(pool, generatedAt) {
     const colWidths = [52, 80, 75, 52, 44, 44, 38, 40, 40, 38, 42, 38, 50, 50, 50];
     const alignments = ['left','left','left','left','right','right','right','right','right','right','right','right','right','right','right'];
     const rows = q.rows.map(r => [
-      formatDateCT(r.flight_date),
+      formatDateET(r.flight_date),
       r.student_name || '—',
       r.instructor_name || 'Solo',
       r.tail_number || '—',
@@ -518,7 +476,7 @@ async function buildBillingPdf(pool, generatedAt) {
     const colWidths = [70, 140, 130, 80, 80, 87];
     const alignments = ['left','left','left','right','right','right'];
     const rows = groundQ.rows.map(r => [
-      formatDateCT(r.session_date),
+      formatDateET(r.session_date),
       r.student_name || '—',
       r.instructor_name || '—',
       formatDecimal(r.ground_hours, 2),
@@ -607,7 +565,7 @@ async function buildInstructorHoursPdf(pool, generatedAt) {
     const colWidths = [54, 90, 85, 45, 52, 50, 50, 48, 60, 53];
     const alignments = ['left','left','left','left','left','right','right','right','right','right'];
     const rows = allRows.map(r => [
-      formatDateCT(r.date),
+      formatDateET(r.date),
       r.instructor_name || '—',
       r.student_name || '—',
       r.session_type,
@@ -632,7 +590,7 @@ async function buildInstructorHoursPdf(pool, generatedAt) {
 }
 
 async function buildFlightLogsPdf(pool, generatedAt) {
-  const doc = createPdfDoc({ landscape: true });
+  const doc = createPdfDoc();
   const lm = 54;
   const rightEdge = doc.page.width - 54;
   const pageCounter = { count: 1 };
@@ -701,7 +659,7 @@ async function buildFlightLogsPdf(pool, generatedAt) {
     const colWidths = [54, 82, 78, 50, 42, 44, 38, 40, 42, 38, 42, 57];
     const alignments = ['left','left','left','left','right','right','right','right','right','right','right','left'];
     const rows = q.rows.map(r => [
-      formatDateCT(r.flight_date),
+      formatDateET(r.flight_date),
       r.student_name || '—',
       r.instructor_name || 'Solo',
       r.tail_number || '—',
@@ -750,7 +708,7 @@ async function buildFlightLogsPdf(pool, generatedAt) {
         drawPageHeader(doc, 'Flight Logs Report', generatedAt, totalRecords);
       }
       doc.fillColor(COLORS.darkGray).font('Helvetica-Bold').fontSize(7.5)
-        .text(`${formatDateCT(r.flight_date)} — ${r.student_name || '—'} / ${r.tail_number || '—'}:`, lm, doc.y);
+        .text(`${formatDateET(r.flight_date)} — ${r.student_name || '—'} / ${r.tail_number || '—'}:`, lm, doc.y);
       doc.fillColor(COLORS.darkGray).font('Helvetica').fontSize(7.5)
         .text(r.notes, lm + 10, doc.y, { width: rightEdge - lm - 10 });
       doc.moveDown(0.4);
@@ -825,19 +783,19 @@ async function buildEndorsementsPdf(pool, generatedAt) {
         ? `${r.aircraft_tail}${r.aircraft_make_model ? ' ' + r.aircraft_make_model : ''}`
         : (r.aircraft_make_model || '—');
       return [
-        formatDateCT(r.endorsement_date),
+        formatDateET(r.endorsement_date),
         r.student_name || '—',
         r.instructor_name || '—',
         r.instructor_cert_number || '—',
         r.endorsement_type || r.template_key || '—',
         aircraft,
-        r.expiration_date ? formatDateCT(r.expiration_date) : 'No Expiry',
+        r.expiration_date ? formatDateET(r.expiration_date) : 'No Expiry',
         endorsementStatus(r),
         r.cfi_signed ? 'Yes' : 'No',
         r.student_signed_flag ? 'Yes' : 'No',
       ];
     });
-    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null, [false, false, false, false, true, true, false, false, false, false]);
+    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null);
   }
 
   return addFootersAndFinalize(doc, 'Endorsements Report', generatedAt, totalRecords, pageCounter);
@@ -905,7 +863,7 @@ async function buildStudentDirectoryPdf(pool, generatedAt) {
       r.email || '—',
       formatPhone(r.phone_number),
       r.role ? (r.role.charAt(0).toUpperCase() + r.role.slice(1)) : '—',
-      r.created_at ? formatDateCT(r.created_at) : '—',
+      r.created_at ? formatDateET(r.created_at) : '—',
       r.deleted_at ? 'Inactive' : 'Active',
       r.assigned_instructor || (r.role === 'student' ? 'Unassigned' : '—'),
     ]);
@@ -973,16 +931,16 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
 
     const rows = q.rows.map(r => [
       r.tail_number ? `${r.tail_number}` : '—',
-      r.reported_at ? formatDateCT(r.reported_at) : '—',
+      r.reported_at ? formatDateET(r.reported_at) : '—',
       r.reported_by_name || '—',
       r.description || '—',
       capFirst(r.severity),
       capFirst(r.status),
       r.resolution_notes || '—',
       r.expected_downtime || '—',
-      r.updated_at ? formatDateCT(r.updated_at) : '—',
+      r.updated_at ? formatDateET(r.updated_at) : '—',
     ]);
-    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null, [false, false, false, true, false, false, true, false, false]);
+    drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null);
   }
 
   return addFootersAndFinalize(doc, 'Maintenance Logs Report', generatedAt, totalRecords, pageCounter);
@@ -1001,7 +959,7 @@ async function uploadPdfToR2(pdfBuffer, filename) {
 async function sendBackupEmail(frequency, label, downloadLinks, recordCounts, zipAttachment) {
   const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
   const subject = `New Tech Aviation — ${freqLabel} Data Backup — ${label}`;
-  const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const generatedAt = formatDateTimeET(new Date());
 
   const bodyHtml = buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
   const bodyText = buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
@@ -1062,7 +1020,7 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
           <td style="padding:32px;">
             <h2 style="margin:0 0 8px;color:#0F1D2F;font-size:22px;">${freqLabel} Data Backup</h2>
             <p style="margin:0 0 6px;color:#6B7280;font-size:13px;">Backup ID: <strong>${label}</strong></p>
-            <p style="margin:0 0 24px;color:#6B7280;font-size:13px;">Generated: <strong>${generatedAt} ET</strong></p>
+            <p style="margin:0 0 24px;color:#6B7280;font-size:13px;">Generated: <strong>${generatedAt} CT</strong></p>
             <p style="color:#374151;font-size:15px;margin:0 0 20px;">
               Your ${freqLabel.toLowerCase()} backup reports are ready. Each PDF contains <strong>complete historical data</strong> — not just recent activity.
             </p>
@@ -1094,7 +1052,7 @@ function buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downl
           <td style="background:#0F1D2F;padding:20px 32px;">
             <p style="margin:0;color:#9CA3AF;font-size:12px;">
               New Tech Aviation · 179 Airport Circle, Dublin, VA 24084 · KPSK<br>
-              Automated backup generated ${generatedAt} ET
+              Automated backup generated ${generatedAt} CT
             </p>
           </td>
         </tr>
@@ -1113,7 +1071,7 @@ function buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downl
   }).join('\n');
   const rcLines = recordCounts.map(rc => `  - ${rc.name}: ${rc.count} records`).join('\n');
   return `New Tech Aviation — ${freqLabel} Data Backup (${label})
-Generated: ${generatedAt} ET
+Generated: ${generatedAt} CT
 ${zipAttachment ? `\nAttachment: ${zipAttachment.name} (all 6 PDF reports)\n` : ''}
 Full history backup — ALL records from the database.
 
@@ -1135,11 +1093,7 @@ async function runBackup(pool, frequency) {
 
   try {
     const { label } = getDateRange(frequency);
-    const generatedAt = new Date().toLocaleString('en-US', {
-      timeZone: 'America/New_York',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: true,
-    });
+    const generatedAt = formatDateTimeET(new Date());
 
     console.log(`[backup] Generating 6 PDFs with full data...`);
 
@@ -1203,7 +1157,7 @@ async function runBackup(pool, frequency) {
       'New Tech Aviation — PDF Data Backup',
       `Frequency: ${frequency}`,
       `Label: ${label}`,
-      `Generated: ${generatedAt} ET`,
+      `Generated: ${generatedAt} CT`,
       '',
       'Each folder contains one PDF report with complete historical data.',
       '',
@@ -1242,12 +1196,12 @@ function startBackupScheduler(pool) {
 
   setInterval(async () => {
     const now = new Date();
-    const ct = toCentral(now);
-    const h = ct.getHours();
-    const m = ct.getMinutes();
-    const dow = ct.getDay();
-    const dom = ct.getDate();
-    const moy = ct.getMonth() + 1;
+    const p = easternNowParts();
+    const h = p.hour;
+    const m = p.minute;
+    const dow = new Date(p.year, p.month - 1, p.day).getDay();
+    const dom = p.day;
+    const moy = p.month;
     const todayKey = isoDate(now);
 
     if (h === 2 && m === 0 && lastRun.daily !== todayKey) {
@@ -1268,7 +1222,7 @@ function startBackupScheduler(pool) {
     }
   }, 60 * 1000);
 
-  // Start nightly CSV export at 11 PM ET (separate from PDF backup)
+  // Start nightly CSV export at 11 PM CT (separate from PDF backup)
   startExportScheduler(pool);
 }
 

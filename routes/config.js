@@ -3,6 +3,8 @@
 const express = require('express');
 const { getAppBuildVersion } = require('../lib/app-build-version');
 const { isCaptchaEnabled, getTurnstileSiteKey } = require('../lib/captcha');
+const { getAppUrl } = require('../lib/app-url');
+const { SCHOOL_TZ, SCHOOL_TZ_LABEL } = require('../lib/school-timezone');
 
 const router = express.Router();
 
@@ -19,10 +21,12 @@ router.get('/', (req, res) => {
     isStaging: staging,
     isProduction: !staging,
     sideEffectsDisabled: staging,
-    appUrl: process.env.APP_URL || '',
+    appUrl: getAppUrl(req),
     version: getAppBuildVersion(),
     captchaEnabled: isCaptchaEnabled(),
     turnstileSiteKey: isCaptchaEnabled() ? getTurnstileSiteKey() : '',
+    timezone: SCHOOL_TZ,
+    timezoneLabel: SCHOOL_TZ_LABEL,
   });
 });
 

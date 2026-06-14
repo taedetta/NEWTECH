@@ -5,6 +5,7 @@
 
 const LOGO_URL = 'https://pub-629428d185ca4960a0a73c850d32294b.r2.dev/company_96457/images/6131da51-11d1-4327-8e6f-470c3e242f0b.png';
 const { getAppUrl } = require('./lib/app-url');
+const { formatDate, formatTime, formatDateTimeShort, SCHOOL_TZ_LABEL } = require('./lib/school-timezone');
 const ADMIN_NOTIFICATION_EMAILS = [
   'blankthe97@gmail.com',
   'art@3vaflight.com',
@@ -107,7 +108,7 @@ function pendingApprovalEmail({ name, role }) {
  */
 function adminApprovalNotificationEmail({ userName, userEmail, userRole, signupDate }) {
   const roleDisplay = roleDisplayLabel(userRole);
-  const dateStr = new Date(signupDate).toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const dateStr = formatDateTimeShort(signupDate);
   const html = wrapEmailHtml(`
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#080E1A;">New User Pending Approval ✈️</h2>
     <p style="margin:0 0 20px;">A new account has been created and requires your review before they can access the scheduling platform.</p>
@@ -281,9 +282,9 @@ function inviteEmail({ name, email, password, role, invitedByName }) {
  * Booking confirmation email — sent to student and instructor when a flight is booked.
  */
 function bookingConfirmationEmail({ recipientName, studentName, instructorName, aircraftTailNumber, startTime, endTime, isStudent }) {
-  const dateStr = new Date(startTime).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const startStr = new Date(startTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const endStr = new Date(endTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = formatDate(startTime, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const startStr = formatTime(startTime, { hour: '2-digit', minute: '2-digit' });
+  const endStr = formatTime(endTime, { hour: '2-digit', minute: '2-digit' });
 
   const html = wrapEmailHtml(`
     <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#080E1A;">Flight Booking Confirmed ✅</h2>
@@ -461,9 +462,9 @@ Manage your booking: ${manageUrl}
  * after a flight booking is marked completed.
  */
 function flightCompletedEmail({ recipientName, studentName, instructorName, tailNumber, makeModel, flightDate, startTime, endTime, hobbsHours, tachHours, completedBy, completedByRole, dualInstructionHours }) {
-  const dateStr = new Date(flightDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const startStr = new Date(startTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const endStr = new Date(endTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = formatDate(flightDate, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const startStr = formatTime(startTime, { hour: '2-digit', minute: '2-digit' });
+  const endStr = formatTime(endTime, { hour: '2-digit', minute: '2-digit' });
   const hobbsStr = hobbsHours != null ? `${parseFloat(hobbsHours).toFixed(1)} hrs` : null;
   const tachStr = tachHours != null ? `${parseFloat(tachHours).toFixed(1)} hrs` : null;
   const completedByLabel = completedByRole ? completedByRole.charAt(0).toUpperCase() + completedByRole.slice(1) : 'User';
@@ -535,9 +536,9 @@ function flightCompletedEmail({ recipientName, studentName, instructorName, tail
  * after a flight booking is cancelled.
  */
 function flightCancelledEmail({ recipientName, studentName, instructorName, tailNumber, makeModel, flightDate, startTime, endTime, cancelledBy, cancelledByRole, cancellationReason }) {
-  const dateStr = new Date(flightDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const startStr = new Date(startTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const endStr = new Date(endTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = formatDate(flightDate, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const startStr = formatTime(startTime, { hour: '2-digit', minute: '2-digit' });
+  const endStr = formatTime(endTime, { hour: '2-digit', minute: '2-digit' });
   const cancelledByLabel = cancelledByRole ? cancelledByRole.charAt(0).toUpperCase() + cancelledByRole.slice(1) : 'User';
 
   const html = wrapEmailHtml(`
@@ -599,7 +600,7 @@ function flightCancelledEmail({ recipientName, studentName, instructorName, tail
  * when a squawk with severity "grounding" is created or changed to grounding.
  */
 function groundingSquawkEmail({ recipientName, tailNumber, makeModel, description, reporterName, reportedAt, expectedDowntime }) {
-  const dateStr = new Date(reportedAt).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const dateStr = formatDate(reportedAt, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const downtimeStr = expectedDowntime || 'Unknown / TBD';
 
   const html = wrapEmailHtml(`

@@ -15,16 +15,10 @@ const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
 
-function toCentral(date) {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-}
+const { calendarDateFromDate } = require('../lib/school-timezone');
 
 function isoDate(date) {
-  const d = toCentral(date);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return calendarDateFromDate(date instanceof Date ? date : new Date(date));
 }
 
 async function ensureDatabaseSchema(pool) {

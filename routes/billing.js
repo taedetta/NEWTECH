@@ -4,6 +4,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { listHoursAuditFlags } = require('../lib/hours-audit');
+const { syncFlightRecord } = require('../lib/sync-flight-record');
 
 const router = express.Router();
 
@@ -27,11 +28,15 @@ function dualHrsExpr() {
 }
 
 function acChargeExpr() {
-  return `COALESCE(fl.aircraft_charge_amount, ${hobbsExpr()} * COALESCE(a.hourly_rate, 0))`;
+  return `COALESCE(fl.aircraft_charge_amount,
+    CASE WHEN b.lesson_type ~* '^discovery(\\s*flight)?$' THEN 185
+    ELSE ${hobbsExpr()} * COALESCE(a.hourly_rate, 0) END)`;
 }
 
 function instrChargeExpr() {
-  return `COALESCE(fl.instruction_charge_amount, ${dualHrsExpr()} * COALESCE(inst.instructor_rate, 0))`;
+  return `COALESCE(fl.instruction_charge_amount,
+    CASE WHEN b.lesson_type ~* '^discovery(\\s*flight)?$' THEN 0
+    ELSE ${dualHrsExpr()} * COALESCE(inst.instructor_rate, 0) END)`;
 }
 
 router.get('/summary', authenticateToken, async (req, res) => {
@@ -232,28 +237,38 @@ router.delete('/ground/:gsId', authenticateToken, async (req, res) => {
 });
 
 router.put('/flights/:bookingId', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can edit billing entries' });
-    const bookingId = parseInt(req.params.bookingId);
-    const { aircraft_charge_amount, instruction_charge_amount, dual_instruction_hours, flight_date } = req.body;
-    const updates = [];
-    const vals = [];
-    let idx = 1;
-    if (aircraft_charge_amount !== undefined) { updates.push(`aircraft_charge_amount = $${idx++}`); vals.push(aircraft_charge_amount); }
-    if (instruction_charge_amount !== undefined) { updates.push(`instruction_charge_amount = $${idx++}`); vals.push(instruction_charge_amount); }
-    if (dual_instruction_hours !== undefined) { updates.push(`dual_instruction_hours = $${idx++}`); vals.push(dual_instruction_hours); }
-    if (flight_date !== undefined) { updates.push(`flight_date = $${idx++}`); vals.push(flight_date); }
-    if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
-    vals.push(bookingId);
-    const flResult = await pool.query(
-      `UPDATE flight_logs SET ${updates.join(', ')} WHERE booking_id = $${idx} RETURNING id`,
-      vals
-    );
-    if (flResult.rows.length === 0) return res.status(404).json({ error: 'No flight log record found for this booking' });
-    res.json({ ok: true });
+    const bookingId = parseInt(req.params.bookingId, 10);
+    if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
+    const { aircraft_charge_amount, instruction_charge_amount, dual_instruction_hours, flight_date, hobbs_start, hobbs_end, tach_start, tach_end, lesson_type } = req.body;
+
+    await client.query('BEGIN');
+    const synced = await syncFlightRecord(client, bookingId, {
+      aircraft_charge_amount,
+      instruction_charge_amount,
+      dual_instruction_hours,
+      flight_date,
+      hobbs_start,
+      hobbs_end,
+      tach_start,
+      tach_end,
+      lesson_type,
+    });
+    await client.query('COMMIT');
+    res.json({
+      ok: true,
+      booking_id: bookingId,
+      aircraft_charge_amount: synced.aircraftChargeAmount,
+      instruction_charge_amount: synced.instructionChargeAmount,
+    });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Billing flight update error:', err);
-    res.status(500).json({ error: 'Failed to update billing entry' });
+    res.status(500).json({ error: err.message || 'Failed to update billing entry' });
+  } finally {
+    client.release();
   }
 });
 

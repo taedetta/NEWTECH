@@ -11,13 +11,17 @@ const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'bl
 
 // ── Timezone helpers ───────────────────────────────────────────────────────────
 
-function toCentral(date) {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-}
+const { calendarDateFromDate, formatDate, getParts, SCHOOL_TZ } = require('./lib/school-timezone');
 
 function isoDate(d) {
-  const ct = toCentral(d);
-  return `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`;
+  return calendarDateFromDate(d instanceof Date ? d : new Date(d));
+}
+
+function formatDateTimeET(date) {
+  return formatDate(date, {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }) + ' ET';
 }
 
 // ── CSV helpers ────────────────────────────────────────────────────────────────
@@ -331,7 +335,7 @@ async function sendExportEmail(dateLabel, files, zipAttachment) {
     return;
   }
   const subject = `New Tech Aviation — Complete Records Export — ${dateLabel}`;
-  const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const generatedAt = formatDateTimeET(new Date());
 
   const tableRows = files.map((f, i) => `
     <tr style="background:${i % 2 === 0 ? '#fff' : '#F9FAFB'}">
@@ -358,7 +362,7 @@ async function sendExportEmail(dateLabel, files, zipAttachment) {
       <tr><td style="padding:32px;">
         <h2 style="margin:0 0 8px;color:#0F1D2F;font-size:22px;">Complete Records Export</h2>
         <p style="margin:0 0 4px;color:#6B7280;font-size:13px;">Export Date: <strong>${dateLabel}</strong></p>
-        <p style="margin:0 0 24px;color:#6B7280;font-size:13px;">Generated: <strong>${generatedAt} ET</strong></p>
+        <p style="margin:0 0 24px;color:#6B7280;font-size:13px;">Generated: <strong>${generatedAt}</strong></p>
         <p style="color:#374151;font-size:15px;margin:0 0 20px;">
           Full historical export — <strong>every record from the beginning of time</strong>, no date filtering. 9 CSV files covering all operational data.
         </p>
@@ -382,7 +386,7 @@ async function sendExportEmail(dateLabel, files, zipAttachment) {
       <tr><td style="background:#0F1D2F;padding:20px 32px;">
         <p style="margin:0;color:#9CA3AF;font-size:12px;">
           New Tech Aviation · 179 Airport Circle, Dublin, VA 24084 · KPSK<br>
-          Automated nightly export — ${generatedAt} ET
+          Automated nightly export — ${generatedAt}
         </p>
       </td></tr>
     </table>
@@ -390,7 +394,7 @@ async function sendExportEmail(dateLabel, files, zipAttachment) {
 </table>
 </body></html>`;
 
-  const bodyText = `New Tech Aviation — Complete Records Export — ${dateLabel}\nGenerated: ${generatedAt} ET\n\n` +
+  const bodyText = `New Tech Aviation — Complete Records Export — ${dateLabel}\nGenerated: ${generatedAt}\n\n` +
     (zipAttachment ? `Attachment: ${zipAttachment.name} (all 9 CSV files)\n\n` : '') +
     `Full history export — ALL records, no date filtering.\n\n` +
     files.map((f) => {
@@ -529,10 +533,9 @@ function startExportScheduler(pool) {
   const lastRun = { nightly: null };
 
   setInterval(() => {
-    const ct = toCentral(new Date());
+    const p = getParts(new Date(), SCHOOL_TZ);
     const todayKey = isoDate(new Date());
-    // Fire at 23:00 ET, once per day
-    if (ct.getHours() === 23 && ct.getMinutes() === 0 && lastRun.nightly !== todayKey) {
+    if (p.hour === 23 && p.minute === 0 && lastRun.nightly !== todayKey) {
       lastRun.nightly = todayKey;
       runExport(pool).catch(err => console.error('[export] Nightly error:', err.message));
     }
