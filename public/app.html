@@ -16122,6 +16122,40 @@ function isDiscoveryLessonTypeValue(lt) {
   return /^discovery/i.test(String(lt).trim());
 }
 
+function ensureHistoryLessonTypeOption(selectEl, value) {
+  if (!selectEl || !value) return;
+  const v = String(value).trim();
+  if (!v) return;
+  if (Array.from(selectEl.options).some(o => o.value === v)) return;
+  const opt = document.createElement('option');
+  opt.value = v;
+  opt.textContent = v + ' (saved)';
+  selectEl.appendChild(opt);
+}
+
+function resolveHistoryLessonType(record) {
+  if (!record) return 'Dual Instruction';
+  const lt = (record.lesson_type || '').trim();
+  if (lt) return lt;
+  if (record.instructor_name || record.booking_type === 'dual') return 'Dual Instruction';
+  if (record.booking_type === 'student_solo' || record.booking_type === 'renter_solo') return 'Solo';
+  return 'Dual Instruction';
+}
+
+function setHistoryLessonTypeSelect(record) {
+  const ltEl = document.getElementById('edit-history-lesson-type');
+  if (!ltEl) return '';
+  const resolved = resolveHistoryLessonType(record);
+  ensureHistoryLessonTypeOption(ltEl, resolved);
+  if (Array.from(ltEl.options).some(o => o.value === resolved)) {
+    ltEl.value = resolved;
+  } else {
+    ensureHistoryLessonTypeOption(ltEl, resolved);
+    ltEl.value = resolved;
+  }
+  return ltEl.value || resolved;
+}
+
 function applyEditHistoryDiscoveryCharges() {
   const lt = document.getElementById('edit-history-lesson-type')?.value || '';
   const acEl = document.getElementById('edit-history-ac-charge');
@@ -16143,8 +16177,7 @@ function openEditHistoryModal(id) {
   if (!r) { showToast('Row data not found — reload the page', 'error'); return; }
   document.getElementById('edit-history-id').value = id;
   document.getElementById('edit-history-session-type').value = r.session_type || 'flight';
-  const ltEl = document.getElementById('edit-history-lesson-type');
-  if (ltEl) ltEl.value = r.lesson_type || '';
+  const resolvedLessonType = setHistoryLessonTypeSelect(r);
   document.getElementById('edit-history-date').value = r.flight_date ? String(r.flight_date).slice(0,10) : '';
   document.getElementById('edit-history-dual-hrs').value = r.dual_instruction_hours != null ? parseFloat(r.dual_instruction_hours).toFixed(1) : '';
   document.getElementById('edit-history-hobbs-start').value = r.hobbs_start != null ? parseFloat(r.hobbs_start).toFixed(1) : '';
@@ -16169,6 +16202,11 @@ async function saveEditHistory() {
   var id = document.getElementById('edit-history-id').value;
   var sessionType = document.getElementById('edit-history-session-type').value || 'flight';
   var lessonType = document.getElementById('edit-history-lesson-type')?.value || null;
+  if (!lessonType || !String(lessonType).trim()) {
+    if (errEl) { errEl.textContent = 'Please select a flight type (e.g. Dual Instruction or Discovery Flight).'; errEl.classList.remove('hidden'); }
+    showToast('Select a flight type before saving', 'error');
+    return;
+  }
   var body = {
     flight_date: document.getElementById('edit-history-date').value || null,
     lesson_type: lessonType,
@@ -19130,6 +19168,7 @@ function ihEntryHobbsCharge(e) {
 }
 
 function ihEntryInstrCharge(e) {
+  if (isDiscoveryLessonTypeValue(e.booking_lesson_type)) return 0;
   if (e.flight_instruction_charge != null && e.flight_instruction_charge !== '') {
     return parseFloat(e.flight_instruction_charge) || 0;
   }
@@ -19580,7 +19619,9 @@ function updateEditIHPreview() {
   var inRate = parseFloat(document.getElementById('edit-ih-instructor-rate').value) || 0;
   var entryId = document.getElementById('edit-ih-id')?.value;
   var cached = entryId ? ihEntriesCache[entryId] : null;
-  var total = (acHrs * acRate) + (inHrs * inRate);
+  var hobbsCharge = acHrs * acRate;
+  var instrCharge = (cached && isDiscoveryLessonTypeValue(cached.booking_lesson_type)) ? 0 : (inHrs * inRate);
+  var total = hobbsCharge + instrCharge;
   if (cached && isDiscoveryLessonTypeValue(cached.booking_lesson_type)) {
     total = ihEntryTotalBilled(cached);
   }
@@ -21853,19 +21894,27 @@ init();
     <input type="hidden" id="edit-history-id">
     <input type="hidden" id="edit-history-session-type">
     <div class="form-group" style="grid-column:1/-1">
-      <label>Flight Type</label>
+      <label>Flight Type <span style="color:var(--red)">*</span></label>
       <select id="edit-history-lesson-type" onchange="applyEditHistoryDiscoveryCharges()">
-        <option value="">— Standard flight —</option>
+        <option value="">— Select flight type —</option>
         <option value="Dual Instruction">Dual Instruction</option>
-        <option value="Solo">Solo</option>
+        <option value="Solo">Solo / Solo Flight</option>
+        <option value="Discovery">Discovery Flight</option>
+        <option value="PPL">Private Pilot (PPL)</option>
+        <option value="IFR">Instrument Rating (IFR)</option>
+        <option value="CPL">Commercial Pilot (CPL)</option>
+        <option value="CFI">Flight Instructor (CFI)</option>
         <option value="Stage Check">Stage Check</option>
         <option value="Checkride">Checkride</option>
-        <option value="Discovery">Discovery Flight</option>
         <option value="Rental">Rental</option>
         <option value="Cross Country">Cross Country</option>
         <option value="Instrument">Instrument</option>
         <option value="Night">Night</option>
+        <option value="BFR">Biennial Flight Review</option>
+        <option value="Checkout">Aircraft Checkout</option>
+        <option value="Proficiency">Proficiency / Currency</option>
       </select>
+      <p style="font-size:0.78rem;color:var(--gray-500);margin-top:0.35rem;">Required for billing — dual instruction charges apply to all types except Discovery.</p>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
       <div class="form-group">
