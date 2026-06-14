@@ -820,6 +820,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
+    const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
+    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -828,7 +830,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Cannot change student or instructor on an existing booking' });
     }
     if (!isAdmin && rescheduleRequested) {
-      if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
+      if (b.status !== 'confirmed' && !(isAssignedInstructor && isHistoricalBooking)) {
+        return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
+      }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
@@ -846,12 +850,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-      skipDiscoveryDurationCheck: !isDiscovery && (isAdmin || isHistoricalBooking),
-      skipPastTimeCheck: isAdmin || isHistoricalBooking,
+      skipDiscoveryDurationCheck: !isDiscovery && isStaffHistoricalEdit,
+      skipPastTimeCheck: isStaffHistoricalEdit,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isAdmin) {
+    if (acId && !isStaffHistoricalEdit) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
@@ -862,7 +866,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isAdmin || isHistoricalBooking;
+    const skipConflictCheck = isStaffHistoricalEdit;
     const needsConflictCheck = scheduleChanged && !skipConflictCheck;
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');

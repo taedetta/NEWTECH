@@ -10,6 +10,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { recordHobbsReading } = require('../db/discrepancies');
 const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
+const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 
 const router = express.Router();
 
@@ -137,10 +138,18 @@ router.get('/', authenticateToken, async (req, res) => {
              ih.audit_status, ih.audit_message, ih.booking_id,
              u.id as instructor_id, u.name as instructor_name,
              a.id as aircraft_id_val, a.tail_number, a.make_model,
-             ROUND((ih.aircraft_hours * COALESCE(ih.aircraft_rate, 0)) + (ih.instruction_hours * COALESCE(ih.instructor_rate, 0)), 2) as total_billed
+             b.lesson_type as booking_lesson_type,
+             fl.aircraft_charge_amount as flight_aircraft_charge,
+             fl.instruction_charge_amount as flight_instruction_charge,
+             ROUND(COALESCE(
+               NULLIF(COALESCE(fl.aircraft_charge_amount, 0) + COALESCE(fl.instruction_charge_amount, 0), 0),
+               (ih.aircraft_hours * COALESCE(ih.aircraft_rate, 0)) + (ih.instruction_hours * COALESCE(ih.instructor_rate, 0))
+             ), 2) as total_billed
       FROM instructor_hours ih
       JOIN users u ON u.id = ih.instructor_id
       LEFT JOIN aircraft a ON a.id = ih.aircraft_id
+      LEFT JOIN bookings b ON b.id = ih.booking_id
+      LEFT JOIN flight_logs fl ON fl.booking_id = ih.booking_id
       ${where}
       ORDER BY ih.entry_date DESC, ih.created_at DESC
     `, params);
@@ -260,6 +269,26 @@ router.post('/reaudit', authenticateToken, async (req, res) => {
     const rows = await pool.query(`SELECT * FROM instructor_hours ih ${where} ORDER BY ih.entry_date DESC`, params);
     let flagged = 0;
     for (const row of rows.rows) {
+      if (row.booking_id) {
+        const bkRes = await pool.query('SELECT * FROM bookings WHERE id = $1', [row.booking_id]);
+        const flRes = await pool.query('SELECT * FROM flight_logs WHERE booking_id = $1', [row.booking_id]);
+        const booking = bkRes.rows[0];
+        const fl = flRes.rows[0];
+        if (booking && fl && booking.status === 'completed' && booking.instructor_id) {
+          const client = await pool.connect();
+          try {
+            await syncInstructorHoursFromFlight(client, {
+              booking,
+              hobbsFlown: parseFloat(fl.hobbs_delta) || 0,
+              dualHrs: parseFloat(fl.dual_instruction_hours) || 0,
+              flightDate: fl.flight_date || row.entry_date,
+              studentName: row.student_name,
+            });
+          } finally {
+            client.release();
+          }
+        }
+      }
       const audit = await auditInstructorHoursEntry({
         instructorId: row.instructor_id,
         entryDate: row.entry_date,

@@ -10,6 +10,16 @@ const { syncFlightRecord } = require('../lib/sync-flight-record');
 
 const router = express.Router();
 
+function canEditBookingHistoryFlight(role, userId, booking) {
+  if (['owner', 'admin'].includes(role)) return true;
+  return role === 'instructor' && booking.instructor_id === userId;
+}
+
+function canEditGroundSessionHistory(role, userId, session) {
+  if (['owner', 'admin'].includes(role)) return true;
+  return role === 'instructor' && session.instructor_id === userId;
+}
+
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -58,18 +68,18 @@ router.get('/', authenticateToken, async (req, res) => {
         COALESCE(fl.dual_instruction_hours,
           CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END) as dual_instruction_hours,
         COALESCE(fl.aircraft_charge_amount,
-          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 185
+          CASE WHEN b.lesson_type ~* '^discovery' THEN 185
           ELSE COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate END) as aircraft_charge_amount,
         COALESCE(fl.instruction_charge_amount,
-          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 0
+          CASE WHEN b.lesson_type ~* '^discovery' THEN 0
           ELSE COALESCE(fl.dual_instruction_hours,
             CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
           ) * COALESCE(i.instructor_rate, 0) END) as instruction_charge_amount,
         COALESCE(fl.aircraft_charge_amount,
-          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 185
+          CASE WHEN b.lesson_type ~* '^discovery' THEN 185
           ELSE COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate END, 0)
           + COALESCE(fl.instruction_charge_amount,
-            CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 0
+            CASE WHEN b.lesson_type ~* '^discovery' THEN 0
             ELSE COALESCE(fl.dual_instruction_hours,
               CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
             ) * COALESCE(i.instructor_rate, 0) END, 0) as total_charge,
@@ -158,13 +168,10 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// PATCH /api/booking-history/flights/:id — admin/owner: edit a completed flight booking by booking id
+// PATCH /api/booking-history/flights/:id — staff: edit a completed flight booking by booking id
 router.patch('/flights/:id', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (!['owner', 'admin'].includes(role)) {
-      return res.status(403).json({ error: 'Only admins and owners can edit booking history records' });
-    }
     const bookingId = parseInt(req.params.id, 10);
     if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
 
@@ -177,6 +184,9 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     );
     if (bkResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = bkResult.rows[0];
+    if (!canEditBookingHistoryFlight(role, userId, b)) {
+      return res.status(403).json({ error: 'You can only edit your own flight records' });
+    }
 
     const {
       flight_date,
@@ -250,19 +260,19 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// PATCH /api/booking-history/ground-sessions/:id — admin/owner: edit a ground session
+// PATCH /api/booking-history/ground-sessions/:id — staff: edit a ground session
 router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
   try {
-    const { role } = req.user;
-    if (!['owner', 'admin'].includes(role)) {
-      return res.status(403).json({ error: 'Only admins and owners can edit booking history records' });
-    }
+    const { role, id: userId } = req.user;
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
 
     const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1', [sessionId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     const gs = existing.rows[0];
+    if (!canEditGroundSessionHistory(role, userId, gs)) {
+      return res.status(403).json({ error: 'You can only edit your own ground session records' });
+    }
 
     const { flight_date, dual_instruction_hours, instruction_charge_amount } = req.body;
     const sessionDate = flight_date || gs.session_date;
