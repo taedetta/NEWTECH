@@ -27,11 +27,15 @@ function dualHrsExpr() {
 }
 
 function acChargeExpr() {
-  return `COALESCE(fl.aircraft_charge_amount, ${hobbsExpr()} * COALESCE(a.hourly_rate, 0))`;
+  return `COALESCE(fl.aircraft_charge_amount,
+    CASE WHEN b.lesson_type ~* '^discovery(\\s*flight)?$' THEN 185
+    ELSE ${hobbsExpr()} * COALESCE(a.hourly_rate, 0) END)`;
 }
 
 function instrChargeExpr() {
-  return `COALESCE(fl.instruction_charge_amount, ${dualHrsExpr()} * COALESCE(inst.instructor_rate, 0))`;
+  return `COALESCE(fl.instruction_charge_amount,
+    CASE WHEN b.lesson_type ~* '^discovery(\\s*flight)?$' THEN 0
+    ELSE ${dualHrsExpr()} * COALESCE(inst.instructor_rate, 0) END)`;
 }
 
 router.get('/summary', authenticateToken, async (req, res) => {

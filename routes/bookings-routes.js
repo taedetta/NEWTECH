@@ -18,6 +18,7 @@ const {
 const { BOOKABLE_INSTRUCTOR_WHERE, timeToComparable } = require('../lib/instructors');
 const { isInstructorAvailable } = require('../lib/instructor-availability');
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
+const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 
 const router = express.Router();
 
@@ -106,8 +107,12 @@ router.get('/history', authenticateToken, async (req, res) => {
         fl.tach_start as tach_start,
         fl.tach_end as tach_end,
         fl.dual_instruction_hours,
-        COALESCE(fl.aircraft_charge_amount, fl.hobbs_delta * a.hourly_rate) as aircraft_charge_amount,
-        COALESCE(fl.instruction_charge_amount, fl.dual_instruction_hours * COALESCE(i.instructor_rate, 0)) as instruction_charge_amount
+        COALESCE(fl.aircraft_charge_amount,
+          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 185
+          ELSE fl.hobbs_delta * a.hourly_rate END) as aircraft_charge_amount,
+        COALESCE(fl.instruction_charge_amount,
+          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 0
+          ELSE fl.dual_instruction_hours * COALESCE(i.instructor_rate, 0) END) as instruction_charge_amount
       FROM bookings b
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
@@ -798,7 +803,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     await client.query('BEGIN');
     // If start_time changed, reset reminder_sent so a new reminder fires for the new time
     const timeChanged = st !== b.start_time || et !== b.end_time;
-    const booking_type = await deriveBookingType(client, sid, iid);
+    let booking_type = await deriveBookingType(client, sid, iid);
+    if (isAdmin && req.body.booking_type) {
+      const allowed = ['dual', 'student_solo', 'renter_solo', 'instructor_solo'];
+      if (allowed.includes(req.body.booking_type)) booking_type = req.body.booking_type;
+    }
     const result = await client.query(
       `UPDATE bookings SET student_id = $1, instructor_id = $2, aircraft_id = $3,
        start_time = $4, end_time = $5, lesson_type = COALESCE($6, lesson_type),
@@ -809,8 +818,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
        WHERE id = $10 RETURNING *`,
       [sid, iid, acId, st, et, lesson_type, notes, status, booking_type, bookingId]
     );
+    const updated = result.rows[0];
+    await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
     await client.query('COMMIT');
-    res.json(result.rows[0]);
+    res.json(updated);
   } catch (err) {
     await client.query('ROLLBACK');
     const ts = new Date().toISOString();

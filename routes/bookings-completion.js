@@ -11,6 +11,7 @@ const { checkConflicts, isInstructorAvailable, findNextAvailableSlots } = requir
 const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail, sendEmail } = require('../email-templates');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
+const { computeFlightCharges } = require('../lib/flight-charges');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 
 const router = express.Router();
@@ -241,8 +242,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrRate = b.instructor_id
       ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]
       : null;
-    const aircraftChargeAmt = acRate ? Math.round(hobbsFlown * parseFloat(acRate.hourly_rate || 0) * 100) / 100 : 0;
-    const instrChargeAmt = (dualHrs > 0 && instrRate) ? Math.round(dualHrs * parseFloat(instrRate.instructor_rate || 0) * 100) / 100 : 0;
+    const { aircraftChargeAmount: aircraftChargeAmt, instructionChargeAmount: instrChargeAmt } = computeFlightCharges({
+      lessonType: b.lesson_type,
+      hobbsDelta: hobbsFlown,
+      dualHrs,
+      hourlyRate: acRate?.hourly_rate,
+      instructorRate: instrRate?.instructor_rate,
+    });
     // Upsert flight_log — aircraft_id, student_id, instructor_id, booking_type are required
     const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [req.params.id]);
     let logId;

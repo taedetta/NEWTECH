@@ -6,6 +6,8 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
+const { computeFlightCharges } = require('../lib/flight-charges');
+const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 
 const router = express.Router();
 
@@ -51,23 +53,27 @@ router.get('/', authenticateToken, async (req, res) => {
         COALESCE(fl.flight_date, b.start_time::date) as flight_date,
         s.name as student_name, i.name as instructor_name,
         a.tail_number, a.make_model,
-        b.status, b.cancellation_reason, b.booking_type,
+        b.status, b.cancellation_reason, b.booking_type, b.lesson_type,
         COALESCE(fl.hobbs_delta, CASE WHEN b.hobbs_end IS NOT NULL AND b.hobbs_start IS NOT NULL THEN b.hobbs_end - b.hobbs_start END) as hobbs_delta,
         fl.tach_delta,
         COALESCE(fl.dual_instruction_hours,
           CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END) as dual_instruction_hours,
         COALESCE(fl.aircraft_charge_amount,
-          COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate) as aircraft_charge_amount,
+          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 185
+          ELSE COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate END) as aircraft_charge_amount,
         COALESCE(fl.instruction_charge_amount,
-          COALESCE(fl.dual_instruction_hours,
+          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 0
+          ELSE COALESCE(fl.dual_instruction_hours,
             CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
-          ) * COALESCE(i.instructor_rate, 0)) as instruction_charge_amount,
+          ) * COALESCE(i.instructor_rate, 0) END) as instruction_charge_amount,
         COALESCE(fl.aircraft_charge_amount,
-          COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate, 0)
+          CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 185
+          ELSE COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) * a.hourly_rate END, 0)
           + COALESCE(fl.instruction_charge_amount,
-            COALESCE(fl.dual_instruction_hours,
+            CASE WHEN b.lesson_type ~* '^discovery(\s*flight)?$' THEN 0
+            ELSE COALESCE(fl.dual_instruction_hours,
               CASE WHEN b.booking_type = 'dual' THEN COALESCE(fl.hobbs_delta, b.hobbs_end - b.hobbs_start) END
-            ) * COALESCE(i.instructor_rate, 0), 0) as total_charge,
+            ) * COALESCE(i.instructor_rate, 0) END, 0) as total_charge,
         COALESCE(fl.hobbs_start, b.hobbs_start) as hobbs_start,
         COALESCE(fl.hobbs_end, b.hobbs_end) as hobbs_end,
         COALESCE(fl.tach_start, b.tach_start) as tach_start,
@@ -182,6 +188,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       dual_instruction_hours,
       aircraft_charge_amount,
       instruction_charge_amount,
+      lesson_type,
     } = req.body;
 
     const hStart = hobbs_start != null ? parseFloat(hobbs_start) : (b.hobbs_start != null ? parseFloat(b.hobbs_start) : null);
@@ -203,15 +210,23 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     const hobbsDelta = parseFloat((hEnd - hStart).toFixed(2));
     const tachDelta = (tStart != null && tEnd != null) ? parseFloat((tEnd - tStart).toFixed(2)) : null;
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
-    const acCharge = aircraft_charge_amount != null
-      ? parseFloat(aircraft_charge_amount)
-      : Math.round(hobbsDelta * parseFloat(b.hourly_rate || 0) * 100) / 100;
+    const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
     const instrRate = b.instructor_id
       ? (await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]?.instructor_rate
       : null;
+    const defaultCharges = computeFlightCharges({
+      lessonType: effectiveLessonType,
+      hobbsDelta,
+      dualHrs,
+      hourlyRate: b.hourly_rate,
+      instructorRate: instrRate,
+    });
+    const acCharge = aircraft_charge_amount != null
+      ? parseFloat(aircraft_charge_amount)
+      : defaultCharges.aircraftChargeAmount;
     const instrCharge = instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
-      : (dualHrs > 0 && instrRate != null ? Math.round(dualHrs * parseFloat(instrRate) * 100) / 100 : 0);
+      : defaultCharges.instructionChargeAmount;
     const dateVal = flight_date || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null);
 
     const client = await pool.connect();
@@ -228,10 +243,14 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       }
 
       await client.query(
-        `UPDATE bookings SET hobbs_start = $1, hobbs_end = $2, tach_start = $3, tach_end = $4, updated_at = NOW()
-         WHERE id = $5`,
-        [hStart, hEnd, tStart, tEnd, bookingId]
+        `UPDATE bookings SET hobbs_start = $1, hobbs_end = $2, tach_start = $3, tach_end = $4,
+         lesson_type = COALESCE($5, lesson_type), updated_at = NOW()
+         WHERE id = $6`,
+        [hStart, hEnd, tStart, tEnd, lesson_type !== undefined ? lesson_type : null, bookingId]
       );
+
+      const bkAfter = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
+      const updatedBooking = bkAfter.rows[0];
 
       const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [bookingId]);
       if (existingLog.rows.length > 0) {
@@ -251,9 +270,27 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
              flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
              dual_instruction_hours, submitted_by, aircraft_charge_amount, instruction_charge_amount)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-          [bookingId, b.aircraft_id, b.student_id, b.instructor_id, b.booking_type || 'dual',
+          [bookingId, updatedBooking.aircraft_id, updatedBooking.student_id, updatedBooking.instructor_id,
+           updatedBooking.booking_type || 'dual',
            dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, userId, acCharge, instrCharge]
         );
+      }
+
+      if (updatedBooking.instructor_id) {
+        let studentName = null;
+        if (updatedBooking.student_id) {
+          const sn = await client.query('SELECT name FROM users WHERE id = $1', [updatedBooking.student_id]);
+          studentName = sn.rows[0]?.name || null;
+        }
+        await syncInstructorHoursFromFlight(client, {
+          booking: updatedBooking,
+          hobbsFlown: hobbsDelta,
+          dualHrs,
+          flightDate: dateVal,
+          studentName,
+        });
+      } else {
+        await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
       }
 
       await client.query('COMMIT');

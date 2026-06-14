@@ -8938,7 +8938,8 @@ function buildBookingActionButtons(b, options) {
       actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}openCancelModal(${b.id})">✗ Cancel Flight</button>`;
     }
   } else if (b.status === 'completed' && ['owner', 'admin'].includes(currentUser.role)) {
-    actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
+    actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="${prefix}openEditBookingModal(${b.id})">Edit Booking</button>`;
+    actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
     actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
   } else if (b.status === 'cancelled' && ['owner', 'admin'].includes(currentUser.role)) {
     actionBtns = `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
@@ -9762,8 +9763,12 @@ function closeDayModal() {
 }
 
 // ─── BOOKING MODAL ───
+function bookingMgmtCanUsePastDates() {
+  return currentUser && ['owner', 'admin'].includes(currentUser.role);
+}
+
 function bookingStaffCanUsePastDates() {
-  return currentUser && ['owner', 'admin', 'instructor', 'maintenance'].includes(currentUser.role);
+  return bookingMgmtCanUsePastDates();
 }
 
 function captureBookingFormDraft() {
@@ -9880,7 +9885,7 @@ async function openBookingModal(editBookingId) {
   const dateInput = document.getElementById('booking-date');
   dateInput.min = bookingStaffCanUsePastDates() ? '' : todayISO;
 
-  const finalDate = (savedDate && (savedDate >= todayISO || bookingEditId)) ? savedDate : todayISO;
+  const finalDate = (savedDate && (savedDate >= todayISO || bookingEditId || bookingMgmtCanUsePastDates())) ? savedDate : todayISO;
   dateInput.value = finalDate;
   selectedBookingDate = finalDate;
   const endDateEl = document.getElementById('booking-end-date');
@@ -9959,9 +9964,10 @@ function buildTimeOptions(minTime, forDate, stepMinutes) {
   const step = stepMinutes || 30;
   const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local TZ
   const isToday = forDate === todayStr;
+  const allowPast = bookingMgmtCanUsePastDates();
 
   let nowH = 0, nowM = 0;
-  if (isToday) {
+  if (isToday && !allowPast) {
     const now = new Date();
     nowH = now.getHours();
     nowM = now.getMinutes();
@@ -9975,8 +9981,8 @@ function buildTimeOptions(minTime, forDate, stepMinutes) {
   let opts = '';
   for (let h = 0; h <= 23; h++) {
     for (let m = 0; m < 60; m += step) {
-      // Skip past times when booking today
-      if (isToday && (h < nowH || (h === nowH && m <= nowM))) continue;
+      // Skip past times when booking today (owner/admin may backdate)
+      if (isToday && !allowPast && (h < nowH || (h === nowH && m <= nowM))) continue;
       // Skip slots at or before minTime (for end-time picker)
       if (minTime && (h < minH || (h === minH && m <= minM))) continue;
       const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -10618,9 +10624,7 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     }
     showToast(bookingEditId ? 'Booking updated' : 'Booking confirmed', 'success');
     closeBookingModal();
-    if (currentPage === 'schedule') loadCalendar();
-    else if (currentPage === 'dashboard') loadDashboard();
-    else loadCalendar();
+    refreshAfterFlightComplete();
   } catch (err) {
     if (!handleBookingConflictError(err)) {
       errEl.textContent = err.error || err.message || 'Failed to create booking';
@@ -15512,6 +15516,92 @@ function toggleFlogCard(card) {
   card.classList.toggle('expanded');
 }
 
+async function loadMissingHours() {
+  const emptyEl = document.getElementById('missing-hours-empty');
+  const tableWrap = document.getElementById('missing-hours-table-wrap');
+  const tbody = document.getElementById('missing-hours-table-body');
+  const cardsEl = document.getElementById('missing-hours-cards');
+  if (!tbody) return;
+
+  try {
+    const pending = await api('/api/bookings/completable');
+    completableBookings = pending || [];
+    refreshMissingHoursBadge();
+
+    if (!pending.length) {
+      emptyEl.classList.remove('hidden');
+      tableWrap.classList.add('hidden');
+      tbody.innerHTML = '';
+      if (cardsEl) cardsEl.innerHTML = '';
+      return;
+    }
+
+    emptyEl.classList.add('hidden');
+    tableWrap.classList.remove('hidden');
+    const canComplete = currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
+    const canMgmtEdit = currentUser && ['owner', 'admin'].includes(currentUser.role);
+
+    tbody.innerHTML = pending.map(b => {
+      const d = new Date(b.start_time);
+      const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      const editBtn = canMgmtEdit
+        ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 10px;margin-right:4px" onclick="openEditBookingModal(${b.id})">Edit Booking</button>`
+        : '';
+      const actionBtn = canComplete
+        ? `${editBtn}<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 10px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button>${missingHoursDeleteBtn(b.id, true)}`
+        : `${editBtn}${missingHoursDeleteBtn(b.id, true)}`;
+      return `<tr id="missing-hours-row-${b.id}" style="background:rgba(239,68,68,0.06);border-left:3px solid var(--red)">
+        <td>${bookingNumCell(b.id, true)}</td>
+        <td style="white-space:nowrap">${dateStr}</td>
+        <td style="white-space:nowrap">${timeStr}</td>
+        <td><strong>${escHtml(b.tail_number)}</strong> <span style="font-size:0.78rem;color:var(--gray-500)">${escHtml(b.make_model || '')}</span></td>
+        <td>${escHtml(b.student_name || '—')}</td>
+        <td>${escHtml(b.instructor_name || '—')}</td>
+        <td>${escHtml(b.lesson_type || b.booking_type || 'Flight')}</td>
+        <td><span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red)">Needs Hours</span></td>
+        <td style="white-space:nowrap">${actionBtn}</td>
+      </tr>`;
+    }).join('');
+
+    if (cardsEl) {
+      cardsEl.innerHTML = pending.map(b => {
+        const d = new Date(b.start_time);
+        const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const actionBtn = (canComplete || canRemoveMissingHoursBooking() || canMgmtEdit)
+          ? `<div class="mob-card-actions">
+              ${canMgmtEdit ? `<button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(${b.id})">Edit Booking</button>` : ''}
+              ${canComplete ? `<button class="btn btn-sm" style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;font-weight:600" onclick="openCompleteModal(${b.id})">Log Hours</button>` : ''}
+              ${missingHoursDeleteBtn(b.id, false)}
+            </div>`
+          : '';
+        return `<article class="mob-card" id="missing-hours-row-${b.id}" style="border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.06)">
+          <div class="mob-card-hdr">
+            <div>
+              <div class="mob-card-title" style="color:var(--red);font-weight:700">${formatBookingLabel(b.id)}</div>
+              <div class="mob-card-sub">${dateStr} · ${timeStr} · ${escHtml(b.tail_number)}</div>
+            </div>
+            <span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red)">Needs Hours</span>
+          </div>
+          <div class="mob-card-meta">
+            <span><span class="meta-label">Student</span> ${escHtml(b.student_name || '—')}</span>
+            <span><span class="meta-label">CFI</span> ${escHtml(b.instructor_name || '—')}</span>
+            <span><span class="meta-label">Lesson</span> ${escHtml(b.lesson_type || b.booking_type || 'Flight')}</span>
+          </div>
+          ${actionBtn}
+        </article>`;
+      }).join('');
+    }
+  } catch (err) {
+    console.error('Missing hours load error:', err);
+    if (emptyEl) {
+      emptyEl.classList.remove('hidden');
+      emptyEl.innerHTML = '<div style="color:var(--red)">Failed to load missing hours list.</div>';
+    }
+  }
+}
+
 function clearFlightLogFilters() {
   document.getElementById('flog-aircraft-filter').value = '';
   document.getElementById('flog-person-filter').value = '';
@@ -15772,7 +15862,10 @@ async function loadHistoryLegacyPage() {
       const isGround = r.session_type === 'ground';
       const needsHours = r.session_type === 'flight' && r.status === 'completed' && (r.hobbs_delta == null || parseFloat(r.hobbs_delta) <= 0);
       const actionTd = canEditHistory
-        ? `<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})">✏</button><button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button></td>`
+        ? `<td style="white-space:nowrap">${isGround
+          ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})">✏</button>`
+          : `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditBookingModal(${r.id})" title="Edit full booking">Booking</button><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})" title="Edit hours/charges">Hours</button>`
+        }<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button></td>`
         : '';
       return `<tr>
         <td style="white-space:nowrap">${dateStr}</td>
@@ -15816,7 +15909,11 @@ function renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar) {
   var tachStr = isGround || needsHours ? '—' : fmtVal(r.tach_delta);
   var totalStr = fmtDollar(r.total_charge > 0 ? r.total_charge : null);
   var actions = canEditHistory
-    ? '<div class="mob-card-actions"><button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit</button>' +
+    ? '<div class="mob-card-actions">' +
+      (isGround
+        ? '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit</button>'
+        : '<button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(' + r.id + ')">Edit Booking</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit Hours</button>') +
       '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\')">Delete</button></div>'
     : '';
   var cancelNote = (r.status === 'cancelled' && r.cancellation_reason)
