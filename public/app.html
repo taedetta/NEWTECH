@@ -8968,10 +8968,12 @@ function buildBookingActionButtons(b, options) {
       actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="openEditBookingModal(${b.id})">Edit</button>`;
       actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}openCancelModal(${b.id})">✗ Cancel Flight</button>`;
     }
-  } else if (b.status === 'completed' && ['owner', 'admin'].includes(currentUser.role)) {
+  } else if (b.status === 'completed' && (['owner', 'admin'].includes(currentUser.role) || (currentUser.role === 'instructor' && b.instructor_id === currentUser.id))) {
     actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="${prefix}openEditBookingModal(${b.id})">Edit Booking</button>`;
-    actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
-    actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
+    if (['owner', 'admin'].includes(currentUser.role)) {
+      actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
+      actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
+    }
   } else if (b.status === 'cancelled' && ['owner', 'admin'].includes(currentUser.role)) {
     actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="${prefix}openEditBookingModal(${b.id})">Edit Booking</button>`;
     actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
@@ -9813,6 +9815,7 @@ function staffEditingHistoricalBooking() {
 function shouldSkipBookingConflictChecks() {
   if (!bookingEditId) return false;
   if (adminEditingBooking()) return true;
+  if (currentUser?.role === 'instructor' && ['completed', 'cancelled'].includes(bookingEditStatus)) return true;
   return ['completed', 'cancelled'].includes(bookingEditStatus);
 }
 
@@ -15696,7 +15699,7 @@ async function loadMissingHours() {
     emptyEl.classList.add('hidden');
     tableWrap.classList.remove('hidden');
     const canComplete = currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
-    const canMgmtEdit = currentUser && ['owner', 'admin'].includes(currentUser.role);
+    const canMgmtEdit = currentUser && (['owner', 'admin'].includes(currentUser.role) || currentUser.role === 'instructor');
 
     tbody.innerHTML = pending.map(b => {
       const d = new Date(b.start_time);
@@ -16006,7 +16009,8 @@ async function loadHistoryLegacyPage() {
     const fmtDollar = v => v != null ? '$' + parseFloat(v).toFixed(2) : '—';
 
     // Show/hide actions column for admin/owner
-    const canEditHistory = currentUser && ['owner', 'admin'].includes(currentUser.role);
+    const canEditHistory = currentUser && (['owner', 'admin', 'instructor'].includes(currentUser.role));
+    const canDeleteHistory = currentUser && ['owner', 'admin'].includes(currentUser.role);
     const histActTh = document.getElementById('history-actions-th');
     if (histActTh) { histActTh.classList.toggle('hidden', !canEditHistory); if (canEditHistory) histActTh.textContent = 'Actions'; }
 
@@ -16022,7 +16026,7 @@ async function loadHistoryLegacyPage() {
         ? `<td style="white-space:nowrap">${isGround
           ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})">✏</button>`
           : `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditBookingModal(${r.id})" title="Edit full booking">Booking</button><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})" title="Edit hours/charges">Hours</button>`
-        }<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button></td>`
+        }${canDeleteHistory ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button>` : ''}</td>`
         : '';
       return `<tr>
         <td style="white-space:nowrap">${dateStr}</td>
@@ -16043,7 +16047,7 @@ async function loadHistoryLegacyPage() {
     var historyCardsEl = document.getElementById('history-cards');
     if (historyCardsEl) {
       historyCardsEl.innerHTML = rows.map(function(r) {
-        return renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar);
+        return renderHistoryCard(r, canEditHistory, canDeleteHistory, fmtVal, fmtDollar);
       }).join('');
     }
   } catch (err) {
@@ -16051,7 +16055,7 @@ async function loadHistoryLegacyPage() {
   }
 }
 
-function renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar) {
+function renderHistoryCard(r, canEditHistory, canDeleteHistory, fmtVal, fmtDollar) {
   var dateStr = String(r.flight_date).slice(0, 10);
   var isGround = r.session_type === 'ground';
   var needsHours = r.session_type === 'flight' && r.status === 'completed' && (r.hobbs_delta == null || parseFloat(r.hobbs_delta) <= 0);
@@ -16071,7 +16075,8 @@ function renderHistoryCard(r, canEditHistory, fmtVal, fmtDollar) {
         ? '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit</button>'
         : '<button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(' + r.id + ')">Edit Booking</button>' +
           '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit Hours</button>') +
-      '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\')">Delete</button></div>'
+      (canDeleteHistory ? '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\')">Delete</button>' : '') +
+      '</div>'
     : '';
   var cancelNote = (r.status === 'cancelled' && r.cancellation_reason)
     ? '<div class="mob-card-sub" style="color:#F87171;margin-top:0.35rem">' + escHtml(r.cancellation_reason) + '</div>'
@@ -19117,14 +19122,35 @@ function renderIHAuditBanner(ihOnlyEntries) {
   if (banner) banner.classList.add('hidden');
 }
 
+function ihEntryHobbsCharge(e) {
+  if (e.flight_aircraft_charge != null && e.flight_aircraft_charge !== '') {
+    return parseFloat(e.flight_aircraft_charge) || 0;
+  }
+  return parseFloat(e.aircraft_hours || 0) * parseFloat(e.aircraft_rate || 0);
+}
+
+function ihEntryInstrCharge(e) {
+  if (e.flight_instruction_charge != null && e.flight_instruction_charge !== '') {
+    return parseFloat(e.flight_instruction_charge) || 0;
+  }
+  return parseFloat(e.instruction_hours || 0) * parseFloat(e.instructor_rate || 0);
+}
+
+function ihEntryTotalBilled(e) {
+  if (e.flight_aircraft_charge != null || e.flight_instruction_charge != null) {
+    return ihEntryHobbsCharge(e) + ihEntryInstrCharge(e);
+  }
+  return parseFloat(e.total_billed || 0);
+}
+
 function renderIHStats(entries) {
   var totalAcHrs = 0, totalHobbsCharge = 0, totalInHrs = 0, totalInstrCharge = 0, totalBilled = 0;
   entries.forEach(function(e) {
     totalAcHrs += parseFloat(e.aircraft_hours || 0);
-    totalHobbsCharge += parseFloat(e.aircraft_hours || 0) * parseFloat(e.aircraft_rate || 0);
+    totalHobbsCharge += ihEntryHobbsCharge(e);
     totalInHrs += parseFloat(e.instruction_hours || 0);
-    totalInstrCharge += parseFloat(e.instruction_hours || 0) * parseFloat(e.instructor_rate || 0);
-    totalBilled += parseFloat(e.total_billed || 0);
+    totalInstrCharge += ihEntryInstrCharge(e);
+    totalBilled += ihEntryTotalBilled(e);
   });
   var statsEl = document.getElementById('ih-stats');
   statsEl.innerHTML =
@@ -19140,17 +19166,17 @@ function renderIHTable(entries) {
   var sorted = entries.slice().sort(function(a, b) {
     var va, vb;
     if (ihSortField === 'instr_charge') {
-      va = parseFloat(a.instruction_hours || 0) * parseFloat(a.instructor_rate || 0);
-      vb = parseFloat(b.instruction_hours || 0) * parseFloat(b.instructor_rate || 0);
+      va = ihEntryInstrCharge(a);
+      vb = ihEntryInstrCharge(b);
     } else if (ihSortField === 'hobbs_charge') {
-      va = parseFloat(a.aircraft_hours || 0) * parseFloat(a.aircraft_rate || 0);
-      vb = parseFloat(b.aircraft_hours || 0) * parseFloat(b.aircraft_rate || 0);
+      va = ihEntryHobbsCharge(a);
+      vb = ihEntryHobbsCharge(b);
     } else if (ihSortField === 'hobbs_hrs') {
       va = parseFloat(a.aircraft_hours || 0);
       vb = parseFloat(b.aircraft_hours || 0);
     } else if (ihSortField === 'total_billed') {
-      va = parseFloat(a.total_billed || 0);
-      vb = parseFloat(b.total_billed || 0);
+      va = ihEntryTotalBilled(a);
+      vb = ihEntryTotalBilled(b);
     } else if (ihSortField === 'aircraft_name') {
       va = (a.tail_number || '').toString().toLowerCase();
       vb = (b.tail_number || '').toString().toLowerCase();
@@ -19195,10 +19221,10 @@ function renderIHTable(entries) {
       ? '<span class="tag" style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.3);">Ground</span>'
       : (e.tail_number ? ('<span style="font-weight:600">' + escHtml(e.tail_number) + '</span> <span style="color:var(--gray-400);font-size:0.8rem">' + escHtml(e.make_model || '') + '</span>') : '<span style="color:var(--gray-500)">—</span>');
     var acHrs = isGround ? '—' : parseFloat(e.aircraft_hours || 0).toFixed(1);
-    var hobbsCharge = parseFloat(e.aircraft_hours || 0) * parseFloat(e.aircraft_rate || 0);
+    var hobbsCharge = ihEntryHobbsCharge(e);
     var inHrs = parseFloat(e.instruction_hours || 0).toFixed(1);
-    var instrCharge = parseFloat(e.instruction_hours || 0) * parseFloat(e.instructor_rate || 0);
-    var totalBilled = parseFloat(e.total_billed || 0);
+    var instrCharge = ihEntryInstrCharge(e);
+    var totalBilled = ihEntryTotalBilled(e);
     var hobbsChargeStr = !isGround && hobbsCharge > 0
       ? '<span style="color:var(--sky);font-weight:600">$' + hobbsCharge.toFixed(2) + '</span>'
       : '<span style="color:var(--gray-500)">—</span>';
@@ -19286,10 +19312,10 @@ function renderIHCard(e, showInstructor) {
   var dateStr = e.entry_date ? e.entry_date.slice(0, 10) : '—';
   var isGround = e.entry_type === 'ground';
   var acHrs = isGround ? '—' : parseFloat(e.aircraft_hours || 0).toFixed(1);
-  var hobbsCharge = parseFloat(e.aircraft_hours || 0) * parseFloat(e.aircraft_rate || 0);
+  var hobbsCharge = ihEntryHobbsCharge(e);
   var inHrs = parseFloat(e.instruction_hours || 0).toFixed(1);
-  var instrCharge = parseFloat(e.instruction_hours || 0) * parseFloat(e.instructor_rate || 0);
-  var totalBilled = parseFloat(e.total_billed || 0);
+  var instrCharge = ihEntryInstrCharge(e);
+  var totalBilled = ihEntryTotalBilled(e);
   var acLabel = isGround
     ? '<span class="tag" style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.3);">Ground</span>'
     : (e.tail_number ? escHtml(e.tail_number) : '—');
@@ -19552,7 +19578,12 @@ function updateEditIHPreview() {
   var acRate = parseFloat(document.getElementById('edit-ih-aircraft-rate').value) || 0;
   var inHrs = parseFloat(document.getElementById('edit-ih-instruction-hours').value) || 0;
   var inRate = parseFloat(document.getElementById('edit-ih-instructor-rate').value) || 0;
+  var entryId = document.getElementById('edit-ih-id')?.value;
+  var cached = entryId ? ihEntriesCache[entryId] : null;
   var total = (acHrs * acRate) + (inHrs * inRate);
+  if (cached && isDiscoveryLessonTypeValue(cached.booking_lesson_type)) {
+    total = ihEntryTotalBilled(cached);
+  }
   var preview = document.getElementById('edit-ih-preview');
   var valEl = document.getElementById('edit-ih-preview-val');
   if (preview && valEl) {

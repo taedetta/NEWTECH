@@ -114,13 +114,16 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
 router.patch('/:id/hours', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    if (!['owner', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Only owners and admins can edit completed booking hours' });
-    }
     const bookingId = parseInt(req.params.id, 10);
-    const existing = await client.query('SELECT id, status FROM bookings WHERE id = $1', [bookingId]);
+    const existing = await client.query('SELECT id, status, instructor_id FROM bookings WHERE id = $1', [bookingId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    if (existing.rows[0].status !== 'completed') {
+    const bookingRow = existing.rows[0];
+    const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const isAssignedInstructor = req.user.role === 'instructor' && bookingRow.instructor_id === req.user.id;
+    if (!isAdmin && !isAssignedInstructor) {
+      return res.status(403).json({ error: 'Only owners, admins, or the assigned instructor can edit completed booking hours' });
+    }
+    if (bookingRow.status !== 'completed') {
       return res.status(400).json({ error: 'Only completed bookings support direct hour edits' });
     }
 
