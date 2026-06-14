@@ -11,6 +11,7 @@ const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingAp
 const { getAppUrl } = require('../lib/app-url');
 const { TERMS_VERSION } = require('../lib/terms');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
+const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { enforceCaptcha } = require('../lib/captcha');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
@@ -93,6 +94,7 @@ router.post('/register', async (req, res) => {
       });
       // Reactivate as pending — notify user + admins
       notifySignupPending({ name, email, role: userRole });
+      ensureDefaultPrefs(oldUser.id).catch(() => {});
       return;
     }
     const passwordHash = await bcrypt.hash(password, 12);
@@ -108,6 +110,7 @@ router.post('/register', async (req, res) => {
 
     // Notify user (pending) and admins of new signup
     notifySignupPending({ name: user.name, email: user.email, role: user.role });
+    ensureDefaultPrefs(user.id).catch(() => {});
   } catch (err) {
     console.error('Register error:', err);
     if (err.code === '23505') {

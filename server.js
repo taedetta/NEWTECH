@@ -122,6 +122,8 @@ app.use(createPageViewMiddleware());
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/users/me', endorsementsRoutes);  // /api/users/me/cfi-profile
+const profileRoutes = require('./routes/profile');
+app.use('/api/users/me', profileRoutes);       // /api/users/me/profile, email-preferences
 app.use('/api/permissions', permissionsRoutes);
 app.use('/api/aircraft', aircraftRoutes);
 app.use('/api/bookings', bookingsRoutes);

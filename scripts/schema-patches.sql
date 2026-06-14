@@ -303,3 +303,17 @@ ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS start_time TIME;
 ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS end_time TIME;
 ALTER TABLE aircraft_downtime ADD COLUMN IF NOT EXISTS all_day BOOLEAN DEFAULT TRUE;
 UPDATE aircraft_downtime SET all_day = TRUE WHERE all_day IS NULL;
+
+-- ── User email notification preferences (opt-out per type) ──
+CREATE TABLE IF NOT EXISTS user_email_preferences (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email_all_off BOOLEAN NOT NULL DEFAULT FALSE,
+  booking_confirmation BOOLEAN NOT NULL DEFAULT TRUE,
+  booking_cancelled BOOLEAN NOT NULL DEFAULT TRUE,
+  preflight_reminder BOOLEAN NOT NULL DEFAULT TRUE,
+  flight_completed BOOLEAN NOT NULL DEFAULT TRUE,
+  instructor_briefing BOOLEAN NOT NULL DEFAULT TRUE,
+  endorsement_expiry BOOLEAN NOT NULL DEFAULT TRUE,
+  maintenance_alert BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
