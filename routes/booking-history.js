@@ -7,6 +7,7 @@ const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
 
@@ -220,6 +221,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     const dateVal = flight_date
       || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
       || new Date().toISOString().slice(0, 10);
+    const effectiveLessonType = inferLessonType(
+      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+      b
+    );
 
     const client = await pool.connect();
     let inTxn = false;
@@ -234,7 +239,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
-        lesson_type: lesson_type !== undefined ? lesson_type : undefined,
+        lesson_type: effectiveLessonType,
         aircraft_charge_amount,
         instruction_charge_amount,
         submitted_by: userId,

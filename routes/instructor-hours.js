@@ -11,6 +11,7 @@ const { recordHobbsReading } = require('../db/discrepancies');
 const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
+const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
 
@@ -278,11 +279,12 @@ router.post('/reaudit', authenticateToken, async (req, res) => {
           const client = await pool.connect();
           try {
             await syncInstructorHoursFromFlight(client, {
-              booking,
+              booking: { ...booking, lesson_type: booking.lesson_type || inferLessonType(null, booking) },
               hobbsFlown: parseFloat(fl.hobbs_delta) || 0,
               dualHrs: parseFloat(fl.dual_instruction_hours) || 0,
               flightDate: fl.flight_date || row.entry_date,
               studentName: row.student_name,
+              preserveRatesRow: row,
             });
           } finally {
             client.release();
