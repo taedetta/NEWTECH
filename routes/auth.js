@@ -8,6 +8,7 @@ const pool = require('../db/index');
 const { authenticateToken, getUserPermissions } = require('../middleware/auth');
 const { checkPasswordResetRateLimit } = require('../middleware/rate-limiter');
 const { sendEmail, passwordResetEmail, adminApprovalNotificationEmail, pendingApprovalEmail, ADMIN_NOTIFICATION_EMAILS } = require('../email-templates');
+const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 const { getAppUrl } = require('../lib/app-url');
 const { TERMS_VERSION } = require('../lib/terms');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
@@ -19,10 +20,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 const router = express.Router();
 
 /** Fire-and-forget signup emails: pending notice to user + admin alert */
-function notifySignupPending({ name, email, role }) {
+function notifySignupPending({ userId, name, email, role }) {
   const signupDate = new Date().toISOString();
   const pending = pendingApprovalEmail({ name, role });
-  sendEmail(email, pending.subject, pending.html, pending.text)
+  sendEmailToUser(userId, email, EMAIL_TYPES.signup_pending, pending.subject, pending.html, pending.text)
     .catch(err => console.error('[signup-pending-email] error:', err.message));
 
   const admin = adminApprovalNotificationEmail({ userName: name, userEmail: email, userRole: role, signupDate });
@@ -93,7 +94,7 @@ router.post('/register', async (req, res) => {
         reactivated: true
       });
       // Reactivate as pending — notify user + admins
-      notifySignupPending({ name, email, role: userRole });
+      notifySignupPending({ userId: oldUser.id, name, email, role: userRole });
       ensureDefaultPrefs(oldUser.id).catch(() => {});
       return;
     }
@@ -109,7 +110,7 @@ router.post('/register', async (req, res) => {
     res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, approval_status: 'pending' }, pending: true });
 
     // Notify user (pending) and admins of new signup
-    notifySignupPending({ name: user.name, email: user.email, role: user.role });
+    notifySignupPending({ userId: user.id, name: user.name, email: user.email, role: user.role });
     ensureDefaultPrefs(user.id).catch(() => {});
   } catch (err) {
     console.error('Register error:', err);
@@ -228,7 +229,7 @@ router.post('/forgot-password', async (req, res) => {
     );
     const resetUrl = `${getAppUrl(req)}/app?reset=${rawToken}`;
     const { subject, html, text } = passwordResetEmail({ name: user.name, resetUrl });
-    sendEmail(user.email, subject, html, text, undefined, { deliverToRecipientOnStaging: true })
+    sendEmailToUser(user.id, user.email, EMAIL_TYPES.password_reset, subject, html, text, undefined, { deliverToRecipientOnStaging: true })
       .catch(err => console.error('[forgot-password] sendEmail error:', err.message));
     res.json({ ok: true });
   } catch (err) {

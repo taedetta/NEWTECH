@@ -6,7 +6,9 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES, TYPE_LABELS } = require('../lib/notification-prefs');
+const { EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
+const { sendEmailToUser } = require('../lib/notification-prefs');
+const { profileChangeEmail } = require('../email-templates');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
@@ -15,27 +17,6 @@ function formatPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (digits.length !== 10) return null;
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
-function prefsForRole(role, isInstructor) {
-  const all = Object.keys(EMAIL_TYPES).map((key) => ({
-    key,
-    label: TYPE_LABELS[key],
-    enabled: true,
-    visible: true,
-  }));
-  return all.map((item) => {
-    if (item.key === 'instructor_briefing') {
-      return { ...item, visible: role === 'instructor' || !!isInstructor };
-    }
-    if (item.key === 'maintenance_alert') {
-      return {
-        ...item,
-        visible: ['owner', 'admin', 'instructor', 'maintenance'].includes(role) || !!isInstructor,
-      };
-    }
-    return item;
-  }).filter((item) => item.visible);
 }
 
 router.get('/profile', authenticateToken, async (req, res) => {
@@ -66,6 +47,13 @@ router.get('/profile', authenticateToken, async (req, res) => {
 router.patch('/profile', authenticateToken, async (req, res) => {
   try {
     const { name, email, phone_number } = req.body || {};
+    const before = await pool.query(
+      'SELECT email, phone_number, name FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [req.user.id]
+    );
+    if (before.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const prev = before.rows[0];
+
     const updates = [];
     const vals = [];
     let i = 1;
@@ -131,6 +119,19 @@ router.patch('/profile', authenticateToken, async (req, res) => {
       });
     }
 
+    const changes = [];
+    if (email !== undefined && u.email !== prev.email) {
+      changes.push({ label: 'Email', value: u.email });
+    }
+    if (phone_number !== undefined && u.phone_number !== prev.phone_number) {
+      changes.push({ label: 'Phone', value: u.phone_number || '' });
+    }
+    if (changes.length > 0) {
+      const tpl = profileChangeEmail({ name: u.name, changes });
+      sendEmailToUser(u.id, u.email, EMAIL_TYPES.profile_change, tpl.subject, tpl.html, tpl.text)
+        .catch((err) => console.error('[profile] profile-change email error:', err.message));
+    }
+
     res.json({
       profile: {
         id: u.id,
@@ -191,11 +192,8 @@ router.get('/email-preferences', authenticateToken, async (req, res) => {
     if (userRow.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const { role, is_instructor } = userRow.rows[0];
     const prefs = await getPrefs(req.user.id);
-    const types = prefsForRole(role, is_instructor);
-    res.json({
-      preferences: prefs,
-      types: types.map((t) => ({ key: t.key, label: t.label })),
-    });
+    const categories = getPreferenceCatalog(role, is_instructor);
+    res.json({ preferences: prefs, categories });
   } catch (err) {
     console.error('[profile] GET email-preferences error:', err.message);
     res.status(500).json({ error: 'Failed to load email preferences' });
@@ -212,11 +210,6 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
     }
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ error: 'No preference changes provided' });
-    }
-    if (patch.email_all_off === false) {
-      // Turning master switch off — leave individual toggles as stored
-    } else if (patch.email_all_off === true) {
-      // Master off — individual values preserved for when user re-enables
     }
     const prefs = await updatePrefs(req.user.id, patch);
     res.json({ preferences: prefs });

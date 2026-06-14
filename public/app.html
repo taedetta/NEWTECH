@@ -230,6 +230,8 @@
     .account-pref-row label { font-size: 0.88rem; color: var(--gray-200); flex: 1; cursor: pointer; }
     .account-pref-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--blue); flex-shrink: 0; }
     .account-pref-row.disabled { opacity: 0.45; pointer-events: none; }
+    .account-pref-category { margin-top: 1rem; }
+    .account-pref-category h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--gray-500); margin: 0 0 0.35rem; font-weight: 700; }
     #guest-signin-btn { margin-bottom: 0;; }
 
     .main-content { flex: 1; margin-left: 250px; width: calc(100vw - 250px); max-width: calc(100vw - 250px); min-width: 0; padding: 2rem 2.5rem; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; max-height: 100vh; max-height: 100dvh; -webkit-overflow-scrolling: touch; }
@@ -3790,7 +3792,7 @@
           </div>
           <div class="pwa-device-card" style="max-width:720px;margin-bottom:1.25rem">
             <h2 style="font-size:1.05rem;color:var(--white);margin-bottom:0.35rem">&#128231; Email notifications</h2>
-            <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:0.75rem">Choose which emails you receive. Account security emails (password reset, approval status) are always sent. For push alerts on your phone, see <a href="#" onclick="navigate('phone-app');return false" style="color:var(--blue-light)">Phone App</a>.</p>
+            <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:0.75rem">Choose which emails you receive. Use <strong>Turn off all</strong> to stop every notification type, or toggle individual categories below. Each email also includes an unsubscribe link at the bottom. Push alerts are managed on the <a href="#" onclick="navigate('phone-app');return false" style="color:var(--blue-light)">Phone App</a> page.</p>
             <div id="account-email-prefs-error" class="error-msg hidden"></div>
             <div id="account-email-prefs-success" class="success-msg hidden" style="margin-bottom:0.75rem"></div>
             <div class="account-pref-row" style="border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:0.35rem">
@@ -6166,6 +6168,14 @@ async function enterApp() {
     el.style.display = el.classList.contains('hidden') ? 'none' : '';
   });
   navigate(['student', 'renter'].includes(currentUser.role) ? 'portal' : 'dashboard');
+  const pageParam = new URLSearchParams(window.location.search).get('page');
+  if (pageParam === 'account-settings') {
+    navigate('account-settings');
+    try {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+    } catch (_) { /* ignore */ }
+  }
   if (appEl) appEl.classList.remove('app-booting');
   initPWA();
   startAppPolling();
@@ -6364,13 +6374,15 @@ function loadPhoneAppPage() {
   if (typeof checkPushStatus === 'function') checkPushStatus();
 }
 
-let accountEmailPrefTypes = [];
+let accountEmailPrefCategories = [];
 
 async function loadAccountSettingsPage() {
   const errEl = document.getElementById('account-profile-error');
   const pwdErr = document.getElementById('account-password-error');
-  if (errEl) errEl.classList.add('hidden');
+  const prefsErr = document.getElementById('account-email-prefs-error');
+  if (errEl) { errEl.classList.add('hidden'); errEl.classList.remove('visible'); }
   if (pwdErr) pwdErr.classList.add('hidden');
+  if (prefsErr) prefsErr.classList.add('hidden');
   try {
     const [profileData, prefsData] = await Promise.all([
       api('/api/users/me/profile'),
@@ -6380,7 +6392,7 @@ async function loadAccountSettingsPage() {
     document.getElementById('account-name').value = p.name || '';
     document.getElementById('account-email').value = p.email || '';
     document.getElementById('account-phone').value = p.phone_number || '';
-    accountEmailPrefTypes = prefsData.types || [];
+    accountEmailPrefCategories = prefsData.categories || [];
     renderAccountEmailPrefs(prefsData.preferences || {});
   } catch (err) {
     if (errEl) {
@@ -6396,12 +6408,15 @@ function renderAccountEmailPrefs(prefs) {
   const listEl = document.getElementById('account-email-prefs-list');
   if (!listEl || !allOffEl) return;
   allOffEl.checked = !!prefs.email_all_off;
-  listEl.innerHTML = accountEmailPrefTypes.map(function (t) {
-    const checked = prefs[t.key] !== false ? 'checked' : '';
-    return `<div class="account-pref-row${prefs.email_all_off ? ' disabled' : ''}" data-pref-key="${t.key}">
-      <label for="account-pref-${t.key}">${escHtml(t.label)}</label>
-      <input type="checkbox" id="account-pref-${t.key}" data-pref-key="${t.key}" ${checked}${prefs.email_all_off ? ' disabled' : ''}>
-    </div>`;
+  listEl.innerHTML = accountEmailPrefCategories.map(function (cat) {
+    const rows = cat.types.map(function (t) {
+      const checked = prefs[t.key] !== false ? 'checked' : '';
+      return `<div class="account-pref-row${prefs.email_all_off ? ' disabled' : ''}" data-pref-key="${t.key}">
+        <label for="account-pref-${t.key}">${escHtml(t.label)}</label>
+        <input type="checkbox" id="account-pref-${t.key}" data-pref-key="${t.key}" ${checked}${prefs.email_all_off ? ' disabled' : ''}>
+      </div>`;
+    }).join('');
+    return `<div class="account-pref-category"><h3>${escHtml(cat.label)}</h3>${rows}</div>`;
   }).join('');
 }
 
@@ -6477,9 +6492,11 @@ async function saveAccountEmailPrefs() {
   errEl.classList.add('hidden');
   okEl.classList.add('hidden');
   const body = { email_all_off: document.getElementById('account-email-all-off').checked };
-  accountEmailPrefTypes.forEach(function (t) {
-    const cb = document.getElementById('account-pref-' + t.key);
-    if (cb) body[t.key] = cb.checked;
+  accountEmailPrefCategories.forEach(function (cat) {
+    cat.types.forEach(function (t) {
+      const cb = document.getElementById('account-pref-' + t.key);
+      if (cb) body[t.key] = cb.checked;
+    });
   });
   try {
     const data = await api('/api/users/me/email-preferences', { method: 'PATCH', body: JSON.stringify(body) });

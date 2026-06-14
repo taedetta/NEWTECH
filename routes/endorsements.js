@@ -326,6 +326,9 @@ router.post('/', authenticateToken, requireRole('instructor', 'owner', 'admin'),
 
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
+    if (!/^\d+$/.test(String(req.params.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     const result = await pool.query(`
       SELECT e.*,
              s.name AS student_name_user, s.email AS student_email,

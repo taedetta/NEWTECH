@@ -11,6 +11,13 @@ const DEFAULT_PREFS = {
   instructor_briefing: true,
   endorsement_expiry: true,
   maintenance_alert: true,
+  password_reset: true,
+  account_approved: true,
+  account_rejected: true,
+  signup_pending: true,
+  account_invite: true,
+  profile_change: true,
+  welcome: true,
 };
 
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
@@ -18,7 +25,9 @@ const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
 function rowToPrefs(row) {
   if (!row) return { ...DEFAULT_PREFS };
   const out = {};
-  for (const col of PREF_COLUMNS) out[col] = !!row[col];
+  for (const col of PREF_COLUMNS) {
+    out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
+  }
   return out;
 }
 
