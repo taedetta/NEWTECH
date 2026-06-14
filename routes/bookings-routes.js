@@ -24,9 +24,9 @@ const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
 
-// Only active confirmed bookings block the schedule — completed/cancelled flights free their slots.
-const ACTIVE_BOOKING_SQL = "b.status = 'confirmed'";
-const ACTIVE_BOOKING_SQL_NO_ALIAS = "status = 'confirmed'";
+// Only future/active confirmed bookings block the schedule — completed/cancelled and past flights free their slots.
+const ACTIVE_BOOKING_SQL = "b.status = 'confirmed' AND b.end_time > NOW()";
+const ACTIVE_BOOKING_SQL_NO_ALIAS = "status = 'confirmed' AND end_time > NOW()";
 
 async function findOverlappingDowntime(client, aircraftId, bookingStart, bookingEnd) {
   const db = client || pool;
