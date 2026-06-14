@@ -11282,8 +11282,7 @@ document.getElementById('edit-hours-form').addEventListener('submit', async (e) 
       })
     });
     closeEditHoursModal();
-    if (currentPage === 'schedule') loadCalendar();
-    else loadDashboard();
+    refreshAfterFlightComplete();
   } catch (err) {
     errEl.textContent = err.error || 'Failed to update hours';
     errEl.classList.remove('hidden');
@@ -15293,6 +15292,7 @@ async function saveEditBillingFlight() {
     await api('/api/billing/flights/' + id, { method: 'PUT', body: JSON.stringify(body) });
     showToast('Billing entry updated', 'success');
     closeEditBillingFlightModal();
+    refreshAfterFlightComplete();
     if (currentBillingStudentId != null) await loadBillingForStudent(currentBillingStudentId);
     else await loadBilling();
   } catch(e) {
@@ -16027,7 +16027,7 @@ async function saveEditHistory() {
     await api(endpoint, { method: 'PATCH', body: JSON.stringify(body) });
     showToast('Booking record updated', 'success');
     closeEditHistoryModal();
-    await loadHistoryLegacyPage();
+    refreshAfterFlightComplete();
   } catch(e) {
     var msg = e.error || e.message || 'Failed to update record.';
     if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden'); }

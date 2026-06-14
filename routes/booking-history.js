@@ -6,8 +6,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
-const { resolveFlightCharges } = require('../lib/flight-charges');
-const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
+const { syncFlightRecord } = require('../lib/sync-flight-record');
 
 const router = express.Router();
 
@@ -207,24 +206,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
     }
 
-    const hobbsDelta = parseFloat((hEnd - hStart).toFixed(2));
-    const tachDelta = (tStart != null && tEnd != null) ? parseFloat((tEnd - tStart).toFixed(2)) : null;
-    const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
-    const effectiveLessonType = lesson_type !== undefined && lesson_type !== ''
-      ? lesson_type
-      : b.lesson_type;
-    const instrRate = b.instructor_id
-      ? (await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]?.instructor_rate
-      : null;
-    const { aircraftChargeAmount: acCharge, instructionChargeAmount: instrCharge } = resolveFlightCharges({
-      lessonType: effectiveLessonType,
-      hobbsDelta,
-      dualHrs,
-      hourlyRate: b.hourly_rate,
-      instructorRate: instrRate,
-      aircraftChargeAmount,
-      instructionChargeAmount,
-    });
+    const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
     const dateVal = flight_date
       || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
       || new Date().toISOString().slice(0, 10);
@@ -235,73 +217,27 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const startTime = new Date(dateVal + 'T12:00:00Z');
-      const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
-      await client.query(
-        `UPDATE bookings SET
-           start_time = $1, end_time = $2,
-           hobbs_start = $3, hobbs_end = $4, tach_start = $5, tach_end = $6,
-           lesson_type = CASE WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7 ELSE lesson_type END,
-           updated_at = NOW()
-         WHERE id = $8`,
-        [startTime.toISOString(), endTime.toISOString(), hStart, hEnd, tStart, tEnd,
-         lesson_type !== undefined ? lesson_type : null, bookingId]
-      );
-
-      const bkAfter = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
-      const updatedBooking = bkAfter.rows[0];
-
-      const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [bookingId]);
-      if (existingLog.rows.length > 0) {
-        await client.query(
-          `UPDATE flight_logs SET
-            flight_date = $1, hobbs_start = $2, hobbs_end = $3, hobbs_delta = $4,
-            tach_start = $5, tach_end = $6, tach_delta = $7,
-            dual_instruction_hours = $8, aircraft_charge_amount = $9, instruction_charge_amount = $10,
-            student_id = $11, instructor_id = $12, aircraft_id = $13, booking_type = $14,
-            updated_at = NOW()
-           WHERE booking_id = $15`,
-          [dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, acCharge, instrCharge,
-           updatedBooking.student_id, updatedBooking.instructor_id, updatedBooking.aircraft_id,
-           updatedBooking.booking_type || 'dual', bookingId]
-        );
-      } else {
-        await client.query(
-          `INSERT INTO flight_logs
-            (booking_id, aircraft_id, student_id, instructor_id, booking_type,
-             flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
-             dual_instruction_hours, submitted_by, aircraft_charge_amount, instruction_charge_amount)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-          [bookingId, updatedBooking.aircraft_id, updatedBooking.student_id, updatedBooking.instructor_id,
-           updatedBooking.booking_type || 'dual',
-           dateVal, hStart, hEnd, hobbsDelta, tStart, tEnd, tachDelta, dualHrs, userId, acCharge, instrCharge]
-        );
-      }
-
-      if (updatedBooking.instructor_id) {
-        let studentName = null;
-        if (updatedBooking.student_id) {
-          const sn = await client.query('SELECT name FROM users WHERE id = $1', [updatedBooking.student_id]);
-          studentName = sn.rows[0]?.name || null;
-        }
-        try {
-          await syncInstructorHoursFromFlight(client, {
-            booking: updatedBooking,
-            hobbsFlown: hobbsDelta,
-            dualHrs,
-            flightDate: dateVal,
-            studentName,
-          });
-        } catch (syncErr) {
-          console.error('[booking-history] instructor hours sync warning:', syncErr.message);
-        }
-      } else {
-        await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]).catch(() => {});
-      }
+      const synced = await syncFlightRecord(client, bookingId, {
+        flight_date: dateVal,
+        hobbs_start: hStart,
+        hobbs_end: hEnd,
+        tach_start: tStart,
+        tach_end: tEnd,
+        dual_instruction_hours: dualHrs,
+        lesson_type: lesson_type !== undefined ? lesson_type : undefined,
+        aircraft_charge_amount,
+        instruction_charge_amount,
+        submitted_by: userId,
+      });
 
       await client.query('COMMIT');
       inTxn = false;
-      res.json({ ok: true, booking_id: bookingId, aircraft_charge_amount: acCharge, instruction_charge_amount: instrCharge });
+      res.json({
+        ok: true,
+        booking_id: bookingId,
+        aircraft_charge_amount: synced.aircraftChargeAmount,
+        instruction_charge_amount: synced.instructionChargeAmount,
+      });
     } catch (err) {
       if (inTxn) await client.query('ROLLBACK').catch(() => {});
       throw err;

@@ -12,6 +12,7 @@ const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail, sendEmail } = require('../email-templates');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 const { computeFlightCharges } = require('../lib/flight-charges');
+const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 
 const router = express.Router();
@@ -95,6 +96,46 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const ts = new Date().toISOString();
     console.error(`[bookings-completion] [${ts}] PATCH /:id/end-early — user=${req.user?.id} error: ${err.message}`);
     res.status(500).json({ code: 'END_EARLY_ERROR', message: 'Booking temporarily unavailable, please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+router.patch('/:id/hours', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!['owner', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only owners and admins can edit completed booking hours' });
+    }
+    const bookingId = parseInt(req.params.id, 10);
+    const existing = await client.query('SELECT id, status FROM bookings WHERE id = $1', [bookingId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (existing.rows[0].status !== 'completed') {
+      return res.status(400).json({ error: 'Only completed bookings support direct hour edits' });
+    }
+
+    const { hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, lesson_type, flight_date } = req.body;
+    if (hobbs_start != null && hobbs_end != null && parseFloat(hobbs_end) <= parseFloat(hobbs_start)) {
+      return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
+    }
+
+    await client.query('BEGIN');
+    const synced = await syncFlightRecord(client, bookingId, {
+      hobbs_start,
+      hobbs_end,
+      tach_start,
+      tach_end,
+      dual_instruction_hours,
+      lesson_type,
+      flight_date,
+      submitted_by: req.user.id,
+    });
+    await client.query('COMMIT');
+    res.json({ ok: true, booking: synced.booking, flight_log: synced.flightLog });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[bookings-completion] PATCH /:id/hours error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to update booking hours' });
   } finally {
     client.release();
   }
