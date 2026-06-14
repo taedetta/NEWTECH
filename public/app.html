@@ -10449,6 +10449,37 @@ function exportMyCalendar() {
     .catch(() => alert('Failed to export calendar'));
 }
 
+function bookingSlotUtcRange(date, startTime, endTime) {
+  if (!date || !startTime || !endTime) return null;
+  const start_time = SchoolTime.wallClockToUtcIso(date, startTime);
+  let end_time;
+  const endIsBeforeStart = endTime !== '24:00' && endTime < startTime;
+  if (endTime === '24:00' || endIsBeforeStart) {
+    end_time = SchoolTime.wallClockToUtcIso(SchoolTime.addCalendarDays(date, 1), endTime === '24:00' ? '00:00' : endTime);
+  } else {
+    end_time = SchoolTime.wallClockToUtcIso(date, endTime);
+  }
+  return { start_time, end_time };
+}
+
+async function getBookedAircraftIdsForSlot(date, startTime, endTime) {
+  const range = bookingSlotUtcRange(date, startTime, endTime);
+  if (!range) return new Set();
+  try {
+    const bookings = await api(
+      `/api/bookings?start=${encodeURIComponent(range.start_time)}&end=${encodeURIComponent(range.end_time)}`
+    );
+    const booked = new Set();
+    for (const b of (bookings || [])) {
+      if (bookingEditId && b.id === bookingEditId) continue;
+      if (b.aircraft_id) booked.add(b.aircraft_id);
+    }
+    return booked;
+  } catch {
+    return new Set();
+  }
+}
+
 // Re-filter aircraft dropdown when date changes — maintains downtime window filtering
 async function refreshBookingAircraft() {
   const aircraftSel = document.getElementById('booking-aircraft');
@@ -10485,6 +10516,14 @@ async function refreshBookingAircraft() {
       a.id === editAcId ||
       !aircraftBlockedByDowntime(downtimeEntries, a.id, date, startTime, endTime)
     );
+
+    const bookedAcIds = await getBookedAircraftIdsForSlot(date, startTime, endTime);
+    if (seq !== _bookingAircraftRefreshSeq) return;
+    if (bookedAcIds.size > 0) {
+      availableAircraft = availableAircraft.filter(a =>
+        a.id === editAcId || !bookedAcIds.has(a.id)
+      );
+    }
   } catch (err) {
     if (seq !== _bookingAircraftRefreshSeq) return;
     // Downtime check failed — warn user and fall back to status-only filtering
@@ -10508,7 +10547,7 @@ async function refreshBookingAircraft() {
   } else if (prevSelected && !availableAircraft.some(a => String(a.id) === String(prevSelected))) {
     aircraftSel.value = '';
     bookingFormDraft.aircraftId = '';
-    errEl.textContent = 'Previously selected aircraft is in maintenance for this date. Please choose another.';
+    errEl.textContent = 'Previously selected aircraft is unavailable for this time. Please choose another.';
     errEl.classList.remove('hidden');
   }
 }
