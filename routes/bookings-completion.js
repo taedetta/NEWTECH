@@ -7,7 +7,6 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
-const { checkConflicts, isInstructorAvailable, findNextAvailableSlots } = require('./bookings-routes');
 const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail, sendEmail } = require('../email-templates');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');

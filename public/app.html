@@ -5356,6 +5356,7 @@ const MOBILE_PAGE_TITLES = {
   'website-editor': 'Website Editor',
   'admin-settings': 'Admin Settings',
   availability: 'My Availability',
+  'instructor-schedules': 'Instructor Availability',
   approvals: 'Pending Approvals',
   leads: 'Leads',
   discrepancies: 'Discrepancies',
@@ -17051,7 +17052,10 @@ async function loadFileTree() {
   const emptyEl = document.getElementById('code-file-empty');
   treeEl.innerHTML = '<div class="code-empty-state"><div class="ces-icon">&#8987;</div><p>Loading files…</p></div>';
   try {
-    const data = await fetch('/api/project-files').then(r => r.ok ? r.json() : Promise.reject(r.status));
+    const data = await fetch('/api/project-files').then(async (r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
     fileTreeCache = data;
     // Show root entries as a flat list with folder expansion
     renderFileTree(data.entries || [], treeEl, '');
@@ -17152,7 +17156,10 @@ async function openFile(filePath) {
   document.getElementById('code-status-msg').textContent = '';
 
   try {
-    const data = await fetch('/api/project-files?path=' + encodeURIComponent(filePath)).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    const data = await fetch('/api/project-files?path=' + encodeURIComponent(filePath)).then(async (r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
     if (data.type === 'file' && data.content !== undefined) {
       currentFileContent = data.content;
       const lang = getLangLabel(data.extension || '.' + filename.split('.').pop());
@@ -20967,7 +20974,7 @@ function renderInstructorContactLine(inst) {
   if (parts.length === 0) {
     return '<span style="font-size:0.78rem;color:var(--gray-500);">Contact info not on file — ask the office</span>';
   }
-  return `<div style="display:flex;flex-wrap:wrap;gap:0.5rem 1rem;font-size:0.82rem;margin-top:0.35rem;">${parts.join('')}</div>`;
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.35rem 0.75rem;font-size:0.82rem;margin-top:0.35rem;">${parts.join('<span style="color:var(--gray-600);">·</span>')}</div>`;
 }
 
 function renderInstructorScheduleCard(inst, selectedDayName) {

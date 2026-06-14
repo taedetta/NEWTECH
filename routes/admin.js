@@ -11,7 +11,7 @@ const { emailFullDataBackup } = require('../lib/full-data-backup');
 const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue, timeToComparable } = require('../lib/instructors');
 const { getAllInstructorsDayAvailability } = require('../lib/instructor-availability');
 const { calendarDateFromDate } = require('../lib/school-timezone');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 
 const router = express.Router();
 
@@ -583,9 +583,8 @@ router.post('/run-export', authenticateToken, requireRole('owner', 'admin'), asy
 // Also resets reminder_sent for bookings matching criteria.
 
 router.post('/run-reminder-check', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
-  const { child } = require('child_process');
   // Spawn the job script — fires immediately and runs in background
-  const job = child.spawn('node', ['jobs/reminder-email.js'], {
+  const job = spawn('node', ['jobs/reminder-email.js'], {
     detached: true,
     stdio: 'ignore',
   });
