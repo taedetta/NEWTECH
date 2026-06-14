@@ -21,67 +21,53 @@ const { sanitizeUploadUrl } = require('./lib/upload-url');
 const { prod, assertProductionExport } = require('./lib/production-query');
 const { startExportScheduler } = require('./export-service');
 const { sendEmail } = require('./email-templates');
+const { calendarDateFromDate, formatDate, getParts, SCHOOL_TZ } = require('./lib/school-timezone');
 
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
 
 const RECIPIENTS = ['aviationnewtech@gmail.com', 'operations@3vaflight.com', 'blankthe97@gmail.com'];
 
-// ── Timezone helpers (Central Time) ────────────────────────────────────────
-
-function toCentral(date) {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-}
-
-function formatDateCT(dateVal) {
-  // Returns MM/DD/YYYY from a date string or Date object
-  if (!dateVal) return '—';
-  const d = new Date(dateVal);
-  if (isNaN(d.getTime())) return '—';
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const year = d.getUTCFullYear();
-  return `${month}/${day}/${year}`;
-}
-
-function formatDateTimeCT(date) {
-  return new Date(date).toLocaleString('en-US', {
-    timeZone: 'America/Chicago',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
-}
+// ── Timezone helpers (US Eastern — Virginia) ───────────────────────────────
 
 function isoDate(date) {
-  const d = toCentral(date);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return calendarDateFromDate(date instanceof Date ? date : new Date(date));
+}
+
+function formatDateET(dateVal) {
+  if (!dateVal) return '—';
+  return formatDate(dateVal, { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function formatDateTimeET(date) {
+  return formatDate(date, {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }) + ' ET';
+}
+
+function easternNowParts() {
+  return getParts(new Date(), SCHOOL_TZ);
 }
 
 // ── Date range computation ──────────────────────────────────────────────────
 
 function getDateRange(frequency) {
   const now = new Date();
-  const ct = toCentral(now);
+  const p = easternNowParts();
 
   let label;
 
   if (frequency === 'daily') {
     label = isoDate(now);
   } else if (frequency === 'weekly') {
-    const end = new Date(ct.getFullYear(), ct.getMonth(), ct.getDate(), 23, 59, 59, 999);
-    const start = new Date(end);
-    start.setDate(start.getDate() - 6);
-    start.setHours(0, 0, 0, 0);
-    label = `${isoDate(start)}_to_${isoDate(end)}`;
+    const endStr = isoDate(now);
+    const startStr = calendarDateFromDate(new Date(now.getTime() - 6 * 86400000));
+    label = `${startStr}_to_${endStr}`;
   } else if (frequency === 'monthly') {
-    const firstOfThisMonth = new Date(ct.getFullYear(), ct.getMonth(), 1);
-    const lastOfPriorMonth = new Date(firstOfThisMonth - 1);
-    const monthName = lastOfPriorMonth.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'America/Chicago' });
+    const monthName = formatDate(now, { month: 'long', year: 'numeric' });
     label = monthName.replace(' ', '_');
   } else if (frequency === 'yearly') {
-    label = String(ct.getFullYear() - 1);
+    label = String(p.year - 1);
   } else {
     label = isoDate(now);
   }
@@ -454,7 +440,7 @@ async function buildBillingPdf(pool, generatedAt) {
     const colWidths = [52, 80, 75, 52, 44, 44, 38, 40, 40, 38, 42, 38, 50, 50, 50];
     const alignments = ['left','left','left','left','right','right','right','right','right','right','right','right','right','right','right'];
     const rows = q.rows.map(r => [
-      formatDateCT(r.flight_date),
+      formatDateET(r.flight_date),
       r.student_name || '—',
       r.instructor_name || 'Solo',
       r.tail_number || '—',
@@ -490,7 +476,7 @@ async function buildBillingPdf(pool, generatedAt) {
     const colWidths = [70, 140, 130, 80, 80, 87];
     const alignments = ['left','left','left','right','right','right'];
     const rows = groundQ.rows.map(r => [
-      formatDateCT(r.session_date),
+      formatDateET(r.session_date),
       r.student_name || '—',
       r.instructor_name || '—',
       formatDecimal(r.ground_hours, 2),
@@ -579,7 +565,7 @@ async function buildInstructorHoursPdf(pool, generatedAt) {
     const colWidths = [54, 90, 85, 45, 52, 50, 50, 48, 60, 53];
     const alignments = ['left','left','left','left','left','right','right','right','right','right'];
     const rows = allRows.map(r => [
-      formatDateCT(r.date),
+      formatDateET(r.date),
       r.instructor_name || '—',
       r.student_name || '—',
       r.session_type,
@@ -673,7 +659,7 @@ async function buildFlightLogsPdf(pool, generatedAt) {
     const colWidths = [54, 82, 78, 50, 42, 44, 38, 40, 42, 38, 42, 57];
     const alignments = ['left','left','left','left','right','right','right','right','right','right','right','left'];
     const rows = q.rows.map(r => [
-      formatDateCT(r.flight_date),
+      formatDateET(r.flight_date),
       r.student_name || '—',
       r.instructor_name || 'Solo',
       r.tail_number || '—',
@@ -722,7 +708,7 @@ async function buildFlightLogsPdf(pool, generatedAt) {
         drawPageHeader(doc, 'Flight Logs Report', generatedAt, totalRecords);
       }
       doc.fillColor(COLORS.darkGray).font('Helvetica-Bold').fontSize(7.5)
-        .text(`${formatDateCT(r.flight_date)} — ${r.student_name || '—'} / ${r.tail_number || '—'}:`, lm, doc.y);
+        .text(`${formatDateET(r.flight_date)} — ${r.student_name || '—'} / ${r.tail_number || '—'}:`, lm, doc.y);
       doc.fillColor(COLORS.darkGray).font('Helvetica').fontSize(7.5)
         .text(r.notes, lm + 10, doc.y, { width: rightEdge - lm - 10 });
       doc.moveDown(0.4);
@@ -797,13 +783,13 @@ async function buildEndorsementsPdf(pool, generatedAt) {
         ? `${r.aircraft_tail}${r.aircraft_make_model ? ' ' + r.aircraft_make_model : ''}`
         : (r.aircraft_make_model || '—');
       return [
-        formatDateCT(r.endorsement_date),
+        formatDateET(r.endorsement_date),
         r.student_name || '—',
         r.instructor_name || '—',
         r.instructor_cert_number || '—',
         r.endorsement_type || r.template_key || '—',
         aircraft,
-        r.expiration_date ? formatDateCT(r.expiration_date) : 'No Expiry',
+        r.expiration_date ? formatDateET(r.expiration_date) : 'No Expiry',
         endorsementStatus(r),
         r.cfi_signed ? 'Yes' : 'No',
         r.student_signed_flag ? 'Yes' : 'No',
@@ -877,7 +863,7 @@ async function buildStudentDirectoryPdf(pool, generatedAt) {
       r.email || '—',
       formatPhone(r.phone_number),
       r.role ? (r.role.charAt(0).toUpperCase() + r.role.slice(1)) : '—',
-      r.created_at ? formatDateCT(r.created_at) : '—',
+      r.created_at ? formatDateET(r.created_at) : '—',
       r.deleted_at ? 'Inactive' : 'Active',
       r.assigned_instructor || (r.role === 'student' ? 'Unassigned' : '—'),
     ]);
@@ -945,14 +931,14 @@ async function buildMaintenanceLogsPdf(pool, generatedAt) {
 
     const rows = q.rows.map(r => [
       r.tail_number ? `${r.tail_number}` : '—',
-      r.reported_at ? formatDateCT(r.reported_at) : '—',
+      r.reported_at ? formatDateET(r.reported_at) : '—',
       r.reported_by_name || '—',
       r.description || '—',
       capFirst(r.severity),
       capFirst(r.status),
       r.resolution_notes || '—',
       r.expected_downtime || '—',
-      r.updated_at ? formatDateCT(r.updated_at) : '—',
+      r.updated_at ? formatDateET(r.updated_at) : '—',
     ]);
     drawTable(doc, headers, colWidths, rows, alignments, pageInfo, null);
   }
@@ -973,7 +959,7 @@ async function uploadPdfToR2(pdfBuffer, filename) {
 async function sendBackupEmail(frequency, label, downloadLinks, recordCounts, zipAttachment) {
   const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
   const subject = `New Tech Aviation — ${freqLabel} Data Backup — ${label}`;
-  const generatedAt = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
+  const generatedAt = formatDateTimeET(new Date());
 
   const bodyHtml = buildBackupEmailHtml(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
   const bodyText = buildBackupEmailText(freqLabel, label, generatedAt, recordCounts, downloadLinks, zipAttachment);
@@ -1107,11 +1093,7 @@ async function runBackup(pool, frequency) {
 
   try {
     const { label } = getDateRange(frequency);
-    const generatedAt = new Date().toLocaleString('en-US', {
-      timeZone: 'America/Chicago',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: true,
-    });
+    const generatedAt = formatDateTimeET(new Date());
 
     console.log(`[backup] Generating 6 PDFs with full data...`);
 
@@ -1208,18 +1190,18 @@ function startBackupScheduler(pool) {
     return;
   }
 
-  console.log('[backup] Scheduler started. Daily 2:00 CT · Weekly Sun 3:00 CT · Monthly 1st 3:30 CT · Yearly Jan 1 4:00 CT');
+  console.log('[backup] Scheduler started. Daily 2:00 ET · Weekly Sun 3:00 ET · Monthly 1st 3:30 ET · Yearly Jan 1 4:00 ET');
 
   const lastRun = { daily: null, weekly: null, monthly: null, yearly: null };
 
   setInterval(async () => {
     const now = new Date();
-    const ct = toCentral(now);
-    const h = ct.getHours();
-    const m = ct.getMinutes();
-    const dow = ct.getDay();
-    const dom = ct.getDate();
-    const moy = ct.getMonth() + 1;
+    const p = easternNowParts();
+    const h = p.hour;
+    const m = p.minute;
+    const dow = new Date(p.year, p.month - 1, p.day).getDay();
+    const dom = p.day;
+    const moy = p.month;
     const todayKey = isoDate(now);
 
     if (h === 2 && m === 0 && lastRun.daily !== todayKey) {

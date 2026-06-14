@@ -8,7 +8,9 @@ const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getAllOverrides } = require('../db/file-overrides');
 const { emailFullDataBackup } = require('../lib/full-data-backup');
-const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue } = require('../lib/instructors');
+const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue, timeToComparable } = require('../lib/instructors');
+const { getAllInstructorsDayAvailability } = require('../lib/instructor-availability');
+const { calendarDateFromDate } = require('../lib/school-timezone');
 const { execSync } = require('child_process');
 
 const router = express.Router();
@@ -478,6 +480,47 @@ router.delete('/instructor-availability/overrides/:id', authenticateToken, requi
   }
 });
 
+// GET /api/instructor-availability/directory — read-only schedule for students/renters/staff
+router.get('/instructor-availability/directory', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (req.user.role === 'maintenance') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    const date = req.query.date || calendarDateFromDate(new Date());
+
+    const weeklyRows = await client.query(
+      `SELECT ia.instructor_id, ia.day_of_week, ia.start_time, ia.end_time
+       FROM instructor_availability ia
+       JOIN users u ON u.id = ia.instructor_id
+       WHERE ${BOOKABLE_INSTRUCTOR_WHERE}
+       ORDER BY ia.instructor_id, ia.day_of_week, ia.start_time`
+    );
+    const weeklyByInstructor = {};
+    for (const row of weeklyRows.rows) {
+      if (!weeklyByInstructor[row.instructor_id]) weeklyByInstructor[row.instructor_id] = [];
+      weeklyByInstructor[row.instructor_id].push({
+        day_of_week: row.day_of_week,
+        start: timeToComparable(row.start_time).slice(0, 5),
+        end: timeToComparable(row.end_time).slice(0, 5),
+      });
+    }
+
+    const dayView = await getAllInstructorsDayAvailability(client, date);
+    const instructors = dayView.instructors.map((inst) => ({
+      ...inst,
+      weekly: weeklyByInstructor[inst.id] || [],
+    }));
+
+    res.json({ date: dayView.date, day: dayView.day, instructors });
+  } catch (err) {
+    console.error('GET instructor-availability/directory error:', err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/instructor-availability/all — admin view: all instructors' availability for a date
 router.get('/instructor-availability/all', authenticateToken, requireRole('admin', 'owner'), async (req, res) => {
   const client = await pool.connect();
@@ -485,60 +528,28 @@ router.get('/instructor-availability/all', authenticateToken, requireRole('admin
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: 'date required (YYYY-MM-DD)' });
 
-    const dateObj = new Date(date + 'T00:00:00Z');
-    const dayOfWeek = dateObj.getUTCDay();
-
-    const instructors = await client.query(
-      `SELECT id, name FROM users u WHERE ${BOOKABLE_INSTRUCTOR_WHERE} ORDER BY name`
-    );
-
+    const dayView = await getAllInstructorsDayAvailability(client, date);
     const result = [];
-    for (const inst of instructors.rows) {
-      const weekly = await client.query(
-        `SELECT start_time, end_time FROM instructor_availability
-         WHERE instructor_id = $1 AND day_of_week = $2 ORDER BY start_time`,
-        [inst.id, dayOfWeek]
-      );
-
-      const overrides = await client.query(
-        `SELECT is_available, start_time, end_time, reason FROM instructor_availability_overrides
-         WHERE instructor_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
-        [inst.id, date]
-      );
-
-      const fullyBlocked = overrides.rows.some(o => !o.is_available && !o.start_time);
-      const hasConfig = (await client.query(
-        'SELECT 1 FROM instructor_availability WHERE instructor_id=$1 LIMIT 1', [inst.id]
-      )).rows.length > 0;
-
-      const windows = weekly.rows.map(w => ({ start: w.start_time.slice(0, 5), end: w.end_time.slice(0, 5) }));
-      const extraWindows = overrides.rows.filter(o => o.is_available && o.start_time).map(o => ({ start: o.start_time.slice(0, 5), end: o.end_time.slice(0, 5) }));
-      const blocked = overrides.rows.filter(o => !o.is_available && o.start_time).map(o => ({ start: o.start_time.slice(0, 5), end: o.end_time.slice(0, 5), reason: o.reason }));
-
+    for (const inst of dayView.instructors) {
       const bookings = await client.query(
         `SELECT b.start_time, b.end_time, u.name as student_name
          FROM bookings b LEFT JOIN users u ON b.student_id = u.id
-         WHERE b.instructor_id = $1 AND b.status != 'cancelled'
+         WHERE b.instructor_id = $1 AND b.status = 'confirmed' AND b.end_time > NOW()
            AND DATE(b.start_time AT TIME ZONE 'UTC') = $2::date`,
         [inst.id, date]
       );
 
       result.push({
-        id: inst.id,
-        name: inst.name,
-        has_config: hasConfig,
-        fully_blocked: fullyBlocked,
-        windows: [...windows, ...extraWindows],
-        blocked,
-        bookings: bookings.rows.map(bk => ({
+        ...inst,
+        bookings: bookings.rows.map((bk) => ({
           start: bk.start_time.toISOString ? bk.start_time.toISOString().slice(11, 16) : String(bk.start_time).slice(11, 16),
           end: bk.end_time.toISOString ? bk.end_time.toISOString().slice(11, 16) : String(bk.end_time).slice(11, 16),
-          student: bk.student_name
-        }))
+          student: bk.student_name,
+        })),
       });
     }
 
-    res.json({ date, day: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek], instructors: result });
+    res.json({ date: dayView.date, day: dayView.day, instructors: result });
   } catch (err) {
     console.error('GET instructor-availability/all error:', err);
     res.status(500).json({ error: 'Server error' });

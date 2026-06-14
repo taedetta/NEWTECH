@@ -1752,6 +1752,7 @@
           <div class="nav-section-label">Operations</div>
           <a onclick="navigate('dashboard')" data-page="dashboard"><span class="nav-icon">&#9633;</span> Dashboard</a>
           <a onclick="navigate('schedule')" data-page="schedule"><span class="nav-icon">&#128197;</span> Schedule</a>
+          <a onclick="navigate('instructor-schedules')" data-page="instructor-schedules" id="nav-instructor-schedules"><span class="nav-icon">&#128336;</span> Instructor Availability</a>
           <a onclick="openOpsHistory()" data-page="history" id="nav-history"><span class="nav-icon">&#128218;</span> Booking History</a>
           <a onclick="navigate('fleet')" data-page="fleet"><span class="nav-icon">&#9992;</span> Fleet</a>
           <a onclick="navigate('tracking')" data-page="tracking" id="nav-tracking"><span class="nav-icon">&#127979;</span> Track Flights</a>
@@ -3604,6 +3605,27 @@
           </div>
         </div>
 
+        <!-- ─── INSTRUCTOR AVAILABILITY (read-only — students/renters/staff) ─── -->
+        <div id="page-instructor-schedules" class="page hidden">
+          <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+            <div>
+              <h1>Instructor Availability</h1>
+              <p style="color:var(--gray-400);font-size:0.88rem;margin:0.35rem 0 0;">Typical weekly schedules and effective hours for the date you select. Bookings outside these windows may still be possible — check the schedule or contact your CFI.</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+              <label for="instr-sched-date" style="font-size:0.84rem;color:var(--gray-400);">View date</label>
+              <input type="date" id="instr-sched-date" onchange="loadInstructorSchedulesPage()" style="background:var(--slate);border:1px solid var(--border-light);color:var(--white);padding:0.45rem 0.7rem;border-radius:8px;font-size:0.84rem;font-family:inherit;outline:none;">
+            </div>
+          </div>
+          <div id="instr-sched-loading" style="text-align:center;padding:2.5rem;color:var(--gray-500);">Loading instructor schedules…</div>
+          <div id="instr-sched-empty" class="empty-state hidden">
+            <div class="empty-icon">&#128336;</div>
+            <h3>No instructors found</h3>
+            <p>Instructor schedules will appear here when CFIs set their availability.</p>
+          </div>
+          <div id="instr-sched-list" class="hidden" style="display:flex;flex-direction:column;gap:1rem;"></div>
+        </div>
+
         <!-- ─── APPROVALS PAGE ─── -->
         <div id="page-approvals" class="page hidden">
           <div class="page-header">
@@ -4991,6 +5013,7 @@
   </div>
 </div>
 
+<script src="/js/school-time.js"></script>
 <script>
 // ─── GLOBAL ERROR HANDLER ───
 window.__appVersion = '2026-05-05-v4';
@@ -5050,8 +5073,8 @@ async function loadFleetDowntimeCache() {
   start.setDate(start.getDate() - 1);
   const end = new Date();
   end.setDate(end.getDate() + 120);
-  const startStr = start.toLocaleDateString('en-CA');
-  const endStr = end.toLocaleDateString('en-CA');
+  const startStr = SchoolTime.calendarDate(start);
+  const endStr = SchoolTime.calendarDate(end);
   try {
     fleetDowntimeCache = await api(`/api/downtime/range?start=${startStr}&end=${endStr}`);
     if (!Array.isArray(fleetDowntimeCache)) fleetDowntimeCache = [];
@@ -5221,7 +5244,7 @@ function renderScheduleMaintenanceNotice() {
 
 async function loadScheduleDowntimeNotice() {
   try {
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = SchoolTime.calendarDate(new Date());
     const data = await api(`/api/downtime/by-date?date=${today}`);
     scheduleDowntimeToday = Array.isArray(data) ? data : [];
   } catch {
@@ -6004,9 +6027,13 @@ async function enterApp() {
 
   // Endorsements: visible to all roles (already ensured above)
 
-  // Availability: visible to instructors, admins, owners — NOT students/renters
+  // Availability: editable page for instructors, admins, owners — NOT students/renters
   const navAvail = document.getElementById('nav-availability');
   if (navAvail) navAvail.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
+
+  // Read-only instructor schedules: visible to students, renters, and staff (not maintenance-only)
+  const navInstrSched = document.getElementById('nav-instructor-schedules');
+  if (navInstrSched) navInstrSched.classList.toggle('hidden', currentUser.role === 'maintenance');
 
   // CFI Utilization: owner, admin, instructor
   const navCfiUtil = document.getElementById('nav-cfi-utilization');
@@ -6740,6 +6767,7 @@ function navigate(page) {
   else if (page === 'endorsements') loadEndorsements();
   else if (page === 'portal') loadStudentPortal();
   else if (page === 'availability') loadAvailabilityPage();
+  else if (page === 'instructor-schedules') loadInstructorSchedulesPage();
   else if (page === 'phone-app') loadPhoneAppPage();
   else if (page === 'messages') loadMessagesPage();
   else if (page === 'cfi-utilization') loadCfiUtilizationPage();
@@ -7604,7 +7632,7 @@ function updateTrackingLabel() {
     const inflight = trackingDataCache.some(e => e.flight_status === 'in_flight');
     el.textContent = inflight
       ? `Live GPS · next update ${trackingCountdown}s`
-      : `Updated ${new Date().toLocaleTimeString()}`;
+      : `Updated ${SchoolTime.formatTime(new Date())}`;
   }
 }
 
@@ -7860,7 +7888,7 @@ function showTrackingDetail(data) {
 
   const fmtTime = (t) => {
     if (!t) return '—';
-    try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return t; }
+    try { return SchoolTime.formatTime(new Date(t)); } catch { return t; }
   };
   const fmtDate = (t) => {
     if (!t) return '—';
@@ -8020,7 +8048,7 @@ function renderLiveFlightCard(f) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.82rem;">
           <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Altitude</div><div style="color:var(--gray-200);">${f.altitude != null ? f.altitude.toLocaleString() + ' ft' : '—'}</div></div>
           <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Groundspeed</div><div style="color:var(--gray-200);">${f.groundspeed != null ? f.groundspeed + ' kts' : '—'}</div></div>
-          <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${f.start_time ? new Date(f.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—'}</div></div>
+          <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${f.start_time ? SchoolTime.formatTime(new Date(f.start_time)) : '—'}</div></div>
           <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Elapsed</div><div style="color:var(--gray-200);">${elapsed}m</div></div>
         </div>
       </div>`;
@@ -8038,7 +8066,7 @@ function renderLiveFlightCard(f) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.82rem;">
         <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Student</div><div style="color:var(--gray-200);">${f.student_name}</div></div>
         <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Instructor</div><div style="color:var(--gray-200);">${f.instructor_name}</div></div>
-        <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${new Date(f.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div></div>
+        <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Departed</div><div style="color:var(--sky);">${SchoolTime.formatTime(new Date(f.start_time))}</div></div>
         <div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Elapsed</div><div style="color:var(--gray-200);">${elapsed}m</div></div>
         ${f.hobbs_start ? `<div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Hobbs Start</div><div style="color:var(--gray-200);">${f.hobbs_start}</div></div>` : ''}
         ${f.lesson_type ? `<div><div style="font-size:0.62rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:0.1rem;">Type</div><div style="color:var(--gray-200);">${f.lesson_type}</div></div>` : ''}
@@ -8125,8 +8153,8 @@ async function loadRecentFlights() {
         <td><strong>${f.tail_number}</strong><br><small style="color:var(--gray-500)">${f.make_model||''}</small></td>
         <td>${f.student_name}</td>
         <td>${f.instructor_name}</td>
-        <td>${new Date(f.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</td>
-        <td>${new Date(f.end_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</td>
+        <td>${SchoolTime.formatTime(new Date(f.start_time))}</td>
+        <td>${SchoolTime.formatTime(new Date(f.end_time))}</td>
         <td>${f.hobbs_start && f.hobbs_end ? (f.hobbs_end - f.hobbs_start).toFixed(1) + ' hrs' : '—'}</td>
       </tr>`).join('');
   } catch { /* suppress */ }
@@ -9590,8 +9618,8 @@ function loadCalendar() {
   const startOffset = firstDay.getDay();
   const fetchStart = new Date(year, month, 1 - startOffset);
   const fetchEnd = new Date(year, month + 1, 7);
-  const rangeStart = fetchStart.toLocaleDateString('en-CA');
-  const rangeEnd = fetchEnd.toLocaleDateString('en-CA');
+  const rangeStart = SchoolTime.civilDateFromParts(year, month, 1 - startOffset);
+  const rangeEnd = SchoolTime.civilDateFromParts(year, month + 1, 7);
 
   Promise.all([
     loadBookings(fetchStart.toISOString(), fetchEnd.toISOString()),
@@ -9806,7 +9834,7 @@ async function openBookingModal(editBookingId) {
   document.getElementById('booking-conflicts-bottom').classList.add('hidden');
   document.getElementById('booking-avail-notice').classList.add('hidden');
   const savedDate = preloadedBooking
-    ? new Date(preloadedBooking.start_time).toLocaleDateString('en-CA')
+    ? SchoolTime.calendarDate(new Date(preloadedBooking.start_time))
     : document.getElementById('booking-date').value;
   document.getElementById('booking-form').reset();
   document.getElementById('booking-multiday')?.removeAttribute('checked');
@@ -9881,7 +9909,7 @@ async function openBookingModal(editBookingId) {
     document.getElementById('booking-instructor').value = currentUser.id;
   }
 
-  const todayISO = new Date().toLocaleDateString('en-CA');
+  const todayISO = SchoolTime.calendarDate(new Date());
   const dateInput = document.getElementById('booking-date');
   dateInput.min = bookingStaffCanUsePastDates() ? '' : todayISO;
 
@@ -9962,7 +9990,7 @@ function toggleBookingMultiday() {
 // stepMinutes: slot interval (30 default; 20 for discovery flights)
 function buildTimeOptions(minTime, forDate, stepMinutes) {
   const step = stepMinutes || 30;
-  const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local TZ
+  const todayStr = SchoolTime.calendarDate(new Date()); // "YYYY-MM-DD" in local TZ
   const isToday = forDate === todayStr;
   const allowPast = bookingMgmtCanUsePastDates();
 
@@ -10048,7 +10076,7 @@ function rebuildBookingTimePickers(options) {
   const startSel = document.getElementById('booking-start');
   const endSel = document.getElementById('booking-end');
   const dateVal = document.getElementById('booking-date').value;
-  const todayStr = new Date().toLocaleDateString('en-CA');
+  const todayStr = SchoolTime.calendarDate(new Date());
   const isToday = dateVal === todayStr;
 
   const prevStart = forceStart || startSel.value;
@@ -10145,12 +10173,12 @@ function populateBookingFormFromRecord(b) {
   if (b.aircraft_id) document.getElementById('booking-aircraft').value = b.aircraft_id;
 
   const bd = new Date(b.start_time);
-  const localDate = bd.toLocaleDateString('en-CA');
+  const localDate = SchoolTime.calendarDate(bd);
   document.getElementById('booking-date').value = localDate;
   selectedBookingDate = localDate;
 
   const endD = new Date(b.end_time);
-  const endLocalDate = endD.toLocaleDateString('en-CA');
+  const endLocalDate = SchoolTime.calendarDate(endD);
   const multidayEl = document.getElementById('booking-multiday');
   const endDateEl = document.getElementById('booking-end-date');
   if (multidayEl && endDateEl && endLocalDate > localDate) {
@@ -10338,17 +10366,18 @@ async function refreshBookingPreflight() {
     : document.getElementById('booking-student')?.value;
   const instructorVal = document.getElementById('booking-instructor')?.value;
   if (!date || !startTime || !endTime || !aircraftId) { el.classList.add('hidden'); return; }
-  const start_time = new Date(`${date}T${startTime}:00`).toISOString();
+  const start_time = SchoolTime.wallClockToUtcIso(date, startTime);
   let end_time;
   if (endTime === '24:00' || (endTime < startTime)) {
     const nd = new Date(`${date}T00:00:00`); nd.setDate(nd.getDate() + 1);
-    end_time = new Date(nd.toISOString().slice(0, 10) + `T${endTime}:00`).toISOString();
+    end_time = SchoolTime.wallClockToUtcIso(SchoolTime.addCalendarDays(date, 1), endTime === "24:00" ? "00:00" : endTime);
   } else {
-    end_time = new Date(`${date}T${endTime}:00`).toISOString();
+    end_time = SchoolTime.wallClockToUtcIso(date, endTime);
   }
   try {
     const q = new URLSearchParams({
       aircraft_id: aircraftId, start_time, end_time,
+      local_date: date,
       local_start: startTime, local_end: endTime,
     });
     if (studentVal) q.set('student_id', studentVal);
@@ -10377,7 +10406,7 @@ function toggleDailyRoster() {
   panel.classList.toggle('hidden');
   if (!panel.classList.contains('hidden')) {
     const d = document.getElementById('roster-date');
-    if (d && !d.value) d.value = new Date().toLocaleDateString('en-CA');
+    if (d && !d.value) d.value = SchoolTime.calendarDate(new Date());
     loadDailyRoster();
   }
 }
@@ -10527,7 +10556,7 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
   }
 
   // Block past dates for students/renters only — staff may backdate or edit past bookings
-  const todayAtSubmit = new Date().toLocaleDateString('en-CA');
+  const todayAtSubmit = SchoolTime.calendarDate(new Date());
   if (!bookingStaffCanUsePastDates() && date < todayAtSubmit) {
     errEl.textContent = 'Cannot book a flight for a past date. Please select today or a future date.';
     errEl.classList.remove('hidden');
@@ -10555,7 +10584,7 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     return;
   }
 
-  const start_time = new Date(`${date}T${startTime}:00`).toISOString();
+  const start_time = SchoolTime.wallClockToUtcIso(date, startTime);
   const multiday = document.getElementById('booking-multiday')?.checked;
   const endDate = multiday ? (document.getElementById('booking-end-date')?.value || date) : date;
   if (multiday && endDate < date) {
@@ -10566,21 +10595,18 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
   let end_time;
   if (multiday && endDate > date) {
     if (endTime === '24:00') {
-      const d = new Date(`${endDate}T00:00:00`);
-      d.setDate(d.getDate() + 1);
-      end_time = d.toISOString();
+      end_time = SchoolTime.wallClockToUtcIso(SchoolTime.addCalendarDays(endDate, 1), '00:00');
     } else {
-      end_time = new Date(`${endDate}T${endTime}:00`).toISOString();
+      end_time = SchoolTime.wallClockToUtcIso(endDate, endTime);
     }
   } else {
     const endIsBeforeStart = endTime !== '24:00' && endTime < startTime;
     if (endTime === '24:00' || endIsBeforeStart) {
       const nextDay = new Date(`${date}T00:00:00`);
       nextDay.setDate(nextDay.getDate() + 1);
-      end_time = nextDay.toISOString().slice(0, 10) + `T${endTime === '24:00' ? '00:00' : endTime}:00`;
-      end_time = new Date(end_time).toISOString();
+      end_time = SchoolTime.wallClockToUtcIso(SchoolTime.addCalendarDays(date, 1), endTime === "24:00" ? "00:00" : endTime);
     } else {
-      end_time = new Date(`${date}T${endTime}:00`).toISOString();
+      end_time = SchoolTime.wallClockToUtcIso(date, endTime);
     }
   }
   if (new Date(end_time) <= new Date(start_time)) {
@@ -10665,18 +10691,15 @@ async function forceBookingSubmit() {
     ? document.getElementById('booking-student-locked-id').value
     : document.getElementById('booking-student').value;
   const instructorVal = document.getElementById('booking-instructor').value;
-  const start_time = new Date(`${date}T${startTime}:00`).toISOString();
+  const start_time = SchoolTime.wallClockToUtcIso(date, startTime);
   // Handle cross-midnight end times — flights that end the next day (e.g., 23:30 → 01:00)
   // "24:00" means exactly midnight next day; times less than start time also cross midnight
   let end_time;
   const endIsBeforeStart = endTime !== '24:00' && endTime < startTime;
   if (endTime === '24:00' || endIsBeforeStart) {
-    const nextDay = new Date(`${date}T00:00:00`);
-    nextDay.setDate(nextDay.getDate() + 1);
-    end_time = nextDay.toISOString().slice(0, 10) + `T${endTime}:00`;
-    end_time = new Date(end_time).toISOString();
+    end_time = SchoolTime.wallClockToUtcIso(SchoolTime.addCalendarDays(date, 1), endTime === '24:00' ? '00:00' : endTime);
   } else {
-    end_time = new Date(`${date}T${endTime}:00`).toISOString();
+    end_time = SchoolTime.wallClockToUtcIso(date, endTime);
   }
 
   const errEl = document.getElementById('booking-error');
@@ -11689,11 +11712,11 @@ function bookingRangeFromForm(date, startTime, endTime) {
   if (endT === '24:00' || (endT < startTime && endT !== '00:00')) {
     const nextDay = new Date(`${date}T00:00:00`);
     nextDay.setDate(nextDay.getDate() + 1);
-    rangeEnd = new Date(`${nextDay.toLocaleDateString('en-CA')}T${endT === '24:00' ? '00:00' : endT}:00`);
+    rangeEnd = new Date(`${SchoolTime.calendarDate(nextDay)}T${endT === '24:00' ? '00:00' : endT}:00`);
   } else {
-    rangeEnd = new Date(`${date}T${endT}:00`);
+    rangeEnd = SchoolTime.wallClockToUtc(date, endT);
   }
-  return { start: new Date(`${date}T${startTime}:00`), end: rangeEnd };
+  return { start: SchoolTime.wallClockToUtc(date, startTime), end: rangeEnd };
 }
 
 function aircraftBlockedByDowntime(downtimeEntries, aircraftId, date, startTime, endTime) {
@@ -11788,7 +11811,7 @@ async function openDowntimeModal(aircraftId) {
   document.getElementById('downtime-form').reset();
   document.getElementById('downtime-all-day').checked = false;
   toggleDowntimeAllDay();
-  const today = new Date().toLocaleDateString('en-CA');
+  const today = SchoolTime.calendarDate(new Date());
   document.getElementById('downtime-start').value = today;
   document.getElementById('downtime-end').value = today;
   document.getElementById('downtime-start-time').value = '08:00';
@@ -12496,7 +12519,7 @@ function escHtml(str) {
 }
 
 function formatTime(d) {
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return SchoolTime.formatTime(d instanceof Date ? d : new Date(d));
 }
 
 function formatConflictSummaryText(conflicts) {
@@ -13087,7 +13110,7 @@ function openMaintStatusModal(aircraftId, tailNumber, currentStatus) {
   document.getElementById('maint-reason-group').classList.toggle('hidden', !isGoingDown);
   document.getElementById('maint-schedule-group').classList.toggle('hidden', !isGoingDown);
 
-  const today = new Date().toLocaleDateString('en-CA');
+  const today = SchoolTime.calendarDate(new Date());
   document.getElementById('maint-indefinite').checked = false;
   document.getElementById('maint-all-day').checked = false;
   document.getElementById('maint-start-date').value = today;
@@ -13302,7 +13325,7 @@ async function openHoursHistory(aircraftId, tailNumber) {
       <tbody>${history.map(h => {
         const dt = new Date(h.created_at);
         const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const timeStr = SchoolTime.formatTime(dt);
         const src = h.source === 'flight_completion' ? '<span class="tag tag-sky" style="font-size:0.7rem">Flight</span>' :
                     '<span class="tag tag-amber" style="font-size:0.7rem">Manual</span>';
         const old_v = h.old_value != null ? parseFloat(h.old_value).toFixed(1) : '—';
@@ -15544,7 +15567,7 @@ async function loadMissingHours() {
     tbody.innerHTML = pending.map(b => {
       const d = new Date(b.start_time);
       const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-      const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      const timeStr = SchoolTime.formatTime(d);
       const editBtn = canMgmtEdit
         ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 10px;margin-right:4px" onclick="openEditBookingModal(${b.id})">Edit Booking</button>`
         : '';
@@ -15568,7 +15591,7 @@ async function loadMissingHours() {
       cardsEl.innerHTML = pending.map(b => {
         const d = new Date(b.start_time);
         const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-        const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const timeStr = SchoolTime.formatTime(d);
         const actionBtn = (canComplete || canRemoveMissingHoursBooking() || canMgmtEdit)
           ? `<div class="mob-card-actions">
               ${canMgmtEdit ? `<button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(${b.id})">Edit Booking</button>` : ''}
@@ -16095,7 +16118,7 @@ async function loadHoursAudit() {
     tbody.innerHTML = data.map(h => {
       const dt = new Date(h.created_at);
       const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const timeStr = SchoolTime.formatTime(dt);
       const oldV = h.old_value != null ? parseFloat(h.old_value).toFixed(1) : '—';
       const newV = h.new_value != null ? parseFloat(h.new_value).toFixed(1) : '—';
       const srcLabel = h.source === 'flight_completion'
@@ -20460,7 +20483,7 @@ async function loadAvailabilityPage() {
       // Default date to today
       const dateEl = document.getElementById('avail-admin-date');
       if (dateEl && !dateEl.value) {
-        dateEl.value = new Date().toISOString().slice(0,10);
+        dateEl.value = SchoolTime.calendarDate(new Date());
       }
       loadAdminAvailGrid();
     } else {
@@ -20863,6 +20886,93 @@ async function loadAdminAvailGrid() {
     gridEl.innerHTML = `<p style="color:var(--red);font-size:0.85rem;">Failed to load.</p>`;
   }
 }
+
+// ─── INSTRUCTOR AVAILABILITY DIRECTORY (students / renters) ───
+
+async function loadInstructorSchedulesPage() {
+  const dateEl = document.getElementById('instr-sched-date');
+  const loadingEl = document.getElementById('instr-sched-loading');
+  const emptyEl = document.getElementById('instr-sched-empty');
+  const listEl = document.getElementById('instr-sched-list');
+  if (!dateEl || !listEl) return;
+
+  if (!dateEl.value) dateEl.value = SchoolTime.calendarDate(new Date());
+
+  loadingEl.classList.remove('hidden');
+  emptyEl.classList.add('hidden');
+  listEl.classList.add('hidden');
+
+  try {
+    const data = await api(`/api/instructor-availability/directory?date=${encodeURIComponent(dateEl.value)}`);
+    loadingEl.classList.add('hidden');
+
+    if (!data.instructors || data.instructors.length === 0) {
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+
+    listEl.classList.remove('hidden');
+    listEl.innerHTML = data.instructors.map((inst) => renderInstructorScheduleCard(inst, data.day)).join('');
+  } catch (err) {
+    loadingEl.classList.add('hidden');
+    listEl.classList.remove('hidden');
+    listEl.innerHTML = `<p style="color:var(--red);font-size:0.88rem;">${escHtml(err.error || 'Failed to load instructor schedules')}</p>`;
+  }
+}
+
+function renderInstructorScheduleWeeklyGrid(weekly) {
+  const byDay = {};
+  for (let d = 0; d < 7; d++) byDay[d] = [];
+  for (const row of (weekly || [])) byDay[row.day_of_week].push(row);
+
+  return [0, 1, 2, 3, 4, 5, 6].map((d) => {
+    const blocks = byDay[d];
+    const isWeekend = d === 0 || d === 6;
+    const slots = blocks.length === 0
+      ? '<span style="color:var(--gray-600);font-size:0.75rem;">—</span>'
+      : blocks.map((b) => `<span style="display:block;font-size:0.75rem;color:var(--sky);">${escHtml(b.start)} – ${escHtml(b.end)}</span>`).join('');
+    return `<div style="padding:0.45rem 0.35rem;text-align:center;border-right:1px solid var(--border);min-width:0;">
+      <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;color:${isWeekend ? 'var(--gray-500)' : 'var(--gray-400)'};margin-bottom:0.25rem;">${DAY_SHORT[d]}</div>
+      ${slots}
+    </div>`;
+  }).join('');
+}
+
+function renderInstructorScheduleCard(inst, selectedDayName) {
+  let dayStatus;
+  if (!inst.has_config) {
+    dayStatus = '<span style="color:var(--gray-400);font-size:0.82rem;">No weekly schedule on file — contact for availability</span>';
+  } else if (inst.fully_blocked) {
+    dayStatus = `<span style="color:var(--red);font-size:0.82rem;">Not available ${escHtml(selectedDayName || 'this day')} (exception)</span>`;
+  } else if (!inst.windows || inst.windows.length === 0) {
+    dayStatus = `<span style="color:var(--gray-500);font-size:0.82rem;">Not scheduled ${escHtml(selectedDayName || 'this day')}</span>`;
+  } else {
+    dayStatus = inst.windows.map((w) =>
+      `<span style="background:rgba(14,165,233,0.1);color:var(--sky);border:1px solid rgba(14,165,233,0.2);border-radius:5px;font-size:0.78rem;padding:0.15rem 0.45rem;margin:0.1rem 0.2rem 0.1rem 0;display:inline-block;">${escHtml(w.start)} – ${escHtml(w.end)}</span>`
+    ).join('');
+  }
+
+  const blockedHtml = (inst.blocked && inst.blocked.length > 0)
+    ? `<div style="margin-top:0.45rem;font-size:0.78rem;color:var(--amber);">Blocked: ${inst.blocked.map((b) => `${escHtml(b.start)}–${escHtml(b.end)}${b.reason ? ' (' + escHtml(b.reason) + ')' : ''}`).join(', ')}</div>`
+    : '';
+
+  return `<div style="background:var(--dark-blue);border:1px solid var(--border);border-radius:12px;padding:1.1rem 1.25rem;">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.85rem;">
+      <div>
+        <div style="font-size:1rem;font-weight:600;color:var(--white);">${escHtml(inst.name)}</div>
+        <div style="font-size:0.78rem;color:var(--gray-500);margin-top:0.2rem;">${escHtml(selectedDayName || '')} availability</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.25rem;align-items:center;">${dayStatus}</div>
+    </div>
+    ${blockedHtml}
+    <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--gray-500);font-weight:600;margin:0.75rem 0 0.45rem;">Weekly template</div>
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--navy);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      ${renderInstructorScheduleWeeklyGrid(inst.weekly)}
+    </div>
+  </div>`;
+}
+
+// ─── END INSTRUCTOR AVAILABILITY DIRECTORY ───
 
 // ─── END INSTRUCTOR AVAILABILITY ─────────────────────────
 

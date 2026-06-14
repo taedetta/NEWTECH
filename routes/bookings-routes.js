@@ -16,7 +16,14 @@ const {
   runPreflightChecks,
 } = require('../lib/booking-rules');
 const { BOOKABLE_INSTRUCTOR_WHERE, timeToComparable } = require('../lib/instructors');
-const { isInstructorAvailable } = require('../lib/instructor-availability');
+const { isInstructorAvailable, getInstructorDayAvailability } = require('../lib/instructor-availability');
+const {
+  calendarDateFromDate,
+  addCalendarDays,
+  dayOfWeekFromCalendarDate,
+  wallClockToUtc,
+  timeHmFromDate,
+} = require('../lib/school-timezone');
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 
@@ -207,12 +214,11 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
 
 async function findNextAvailableSlots(client, instructorId, afterTime, durationMinutes, count) {
   const slots = [];
-  const startDate = new Date(afterTime);
+  const after = new Date(afterTime);
+  let baseDateStr = calendarDateFromDate(after);
   for (let dayOffset = 0; dayOffset < 14 && slots.length < count; dayOffset++) {
-    const checkDate = new Date(startDate);
-    checkDate.setUTCDate(checkDate.getUTCDate() + dayOffset);
-    const dayOfWeek = checkDate.getUTCDay();
-    const dateStr = checkDate.toISOString().slice(0, 10);
+    const dateStr = addCalendarDays(baseDateStr, dayOffset);
+    const dayOfWeek = dayOfWeekFromCalendarDate(dateStr);
     const dayBlock = await client.query(
       `SELECT 1 FROM instructor_availability_overrides
        WHERE instructor_id = $1 AND start_date <= $2::date AND end_date >= $2::date
@@ -226,16 +232,17 @@ async function findNextAvailableSlots(client, instructorId, afterTime, durationM
       [instructorId, dayOfWeek]
     );
     for (const win of windows.rows) {
-      const winStartParts = win.start_time.split(':').map(Number);
-      const winEndParts = win.end_time.split(':').map(Number);
-      const slotStart = new Date(checkDate);
-      slotStart.setUTCHours(winStartParts[0], winStartParts[1], 0, 0);
-      const winEnd = new Date(checkDate);
-      winEnd.setUTCHours(winEndParts[0], winEndParts[1], 0, 0);
-      if (dayOffset === 0 && slotStart <= startDate) {
-        slotStart.setTime(startDate.getTime());
-        const mins = slotStart.getUTCMinutes();
-        if (mins % 30 !== 0) slotStart.setUTCMinutes(mins + (30 - (mins % 30)), 0, 0);
+      const winStartStr = String(win.start_time).slice(0, 5);
+      const winEndStr = String(win.end_time).slice(0, 5);
+      let slotStart = wallClockToUtc(dateStr, winStartStr);
+      const winEnd = wallClockToUtc(dateStr, winEndStr);
+      if (dayOffset === 0 && slotStart <= after) {
+        slotStart = new Date(after);
+        const mins = parseInt(timeHmFromDate(slotStart).split(':')[1], 10);
+        const hrs = parseInt(timeHmFromDate(slotStart).split(':')[0], 10);
+        const roundedMin = mins % 30 !== 0 ? mins + (30 - (mins % 30)) : mins;
+        slotStart = wallClockToUtc(dateStr, `${String(hrs).padStart(2, '0')}:${String(roundedMin).padStart(2, '0')}`);
+        if (slotStart < after) slotStart = new Date(after);
       }
       while (slots.length < count) {
         const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
@@ -251,11 +258,11 @@ async function findNextAvailableSlots(client, instructorId, afterTime, durationM
             end_time: slotEnd.toISOString(),
             date: dateStr,
             day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek],
-            local_start: `${String(slotStart.getUTCHours()).padStart(2,'0')}:${String(slotStart.getUTCMinutes()).padStart(2,'0')}`,
-            local_end: `${String(slotEnd.getUTCHours()).padStart(2,'0')}:${String(slotEnd.getUTCMinutes()).padStart(2,'0')}`
+            local_start: timeHmFromDate(slotStart),
+            local_end: timeHmFromDate(slotEnd),
           });
         }
-        slotStart.setTime(slotStart.getTime() + 30 * 60000);
+        slotStart = new Date(slotStart.getTime() + 30 * 60000);
       }
     }
   }
@@ -268,41 +275,17 @@ router.get('/check-availability', authenticateToken, async (req, res) => {
     const { instructor_id, date } = req.query;
     if (!instructor_id || !date) return res.json({ available: true, windows: [] });
     const iid = parseInt(instructor_id);
-    const dateObj = new Date(date + 'T00:00:00Z');
-    const dayOfWeek = dateObj.getUTCDay();
-    const overrides = await client.query(
-      `SELECT is_available, start_time, end_time, reason FROM instructor_availability_overrides
-       WHERE instructor_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
-      [iid, date]
-    );
-    for (const ov of overrides.rows) {
-      if (!ov.start_time && !ov.end_time && !ov.is_available) {
-        return res.json({ available: false, reason: ov.reason || 'Instructor is unavailable on this date', windows: [] });
-      }
+    const day = await getInstructorDayAvailability(client, iid, date);
+    if (day.noConfig) return res.json({ available: true, windows: [], no_config: true });
+    if (!day.available) {
+      return res.json({ available: false, reason: day.reason, windows: [] });
     }
-    const weekly = await client.query(
-      `SELECT start_time, end_time FROM instructor_availability
-       WHERE instructor_id = $1 AND day_of_week = $2 ORDER BY start_time`,
-      [iid, dayOfWeek]
-    );
-    const anyConfig = await client.query(
-      `SELECT 1 FROM instructor_availability WHERE instructor_id = $1 LIMIT 1`,
-      [iid]
-    );
-    if (anyConfig.rows.length === 0) return res.json({ available: true, windows: [], no_config: true });
-    const windows = weekly.rows.map(w => ({ start: w.start_time.slice(0, 5), end: w.end_time.slice(0, 5) }));
-    const extraWindows = [];
-    const blockedRanges = [];
-    for (const ov of overrides.rows) {
-      if (ov.start_time && ov.end_time) {
-        if (ov.is_available) extraWindows.push({ start: ov.start_time.slice(0, 5), end: ov.end_time.slice(0, 5) });
-        else blockedRanges.push({ start: ov.start_time.slice(0, 5), end: ov.end_time.slice(0, 5), reason: ov.reason });
-      }
-    }
-    const allWindows = [...windows, ...extraWindows];
-    const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dayOfWeek];
-    if (allWindows.length === 0) return res.json({ available: false, reason: `No availability set for ${dayName}`, windows: [] });
-    return res.json({ available: true, windows: allWindows, blocked: blockedRanges, day: dayName });
+    return res.json({
+      available: true,
+      windows: day.windows,
+      blocked: day.blocked,
+      day: day.dayName,
+    });
   } catch (err) {
     console.error('Availability check error:', err);
     return res.json({ available: true, windows: [] });
@@ -324,7 +307,7 @@ router.get('/policy', authenticateToken, async (req, res) => {
 // ─── Preflight validation preview (before submit) ───
 router.get('/preflight-check', authenticateToken, async (req, res) => {
   try {
-    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_start, local_end, lesson_type } = req.query;
+    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_date, local_start, local_end, lesson_type } = req.query;
     if (!aircraft_id || !start_time || !end_time) {
       return res.status(400).json({ error: 'aircraft_id, start_time, end_time required' });
     }
@@ -341,6 +324,7 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       end_time,
       booking_type,
       lesson_type: lesson_type || null,
+      local_date,
       local_start,
       local_end,
     }, req.user.role);
@@ -676,6 +660,7 @@ router.post('/', authenticateToken, async (req, res) => {
       end_time,
       booking_type,
       lesson_type: lesson_type || null,
+      local_date,
       local_start,
       local_end,
     }, req.user.role);

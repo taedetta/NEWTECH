@@ -6,6 +6,7 @@
 
 const pool = require('./index');
 const { sendEmail } = require('../email-templates');
+const { formatDate } = require('../lib/school-timezone');
 
 const DISCREPANCY_THRESHOLD = 0.1; // hours — flag if delta exceeds this
 const OWNER_EMAIL = 'blankthe97@gmail.com';
@@ -274,7 +275,7 @@ async function hasUnresolvedDiscrepancy(bookingId) {
 // ── Internal email helper ──────────────────────────────────────────────────────
 
 async function sendDiscrepancyEmail(booking, discrepancy) {
-  const flightDate = booking.start_time ? new Date(booking.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown';
+  const flightDate = booking.start_time ? formatDate(booking.start_time, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown';
   const subject = `⚠️ Flight Hours Discrepancy Detected — ${booking.tail_number || 'Unknown Aircraft'}`;
   const html = `
     <!DOCTYPE html><html><head><meta charset="UTF-8"></head>
