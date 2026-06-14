@@ -20955,6 +20955,21 @@ function renderInstructorScheduleWeeklyGrid(weekly) {
   }).join('');
 }
 
+function renderInstructorContactLine(inst) {
+  const parts = [];
+  if (inst.phone_number) {
+    const tel = String(inst.phone_number).replace(/\D/g, '');
+    parts.push(`<a href="tel:${tel}" style="color:var(--sky);text-decoration:none;">${escHtml(inst.phone_number)}</a>`);
+  }
+  if (inst.email) {
+    parts.push(`<a href="mailto:${escHtml(inst.email)}" style="color:var(--sky);text-decoration:none;">${escHtml(inst.email)}</a>`);
+  }
+  if (parts.length === 0) {
+    return '<span style="font-size:0.78rem;color:var(--gray-500);">Contact info not on file — ask the office</span>';
+  }
+  return `<div style="display:flex;flex-wrap:wrap;gap:0.5rem 1rem;font-size:0.82rem;margin-top:0.35rem;">${parts.join('')}</div>`;
+}
+
 function renderInstructorScheduleCard(inst, selectedDayName) {
   let dayStatus;
   if (!inst.has_config) {
@@ -20977,7 +20992,8 @@ function renderInstructorScheduleCard(inst, selectedDayName) {
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.85rem;">
       <div>
         <div style="font-size:1rem;font-weight:600;color:var(--white);">${escHtml(inst.name)}</div>
-        <div style="font-size:0.78rem;color:var(--gray-500);margin-top:0.2rem;">${escHtml(selectedDayName || '')} availability</div>
+        ${renderInstructorContactLine(inst)}
+        <div style="font-size:0.78rem;color:var(--gray-500);margin-top:0.35rem;">${escHtml(selectedDayName || '')} availability</div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:0.25rem;align-items:center;">${dayStatus}</div>
     </div>
