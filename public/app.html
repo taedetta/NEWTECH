@@ -9817,7 +9817,20 @@ function shouldSkipBookingConflictChecks() {
 }
 
 function shouldForceDiscoveryDuration() {
-  return isDiscoveryBooking() && !adminEditingBooking();
+  return isDiscoveryBooking();
+}
+
+function snapHmToStep(hm, stepMin) {
+  if (!hm) return hm;
+  const step = stepMin || 20;
+  let [h, m] = hm.split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hm;
+  const total = h * 60 + m;
+  const snapped = Math.round(total / step) * step;
+  const clamped = Math.min(snapped, 23 * 60 + 60 - step);
+  const nh = Math.floor(clamped / 60);
+  const nm = clamped % 60;
+  return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
 }
 
 function captureBookingFormDraft() {
@@ -10085,10 +10098,22 @@ function addMinutesToHm(hm, mins) {
 
 function onBookingLessonTypeChange() {
   captureBookingFormDraft();
-  const prevStart = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
+  let prevStart = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
+  if (isDiscoveryBooking()) {
+    const multidayEl = document.getElementById('booking-multiday');
+    if (multidayEl?.checked) {
+      multidayEl.checked = false;
+      document.getElementById('booking-end-date-group')?.classList.add('hidden');
+    }
+    if (prevStart) prevStart = snapHmToStep(prevStart, 20);
+  }
+  const prevEnd = isDiscoveryBooking() && prevStart
+    ? addMinutesToHm(prevStart, 20).time
+    : (document.getElementById('booking-end')?.value || bookingFormDraft.endTime || null);
   rebuildBookingTimePickers({
     preserveTimes: !!prevStart,
     startTime: prevStart || null,
+    endTime: prevEnd,
   });
   captureBookingFormDraft();
   refreshBookingAircraft();
@@ -10123,7 +10148,15 @@ function rebuildBookingTimePickers(options) {
     startSel.value = prevStart && startSel.querySelector(`option[value="${prevStart}"]`) ? prevStart : '09:00';
   }
 
-  const chosenStart = startSel.value;
+  let chosenStart = startSel.value;
+  if (isDiscoveryBooking() && chosenStart) {
+    const snapped = snapHmToStep(chosenStart, 20);
+    if (snapped !== chosenStart) {
+      ensureTimeSelectOption(startSel, snapped);
+      startSel.value = snapped;
+      chosenStart = snapped;
+    }
+  }
   const multiday = document.getElementById('booking-multiday')?.checked;
   const endDateVal = document.getElementById('booking-end-date')?.value || dateVal;
 
@@ -10221,8 +10254,12 @@ function populateBookingFormFromRecord(b) {
     document.getElementById('booking-end-date-group')?.classList.add('hidden');
   }
 
-  const startHM = getLocalHmFromIso(b.start_time);
-  const endHM = getLocalHmFromIso(b.end_time);
+  let startHM = getLocalHmFromIso(b.start_time);
+  let endHM = getLocalHmFromIso(b.end_time);
+  if (b.lesson_type && /^discovery/i.test(b.lesson_type.trim())) {
+    startHM = snapHmToStep(startHM, 20);
+    endHM = addMinutesToHm(startHM, 20).time;
+  }
   if (b.lesson_type) document.getElementById('booking-lesson-type').value = b.lesson_type;
   rebuildBookingTimePickers({ preserveTimes: true, startTime: startHM, endTime: endHM });
 

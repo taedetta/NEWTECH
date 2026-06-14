@@ -14,6 +14,7 @@ const {
   validateCancellation,
   checkGroundingSquawk,
   runPreflightChecks,
+  isDiscoveryLessonType,
 } = require('../lib/booking-rules');
 const { BOOKABLE_INSTRUCTOR_WHERE, timeToComparable } = require('../lib/instructors');
 const { isInstructorAvailable, getInstructorDayAvailability } = require('../lib/instructor-availability');
@@ -339,6 +340,7 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
     let booking_type = 'dual';
     if (sid && !iid) booking_type = 'student_solo';
     else if (!sid && iid) booking_type = 'instructor_solo';
+    const isDiscovery = isDiscoveryLessonType(lesson_type);
     const result = await runPreflightChecks(null, {
       aircraft_id: parseInt(aircraft_id, 10),
       student_id: sid,
@@ -352,7 +354,7 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       local_end,
       skipPastTimeCheck: isReschedule || isAdmin || isHistoricalEdit,
       skipInstructorAvailability: isReschedule || isAdmin || isHistoricalEdit,
-      skipDiscoveryDurationCheck: isReschedule || isAdmin || isHistoricalEdit,
+      skipDiscoveryDurationCheck: !isDiscovery && (isReschedule || isAdmin || isHistoricalEdit),
     }, req.user.role);
     if (!isAdmin && !isHistoricalEdit) {
       const client = await pool.connect();
@@ -840,10 +842,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
+    const isDiscovery = isDiscoveryLessonType(effectiveLessonType);
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-      skipDiscoveryDurationCheck: isAdmin || isHistoricalBooking,
+      skipDiscoveryDurationCheck: !isDiscovery && (isAdmin || isHistoricalBooking),
       skipPastTimeCheck: isAdmin || isHistoricalBooking,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
