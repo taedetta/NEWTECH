@@ -5301,6 +5301,7 @@ let currentBookingAvailSlots = null; // null = no restriction, Set = restricted 
 let pendingPermChanges = {}; // { [userId]: { can_manage_aircraft: bool, ... } }
 let completableBookings = []; // bookings awaiting hour entry
 let bookingEditId = null;
+let bookingEditAircraftId = null;
 let _bookingAircraftRefreshSeq = 0;
 let bookingFormDraft = { aircraftId: '', startTime: '', endTime: '' };
 let billingNavSource = 'ops';
@@ -9580,8 +9581,7 @@ function formatBookingPeopleLine(b) {
 }
 
 function getLocalHmFromIso(iso) {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return SchoolTime.timeHmFromIso(iso);
 }
 
 function ensureTimeSelectOption(selectEl, value, labelSuffix) {
@@ -9816,6 +9816,7 @@ function clearBookingFormDraft() {
 async function openBookingModal(editBookingId) {
   if (!allUsers || allUsers.length === 0) await loadUsers();
   bookingEditId = editBookingId || null;
+  bookingEditAircraftId = null;
   clearBookingFormDraft();
 
   let preloadedBooking = null;
@@ -9923,6 +9924,7 @@ async function openBookingModal(editBookingId) {
   }
 
   if (preloadedBooking) {
+    bookingEditAircraftId = preloadedBooking.aircraft_id || null;
     populateBookingFormFromRecord(preloadedBooking);
   } else {
     rebuildBookingTimePickers();
@@ -9934,8 +9936,12 @@ async function openBookingModal(editBookingId) {
   if (recGroup) recGroup.classList.toggle('hidden', !['owner','admin','instructor'].includes(currentUser?.role) || !!bookingEditId);
   document.getElementById('booking-preflight')?.classList.add('hidden');
 
-  refreshBookingAvailability();
-  refreshBookingAircraft();
+  if (bookingEditId) {
+    refreshBookingAircraft();
+  } else {
+    refreshBookingAvailability();
+    refreshBookingAircraft();
+  }
 }
 
 async function openEditBookingModal(bookingId) {
@@ -9990,15 +9996,15 @@ function toggleBookingMultiday() {
 // stepMinutes: slot interval (30 default; 20 for discovery flights)
 function buildTimeOptions(minTime, forDate, stepMinutes) {
   const step = stepMinutes || 30;
-  const todayStr = SchoolTime.calendarDate(new Date()); // "YYYY-MM-DD" in local TZ
+  const todayStr = SchoolTime.calendarDate(new Date());
   const isToday = forDate === todayStr;
-  const allowPast = bookingMgmtCanUsePastDates();
+  const allowPastTimes = bookingMgmtCanUsePastDates() || !!bookingEditId;
 
   let nowH = 0, nowM = 0;
-  if (isToday && !allowPast) {
-    const now = new Date();
-    nowH = now.getHours();
-    nowM = now.getMinutes();
+  if (isToday && !allowPastTimes) {
+    const nowParts = SchoolTime.getParts(new Date());
+    nowH = nowParts.hour;
+    nowM = nowParts.minute;
   }
 
   let minH = 0, minM = 0;
@@ -10009,8 +10015,8 @@ function buildTimeOptions(minTime, forDate, stepMinutes) {
   let opts = '';
   for (let h = 0; h <= 23; h++) {
     for (let m = 0; m < 60; m += step) {
-      // Skip past times when booking today (owner/admin may backdate)
-      if (isToday && !allowPast && (h < nowH || (h === nowH && m <= nowM))) continue;
+      // Skip past times when booking today (owner/admin may backdate; edits keep original times)
+      if (isToday && !allowPastTimes && (h < nowH || (h === nowH && m <= nowM))) continue;
       // Skip slots at or before minTime (for end-time picker)
       if (minTime && (h < minH || (h === minH && m <= minM))) continue;
       const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -10087,7 +10093,7 @@ function rebuildBookingTimePickers(options) {
 
   if (preserveTimes && forceStart && startSel.querySelector(`option[value="${forceStart}"]`)) {
     startSel.value = forceStart;
-  } else if (isToday) {
+  } else if (isToday && !bookingEditId) {
     if (startSel.options.length > 0) startSel.value = startSel.options[0].value;
   } else {
     startSel.value = prevStart && startSel.querySelector(`option[value="${prevStart}"]`) ? prevStart : '09:00';
@@ -10151,7 +10157,7 @@ function rebuildBookingTimePickers(options) {
     return;
   }
 
-  if (isToday) {
+  if (isToday && !bookingEditId) {
     if (endSel.options.length > 0 && endSel.options[0].value !== '') {
       endSel.value = endSel.options[Math.min(2, endSel.options.length - 1)].value;
     }
@@ -10296,6 +10302,7 @@ function updateBookingEndTimes() {
 
 function closeBookingModal() {
   bookingEditId = null;
+  bookingEditAircraftId = null;
   clearBookingFormDraft();
   document.getElementById('booking-modal').classList.add('hidden');
   currentBookingAvailSlots = null;
@@ -10384,6 +10391,7 @@ async function refreshBookingPreflight() {
     if (instructorVal) q.set('instructor_id', instructorVal);
     const lessonType = document.getElementById('booking-lesson-type')?.value;
     if (lessonType) q.set('lesson_type', lessonType);
+    if (bookingEditId) q.set('exclude_booking_id', String(bookingEditId));
     const data = await api('/api/bookings/preflight-check?' + q.toString());
     if (!data.errors?.length && !data.warnings?.length) { el.classList.add('hidden'); return; }
     let html = '';
@@ -10393,7 +10401,7 @@ async function refreshBookingPreflight() {
     el.classList.remove('hidden');
     el.style.background = data.errors?.length ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)';
     el.style.border = data.errors?.length ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)';
-    const availErr = (data.errors || []).find(e => /not available/i.test(e));
+    const availErr = !bookingEditId && (data.errors || []).find(e => /not available/i.test(e));
     if (availErr) {
       showBookingAlertModal('Instructor not available', availErr.replace(/^[^:]+:\s*/, '') || availErr, '<p style="font-size:0.82rem;color:var(--gray-400)">Choose a different time, another instructor, or contact the school to adjust availability.</p>');
     }
@@ -10458,6 +10466,14 @@ async function refreshBookingAircraft() {
   let availableAircraft = allAircraft.filter(a => a.status === 'available')
     .slice().sort((a, b) => (a.tail_number || '').localeCompare(b.tail_number || ''));
 
+  const editAcId = bookingEditAircraftId || (bookingEditId ? parseInt(bookingFormDraft.aircraftId, 10) : null);
+  if (editAcId) {
+    const bookedAc = allAircraft.find(a => a.id === editAcId);
+    if (bookedAc && !availableAircraft.some(a => a.id === bookedAc.id)) {
+      availableAircraft = [bookedAc, ...availableAircraft];
+    }
+  }
+
   // Filter out aircraft blocked by maintenance downtime for this date/time
   try {
     const downtimeEntries = await api(`/api/downtime/by-date?date=${date}`);
@@ -10465,6 +10481,7 @@ async function refreshBookingAircraft() {
     const startTime = document.getElementById('booking-start')?.value || bookingFormDraft.startTime || '';
     const endTime = document.getElementById('booking-end')?.value || bookingFormDraft.endTime || '';
     availableAircraft = availableAircraft.filter(a =>
+      a.id === editAcId ||
       !aircraftBlockedByDowntime(downtimeEntries, a.id, date, startTime, endTime)
     );
   } catch (err) {
@@ -10555,9 +10572,9 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     return;
   }
 
-  // Block past dates for students/renters only — staff may backdate or edit past bookings
+  // Block past dates for students/renters on new bookings only — staff may backdate or edit existing
   const todayAtSubmit = SchoolTime.calendarDate(new Date());
-  if (!bookingStaffCanUsePastDates() && date < todayAtSubmit) {
+  if (!bookingEditId && !bookingStaffCanUsePastDates() && date < todayAtSubmit) {
     errEl.textContent = 'Cannot book a flight for a past date. Please select today or a future date.';
     errEl.classList.remove('hidden');
     document.getElementById('booking-date').min = todayAtSubmit;

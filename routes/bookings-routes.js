@@ -155,9 +155,14 @@ router.get('/history', authenticateToken, async (req, res) => {
 // Conflict detection — only checks fields that are non-null
 async function checkConflicts(client, { aircraft_id, instructor_id, student_id, start_time, end_time, excludeBookingId }) {
   const conflicts = [];
+  const excludeId = excludeBookingId != null && excludeBookingId !== ''
+    ? parseInt(excludeBookingId, 10)
+    : null;
+  const st = new Date(start_time).toISOString();
+  const et = new Date(end_time).toISOString();
   if (aircraft_id) {
-    const params = [start_time, end_time, aircraft_id];
-    if (excludeBookingId) params.push(excludeBookingId);
+    const params = [st, et, aircraft_id];
+    if (excludeId) params.push(excludeId);
     const result = await client.query(
       `SELECT b.id, a.tail_number, b.start_time, b.end_time,
               COALESCE(s.name, i.name, 'Someone') AS booked_by
@@ -166,7 +171,7 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
        LEFT JOIN users i ON b.instructor_id = i.id
        WHERE b.aircraft_id = $3 AND ${ACTIVE_BOOKING_SQL}
          AND b.start_time < $2 AND b.end_time > $1
-         ${excludeBookingId ? 'AND b.id != $4' : ''}
+         ${excludeId ? 'AND b.id != $4' : ''}
        LIMIT 1`,
       params
     );
@@ -176,14 +181,14 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
     }
   }
   if (instructor_id) {
-    const params = [start_time, end_time, instructor_id];
-    if (excludeBookingId) params.push(excludeBookingId);
+    const params = [st, et, instructor_id];
+    if (excludeId) params.push(excludeId);
     const result = await client.query(
       `SELECT b.id, u.name as instructor_name, b.start_time, b.end_time
        FROM bookings b JOIN users u ON b.instructor_id = u.id
        WHERE b.instructor_id = $3 AND ${ACTIVE_BOOKING_SQL}
          AND b.start_time < $2 AND b.end_time > $1
-         ${excludeBookingId ? 'AND b.id != $4' : ''}
+         ${excludeId ? 'AND b.id != $4' : ''}
        LIMIT 1`,
       params
     );
@@ -193,14 +198,14 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
     }
   }
   if (student_id) {
-    const params = [start_time, end_time, student_id];
-    if (excludeBookingId) params.push(excludeBookingId);
+    const params = [st, et, student_id];
+    if (excludeId) params.push(excludeId);
     const result = await client.query(
       `SELECT b.id, u.name as student_name, b.start_time, b.end_time
        FROM bookings b JOIN users u ON b.student_id = u.id
        WHERE b.student_id = $3 AND ${ACTIVE_BOOKING_SQL}
          AND b.start_time < $2 AND b.end_time > $1
-         ${excludeBookingId ? 'AND b.id != $4' : ''}
+         ${excludeId ? 'AND b.id != $4' : ''}
        LIMIT 1`,
       params
     );
@@ -307,12 +312,14 @@ router.get('/policy', authenticateToken, async (req, res) => {
 // ─── Preflight validation preview (before submit) ───
 router.get('/preflight-check', authenticateToken, async (req, res) => {
   try {
-    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_date, local_start, local_end, lesson_type } = req.query;
+    const { aircraft_id, student_id, instructor_id, start_time, end_time, local_date, local_start, local_end, lesson_type, exclude_booking_id } = req.query;
     if (!aircraft_id || !start_time || !end_time) {
       return res.status(400).json({ error: 'aircraft_id, start_time, end_time required' });
     }
     const sid = student_id ? parseInt(student_id, 10) : null;
     const iid = instructor_id ? parseInt(instructor_id, 10) : null;
+    const excludeId = exclude_booking_id ? parseInt(exclude_booking_id, 10) : null;
+    const isReschedule = Number.isFinite(excludeId);
     let booking_type = 'dual';
     if (sid && !iid) booking_type = 'student_solo';
     else if (!sid && iid) booking_type = 'instructor_solo';
@@ -327,7 +334,29 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       local_date,
       local_start,
       local_end,
+      skipPastTimeCheck: isReschedule,
+      skipInstructorAvailability: isReschedule,
     }, req.user.role);
+    if (isReschedule) {
+      const client = await pool.connect();
+      try {
+        const conflicts = await checkConflicts(client, {
+          aircraft_id: parseInt(aircraft_id, 10),
+          instructor_id: iid,
+          student_id: sid,
+          start_time,
+          end_time,
+          excludeBookingId: excludeId,
+        });
+        for (const c of conflicts) {
+          const who = c.type === 'aircraft' ? 'Aircraft' : c.type === 'instructor' ? 'Instructor' : 'Student';
+          result.errors.push(`${who} conflict: ${c.entity} is already booked during this time`);
+        }
+        result.ok = result.errors.length === 0;
+      } finally {
+        client.release();
+      }
+    }
     res.json(result);
   } catch (err) {
     console.error('[bookings] preflight-check error:', err.message);
@@ -744,7 +773,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, status } = req.body;
-    const bookingId = req.params.id;
+    const bookingId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
     const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
@@ -760,11 +790,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
       if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
-    const acId = aircraft_id !== undefined ? parseInt(aircraft_id) : b.aircraft_id;
-    const st = start_time || b.start_time;
-    const et = end_time || b.end_time;
-    const stTime = new Date(st);
-    const enTime = new Date(et);
+    const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
+    const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
+    const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
+    const stTime = new Date(stIso);
+    const enTime = new Date(etIso);
     if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return res.status(400).json({ error: 'Invalid date format' });
     if (enTime <= stTime) return res.status(400).json({ error: 'End time must be after start time' });
     // Duration cap on updates
@@ -775,24 +805,25 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
       skipDiscoveryDurationCheck: isAdmin && (b.status === 'completed' || b.status === 'confirmed'),
+      skipPastTimeCheck: !isAdmin && b.status === 'confirmed' && rescheduleRequested,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap
     if (acId) {
-      const downtimeHit = await findOverlappingDowntime(client, acId, st, et);
+      const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
-    if (sid !== null || iid !== null || st !== b.start_time || et !== b.end_time) {
-      const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: st, end_time: et, excludeBookingId: bookingId });
+    if (rescheduleRequested || acId !== b.aircraft_id || stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString()) {
+      const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
       if (conflicts.length > 0) {
         return res.status(409).json({ error: 'Scheduling conflict', conflicts });
       }
     }
     await client.query('BEGIN');
     // If start_time changed, reset reminder_sent so a new reminder fires for the new time
-    const timeChanged = st !== b.start_time || et !== b.end_time;
+    const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
     let booking_type = await deriveBookingType(client, sid, iid);
     if (isAdmin && req.body.booking_type) {
       const allowed = ['dual', 'student_solo', 'renter_solo', 'instructor_solo'];
@@ -806,7 +837,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
        reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
        updated_at = NOW()
        WHERE id = $10 RETURNING *`,
-      [sid, iid, acId, st, et, lesson_type, notes, status, booking_type, bookingId]
+      [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
     );
     const updated = result.rows[0];
     await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);

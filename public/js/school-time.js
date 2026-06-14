@@ -118,6 +118,7 @@
   global.SchoolTime = {
     SCHOOL_TZ: SCHOOL_TZ,
     SCHOOL_TZ_LABEL: SCHOOL_TZ_LABEL,
+    getParts: getParts,
     calendarDate: calendarDate,
     addCalendarDays: addCalendarDays,
     wallClockToUtc: wallClockToUtc,
