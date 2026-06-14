@@ -334,6 +334,8 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
     const excludeId = exclude_booking_id ? parseInt(exclude_booking_id, 10) : null;
     const isReschedule = Number.isFinite(excludeId);
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const editStatus = (req.query.booking_status || '').toLowerCase();
+    const isHistoricalEdit = editStatus === 'completed' || editStatus === 'cancelled';
     let booking_type = 'dual';
     if (sid && !iid) booking_type = 'student_solo';
     else if (!sid && iid) booking_type = 'instructor_solo';
@@ -348,11 +350,11 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       local_date,
       local_start,
       local_end,
-      skipPastTimeCheck: isReschedule || isAdmin,
-      skipInstructorAvailability: isReschedule || isAdmin,
-      skipDiscoveryDurationCheck: isReschedule || isAdmin,
+      skipPastTimeCheck: isReschedule || isAdmin || isHistoricalEdit,
+      skipInstructorAvailability: isReschedule || isAdmin || isHistoricalEdit,
+      skipDiscoveryDurationCheck: isReschedule || isAdmin || isHistoricalEdit,
     }, req.user.role);
-    if (!isAdmin) {
+    if (!isAdmin && !isHistoricalEdit) {
       const client = await pool.connect();
       try {
         const conflicts = await checkConflicts(client, {
@@ -815,6 +817,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -840,8 +843,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-      skipDiscoveryDurationCheck: isAdmin,
-      skipPastTimeCheck: isAdmin,
+      skipDiscoveryDurationCheck: isAdmin || isHistoricalBooking,
+      skipPastTimeCheck: isAdmin || isHistoricalBooking,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
@@ -856,7 +859,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const needsConflictCheck = scheduleChanged && !isAdmin;
+    const skipConflictCheck = isAdmin || isHistoricalBooking;
+    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {

@@ -5302,6 +5302,7 @@ let pendingPermChanges = {}; // { [userId]: { can_manage_aircraft: bool, ... } }
 let completableBookings = []; // bookings awaiting hour entry
 let bookingEditId = null;
 let bookingEditAircraftId = null;
+let bookingEditStatus = null;
 let _bookingAircraftRefreshSeq = 0;
 let bookingFormDraft = { aircraftId: '', startTime: '', endTime: '' };
 let billingNavSource = 'ops';
@@ -8972,7 +8973,8 @@ function buildBookingActionButtons(b, options) {
     actionBtns += `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}" onclick="${prefix}openEditHoursModal(${b.id})">Edit Hours</button>`;
     actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}margin-left:0.4rem;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
   } else if (b.status === 'cancelled' && ['owner', 'admin'].includes(currentUser.role)) {
-    actionBtns = `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
+    actionBtns = `<button type="button" class="btn btn-secondary btn-sm" style="${btnStyle}margin-right:0.4rem" onclick="${prefix}openEditBookingModal(${b.id})">Edit Booking</button>`;
+    actionBtns += `<button type="button" class="btn btn-sm" style="${btnStyle}background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.4);" onclick="${prefix}deleteBookingFromSchedule(${b.id})">🗑 Delete</button>`;
   }
   return actionBtns;
 }
@@ -9804,6 +9806,16 @@ function adminEditingBooking() {
   return !!(bookingEditId && currentUser && ['owner', 'admin'].includes(currentUser.role));
 }
 
+function staffEditingHistoricalBooking() {
+  return adminEditingBooking() && ['completed', 'cancelled'].includes(bookingEditStatus);
+}
+
+function shouldSkipBookingConflictChecks() {
+  if (!bookingEditId) return false;
+  if (adminEditingBooking()) return true;
+  return ['completed', 'cancelled'].includes(bookingEditStatus);
+}
+
 function shouldForceDiscoveryDuration() {
   return isDiscoveryBooking() && !adminEditingBooking();
 }
@@ -9826,6 +9838,7 @@ async function openBookingModal(editBookingId) {
   if (!allUsers || allUsers.length === 0) await loadUsers();
   bookingEditId = editBookingId || null;
   bookingEditAircraftId = null;
+  bookingEditStatus = null;
   clearBookingFormDraft();
 
   let preloadedBooking = null;
@@ -9921,7 +9934,7 @@ async function openBookingModal(editBookingId) {
 
   const todayISO = SchoolTime.calendarDate(new Date());
   const dateInput = document.getElementById('booking-date');
-  dateInput.min = bookingStaffCanUsePastDates() ? '' : todayISO;
+  dateInput.min = (bookingStaffCanUsePastDates() || bookingEditId) ? '' : todayISO;
 
   const finalDate = (savedDate && (savedDate >= todayISO || bookingEditId || bookingMgmtCanUsePastDates())) ? savedDate : todayISO;
   dateInput.value = finalDate;
@@ -9933,6 +9946,7 @@ async function openBookingModal(editBookingId) {
   }
 
   if (preloadedBooking) {
+    bookingEditStatus = preloadedBooking.status || null;
     bookingEditAircraftId = preloadedBooking.aircraft_id || null;
     populateBookingFormFromRecord(preloadedBooking);
   } else {
@@ -9947,6 +9961,7 @@ async function openBookingModal(editBookingId) {
 
   if (bookingEditId) {
     refreshBookingAircraft();
+    if (!shouldSkipBookingConflictChecks()) refreshBookingPreflight();
   } else {
     refreshBookingAvailability();
     refreshBookingAircraft();
@@ -10312,6 +10327,7 @@ function updateBookingEndTimes() {
 function closeBookingModal() {
   bookingEditId = null;
   bookingEditAircraftId = null;
+  bookingEditStatus = null;
   clearBookingFormDraft();
   document.getElementById('booking-modal').classList.add('hidden');
   currentBookingAvailSlots = null;
@@ -10373,6 +10389,11 @@ async function refreshBookingAvailability() {
 async function refreshBookingPreflight() {
   const el = document.getElementById('booking-preflight');
   if (!el) return;
+  if (shouldSkipBookingConflictChecks()) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
   const date = document.getElementById('booking-date')?.value;
   const startTime = document.getElementById('booking-start')?.value;
   const endTime = document.getElementById('booking-end')?.value;
@@ -10400,11 +10421,21 @@ async function refreshBookingPreflight() {
     if (instructorVal) q.set('instructor_id', instructorVal);
     const lessonType = document.getElementById('booking-lesson-type')?.value;
     if (lessonType) q.set('lesson_type', lessonType);
-    if (bookingEditId) q.set('exclude_booking_id', String(bookingEditId));
+    if (bookingEditId) {
+      q.set('exclude_booking_id', String(bookingEditId));
+      if (bookingEditStatus) q.set('booking_status', bookingEditStatus);
+    }
     const data = await api('/api/bookings/preflight-check?' + q.toString());
     if (!data.errors?.length && !data.warnings?.length) { el.classList.add('hidden'); return; }
     let html = '';
-    if (data.errors?.length) html += `<div style="color:#f87171;margin-bottom:0.35rem;"><strong>Cannot book:</strong> ${data.errors.map(e => escHtml(e)).join('; ')}</div>`;
+    if (data.errors?.length) {
+      const conflictOnly = data.errors.every(e => /conflict:/i.test(e));
+      if (bookingEditId && conflictOnly) {
+        el.classList.add('hidden');
+        return;
+      }
+      html += `<div style="color:#f87171;margin-bottom:0.35rem;"><strong>Cannot book:</strong> ${data.errors.map(e => escHtml(e)).join('; ')}</div>`;
+    }
     if (data.warnings?.length) html += `<div style="color:#fbbf24;"><strong>Notice:</strong> ${data.warnings.map(w => escHtml(w)).join('; ')}</div>`;
     el.innerHTML = html;
     el.classList.remove('hidden');
@@ -10527,7 +10558,7 @@ async function refreshBookingAircraft() {
 
     const bookedAcIds = await getBookedAircraftIdsForSlot(date, startTime, endTime);
     if (seq !== _bookingAircraftRefreshSeq) return;
-    if (bookedAcIds.size > 0 && !adminEditingBooking()) {
+    if (bookedAcIds.size > 0 && !shouldSkipBookingConflictChecks()) {
       availableAircraft = availableAircraft.filter(a =>
         a.id === editAcId || !bookedAcIds.has(a.id)
       );
@@ -12633,6 +12664,7 @@ function buildAvailabilityConflictHtml(err) {
 /** Show inline conflict details and a popup for any booking scheduling conflict. Returns true if handled. */
 function handleBookingConflictError(err) {
   if (!err) return false;
+  if (shouldSkipBookingConflictChecks()) return true;
   const errEl = document.getElementById('booking-error');
   const bottomConflictEl = document.getElementById('booking-conflicts-bottom');
   const topConflictEl = document.getElementById('booking-conflicts');
