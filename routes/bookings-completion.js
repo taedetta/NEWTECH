@@ -68,6 +68,16 @@ function validateHobbsValue(val, fieldName) {
   return null;
 }
 
+/** When a flight finishes before its scheduled end, shrink end_time so the slot can be rebooked. */
+function completionEndTime(booking) {
+  const now = new Date();
+  const scheduledEnd = new Date(booking.end_time);
+  const start = new Date(booking.start_time);
+  const effective = scheduledEnd > now ? now : scheduledEnd;
+  if (effective <= start) return start.toISOString();
+  return effective.toISOString();
+}
+
 router.patch('/:id/end-early', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -85,12 +95,13 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const originalEnd = new Date(b.end_time);
     if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
     await client.query('BEGIN');
-    await client.query(
-      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2`,
-      [endTime.toISOString(), req.params.id]
+    const newEndIso = endTime.toISOString();
+    const updated = await client.query(
+      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [newEndIso, req.params.id]
     );
     await client.query('COMMIT');
-    res.json({ ok: true, new_end_time: endTime.toISOString() });
+    res.json({ ok: true, new_end_time: newEndIso, booking: updated.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     const ts = new Date().toISOString();
@@ -171,10 +182,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
+      const finishedEnd = completionEndTime(b);
       await client.query('BEGIN');
       await client.query(
-        `UPDATE bookings SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-        [req.params.id]
+        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
+        [finishedEnd, req.params.id]
       );
       await client.query('COMMIT');
       const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
@@ -354,11 +366,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         );
       }
     }
+    const finishedEnd = completionEndTime(b);
     // Update booking — persist hobbs/tach on booking row for billing queries
     await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, updated_at = NOW() WHERE id = $5`,
-      [hStart, hEnd, tStart, tEnd, req.params.id]
+       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW() WHERE id = $6`,
+      [hStart, hEnd, tStart, tEnd, finishedEnd, req.params.id]
     );
 
     // Auto-sync instructor hours log from completed flight

@@ -24,6 +24,10 @@ const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
 
+// Only active confirmed bookings block the schedule — completed/cancelled flights free their slots.
+const ACTIVE_BOOKING_SQL = "b.status = 'confirmed'";
+const ACTIVE_BOOKING_SQL_NO_ALIAS = "status = 'confirmed'";
+
 async function findOverlappingDowntime(client, aircraftId, bookingStart, bookingEnd) {
   const db = client || pool;
   const startDate = new Date(bookingStart).toISOString().slice(0, 10);
@@ -153,7 +157,7 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
        FROM bookings b JOIN aircraft a ON a.id = b.aircraft_id
        LEFT JOIN users s ON b.student_id = s.id
        LEFT JOIN users i ON b.instructor_id = i.id
-       WHERE b.aircraft_id = $3 AND b.status != 'cancelled'
+       WHERE b.aircraft_id = $3 AND ${ACTIVE_BOOKING_SQL}
          AND b.start_time < $2 AND b.end_time > $1
          ${excludeBookingId ? 'AND b.id != $4' : ''}
        LIMIT 1`,
@@ -170,7 +174,7 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
     const result = await client.query(
       `SELECT b.id, u.name as instructor_name, b.start_time, b.end_time
        FROM bookings b JOIN users u ON b.instructor_id = u.id
-       WHERE b.instructor_id = $3 AND b.status != 'cancelled'
+       WHERE b.instructor_id = $3 AND ${ACTIVE_BOOKING_SQL}
          AND b.start_time < $2 AND b.end_time > $1
          ${excludeBookingId ? 'AND b.id != $4' : ''}
        LIMIT 1`,
@@ -187,7 +191,7 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
     const result = await client.query(
       `SELECT b.id, u.name as student_name, b.start_time, b.end_time
        FROM bookings b JOIN users u ON b.student_id = u.id
-       WHERE b.student_id = $3 AND b.status != 'cancelled'
+       WHERE b.student_id = $3 AND ${ACTIVE_BOOKING_SQL}
          AND b.start_time < $2 AND b.end_time > $1
          ${excludeBookingId ? 'AND b.id != $4' : ''}
        LIMIT 1`,
@@ -237,7 +241,7 @@ async function findNextAvailableSlots(client, instructorId, afterTime, durationM
         const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
         if (slotEnd > winEnd) break;
         const conflict = await client.query(
-          `SELECT 1 FROM bookings WHERE instructor_id = $1 AND status != 'cancelled'
+          `SELECT 1 FROM bookings WHERE instructor_id = $1 AND ${ACTIVE_BOOKING_SQL_NO_ALIAS}
            AND start_time < $2 AND end_time > $3 LIMIT 1`,
           [instructorId, slotEnd.toISOString(), slotStart.toISOString()]
         );
@@ -706,7 +710,7 @@ router.post('/', authenticateToken, async (req, res) => {
           const { available: altAvail } = await isInstructorAvailable(client, inst.id, start_time, end_time, localOpts);
           if (altAvail) {
             const conf = await client.query(
-              `SELECT id FROM bookings WHERE instructor_id=$1 AND status!='cancelled' AND start_time<$2 AND end_time>$3 LIMIT 1`,
+              `SELECT id FROM bookings WHERE instructor_id=$1 AND ${ACTIVE_BOOKING_SQL_NO_ALIAS} AND start_time<$2 AND end_time>$3 LIMIT 1`,
               [inst.id, end_time, start_time]
             );
             if (conf.rows.length === 0) alternatives.push(inst);
