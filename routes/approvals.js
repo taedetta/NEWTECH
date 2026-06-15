@@ -9,6 +9,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { sendEmail, approvalConfirmationEmail, rejectionEmail } = require('../email-templates');
+const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 
 const router = express.Router();
 
@@ -69,7 +70,8 @@ router.post('/:id/approve', ...canApprove, async (req, res) => {
       role: approvedUser.role,
       approvedBy: req.user.name,
     });
-    sendEmail(approvedUser.email, subject, html, text).catch(err => console.error('[approval-email] send error:', err.message));
+    sendEmailToUser(approvedUser.id, approvedUser.email, EMAIL_TYPES.account_approved, subject, html, text)
+      .catch(err => console.error('[approval-email] send error:', err.message));
 
     res.json({ ok: true, user: approvedUser });
   } catch (err) {
@@ -97,7 +99,8 @@ router.post('/:id/reject', ...canApprove, async (req, res) => {
 
     // Send rejection email to the user
     const { subject, html, text } = rejectionEmail({ name: rejectedUser.name });
-    sendEmail(rejectedUser.email, subject, html, text).catch(err => console.error('[rejection-email] send error:', err.message));
+    sendEmailToUser(rejectedUser.id, rejectedUser.email, EMAIL_TYPES.account_rejected, subject, html, text)
+      .catch(err => console.error('[rejection-email] send error:', err.message));
 
     res.json({ ok: true, user: rejectedUser });
   } catch (err) {

@@ -8,7 +8,8 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { recordHobbsReading } = require('../db/discrepancies');
-const { flightCompletedEmail, sendEmail } = require('../email-templates');
+const { flightCompletedEmail } = require('../email-templates');
+const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 const { computeFlightCharges } = require('../lib/flight-charges');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
@@ -460,7 +461,10 @@ async function sendFlightCompletedEmail(bookingId, completedById, completedByRol
       completedByRole: completedByRole,
       dualInstructionHours: dualHrs,
     });
-    sendEmail(b.student_email, studentEmail.subject, studentEmail.html, studentEmail.text)
+    sendEmailToUser(
+      b.student_id, b.student_email, EMAIL_TYPES.flight_completed,
+      studentEmail.subject, studentEmail.html, studentEmail.text
+    )
       .catch(e => console.error('[bookings-completion] student completion email error:', e.message));
 
     // Send to instructor if assigned
@@ -480,7 +484,10 @@ async function sendFlightCompletedEmail(bookingId, completedById, completedByRol
         completedByRole: completedByRole,
         dualInstructionHours: dualHrs,
       });
-      sendEmail(b.instructor_email, instructorEmail.subject, instructorEmail.html, instructorEmail.text)
+      sendEmailToUser(
+        b.instructor_id, b.instructor_email, EMAIL_TYPES.flight_completed,
+        instructorEmail.subject, instructorEmail.html, instructorEmail.text
+      )
         .catch(e => console.error('[bookings-completion] instructor completion email error:', e.message));
     }
   } catch (err) {

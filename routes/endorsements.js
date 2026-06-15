@@ -5,6 +5,7 @@ const PDFDocument = require('pdfkit');
 const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { sendEmail } = require('../email-templates');
+const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 
 const router = express.Router();
 
@@ -325,6 +326,9 @@ router.post('/', authenticateToken, requireRole('instructor', 'owner', 'admin'),
 
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
+    if (!/^\d+$/.test(String(req.params.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     const result = await pool.query(`
       SELECT e.*,
              s.name AS student_name_user, s.email AS student_email,
@@ -578,9 +582,11 @@ This endorsement expires in ${days} day${days > 1 ? 's' : ''}.
 Log in to New Tech Aviation to renew or view the endorsement details.
         `.trim();
 
-        sendEmail(e.student_email, subject, null, body).catch(() => {});
-        sendEmail(
+        sendEmailToUser(e.student_id, e.student_email, EMAIL_TYPES.endorsement_expiry, subject, null, body).catch(() => {});
+        sendEmailToUser(
+          e.instructor_id,
           e.instructor_email,
+          EMAIL_TYPES.endorsement_expiry,
           `[Instructor Alert] ${subject}`,
           null,
           `Instructor alert — your student's endorsement is expiring.\n\n${body}`

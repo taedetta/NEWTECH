@@ -97,6 +97,13 @@ async function ensureSchemaPatches(pool) {
     console.error('[bootstrap] Downtime column patch error:', err.message);
   }
   try {
+    const { ensureEmailPrefsSchema } = require('../db/notification-prefs');
+    await ensureEmailPrefsSchema(pool);
+    console.log('[bootstrap] user_email_preferences schema ready');
+  } catch (err) {
+    console.error('[bootstrap] user_email_preferences schema error:', err.message);
+  }
+  try {
     const patchPath = path.join(__dirname, '..', 'scripts', 'schema-patches.sql');
     if (!fs.existsSync(patchPath)) return;
     await pool.query(fs.readFileSync(patchPath, 'utf8'));

@@ -48,10 +48,11 @@ router.post('/squawks', authenticateToken, async (req, res) => {
       try {
         const [acResult, usersResult] = await Promise.all([
           pool.query('SELECT tail_number, make_model FROM aircraft WHERE id = $1', [aircraft_id]),
-          pool.query("SELECT email, name FROM users WHERE role IN ('admin', 'owner', 'instructor') AND deleted_at IS NULL AND email IS NOT NULL")
+          pool.query("SELECT id, email, name FROM users WHERE role IN ('admin', 'owner', 'instructor') AND deleted_at IS NULL AND email IS NOT NULL")
         ]);
         const ac = acResult.rows[0];
         const { groundingSquawkEmail } = require('../email-templates');
+        const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
         const tpl = groundingSquawkEmail({
           tailNumber: ac ? ac.tail_number : `Aircraft #${aircraft_id}`,
           makeModel: ac ? ac.make_model : '',
@@ -59,7 +60,7 @@ router.post('/squawks', authenticateToken, async (req, res) => {
           reportedAt: squawk.reported_at, expectedDowntime: downtimeValue,
         });
         for (const user of usersResult.rows) {
-          sendEmail(user.email, tpl.subject, tpl.html, tpl.text).catch(() => {});
+          sendEmailToUser(user.id, user.email, EMAIL_TYPES.maintenance_alert, tpl.subject, tpl.html, tpl.text).catch(() => {});
         }
         if (severity === 'grounding') {
           const { notifyAircraftGrounded } = require('../lib/app-notifications');

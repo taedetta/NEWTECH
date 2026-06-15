@@ -6,7 +6,9 @@ const pool = require('../db/index');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 const { isPlatformAdminEmail } = require('../lib/platform-admin');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
-const { inviteEmail, sendEmail } = require('../email-templates');
+const { inviteEmail } = require('../email-templates');
+const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
+const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
 const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
@@ -158,7 +160,9 @@ router.post('/invite', authenticateToken, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, 'approved') RETURNING id, email, name, role, created_at`,
       [email.toLowerCase(), name, passwordHash, targetRole, isInstructorRole]
     );
-    res.status(201).json(result.rows[0]);
+    const newUser = result.rows[0];
+    res.status(201).json(newUser);
+    ensureDefaultPrefs(newUser.id).catch(() => {});
     const { subject, html, text } = inviteEmail({
       name,
       email: email.toLowerCase(),
@@ -166,7 +170,8 @@ router.post('/invite', authenticateToken, async (req, res) => {
       role: targetRole,
       invitedByName: req.user.name || null,
     });
-    sendEmail(email.toLowerCase(), subject, html, text).catch(err => console.error('[invite-email] error:', err.message));
+    sendEmailToUser(newUser.id, email.toLowerCase(), EMAIL_TYPES.account_invite, subject, html, text)
+      .catch(err => console.error('[invite-email] error:', err.message));
   } catch (err) {
     console.error('Invite user error:', err);
     res.status(500).json({ error: 'Failed to create user' });

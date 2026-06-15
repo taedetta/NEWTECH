@@ -224,6 +224,14 @@
     .sidebar-user .user-role { font-size: 0.72rem; color: var(--gray-500); text-transform: capitalize; margin-top: 0.1rem; }
     .sidebar-user .logout-btn { margin-top: 0.6rem; font-size: 0.78rem; color: var(--gray-500); cursor: pointer; background: none; border: none; font-family: inherit; padding: 0.25rem 0; transition: color var(--transition); }
     .sidebar-user .logout-btn:hover { color: var(--red); }
+    .sidebar-user .account-btn { margin-top: 0.5rem; width: 100%; font-size: 0.78rem; padding: 0.35rem 0.5rem; }
+    .account-pref-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.65rem 0; border-bottom: 1px solid var(--border); }
+    .account-pref-row:last-child { border-bottom: none; }
+    .account-pref-row label { font-size: 0.88rem; color: var(--gray-200); flex: 1; cursor: pointer; }
+    .account-pref-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--blue); flex-shrink: 0; }
+    .account-pref-row.disabled { opacity: 0.45; pointer-events: none; }
+    .account-pref-category { margin-top: 1rem; }
+    .account-pref-category h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--gray-500); margin: 0 0 0.35rem; font-weight: 700; }
     #guest-signin-btn { margin-bottom: 0;; }
 
     .main-content { flex: 1; margin-left: 250px; width: calc(100vw - 250px); max-width: calc(100vw - 250px); min-width: 0; padding: 2rem 2.5rem; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; max-height: 100vh; max-height: 100dvh; -webkit-overflow-scrolling: touch; }
@@ -1788,6 +1796,7 @@
           <div id="auth-user-info" class="hidden">
             <div class="user-name" id="sidebar-name"></div>
             <div class="user-role" id="sidebar-role"></div>
+            <button type="button" class="btn btn-secondary account-btn" onclick="navigate('account-settings')">&#9881; My Account</button>
             <button class="logout-btn" onclick="logout()">Sign out</button>
           </div>
         </div>
@@ -3738,6 +3747,63 @@
           </div>
         </div>
 
+        <!-- ─── MY ACCOUNT ─── -->
+        <div id="page-account-settings" class="page hidden">
+          <div class="page-header">
+            <h1>&#9881; My Account</h1>
+          </div>
+          <div class="pwa-device-card" style="max-width:720px;margin-bottom:1.25rem">
+            <h2 style="font-size:1.05rem;color:var(--white);margin-bottom:0.75rem">Profile</h2>
+            <div id="account-profile-error" class="error-msg hidden"></div>
+            <div id="account-profile-success" class="success-msg hidden" style="margin-bottom:0.75rem"></div>
+            <form id="account-profile-form" onsubmit="saveAccountProfile(event)">
+              <div class="form-group">
+                <label>Full name</label>
+                <input type="text" id="account-name" class="input-field" required autocomplete="name">
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label>Email</label>
+                  <input type="email" id="account-email" class="input-field" required autocomplete="email">
+                </div>
+                <div class="form-group">
+                  <label>Phone</label>
+                  <input type="tel" id="account-phone" class="input-field" required autocomplete="tel" placeholder="(555) 000-0000">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary btn-sm">Save profile</button>
+            </form>
+          </div>
+          <div class="pwa-device-card" style="max-width:720px;margin-bottom:1.25rem">
+            <h2 style="font-size:1.05rem;color:var(--white);margin-bottom:0.75rem">Change password</h2>
+            <div id="account-password-error" class="error-msg hidden"></div>
+            <div id="account-password-success" class="success-msg hidden" style="margin-bottom:0.75rem"></div>
+            <form id="account-password-form" onsubmit="saveAccountPassword(event)">
+              <div class="form-group">
+                <label>Current password</label>
+                <input type="password" id="account-current-password" class="input-field" required autocomplete="current-password">
+              </div>
+              <div class="form-group">
+                <label>New password</label>
+                <input type="password" id="account-new-password" class="input-field" required minlength="8" autocomplete="new-password">
+              </div>
+              <button type="submit" class="btn btn-primary btn-sm">Update password</button>
+            </form>
+          </div>
+          <div class="pwa-device-card" style="max-width:720px;margin-bottom:1.25rem">
+            <h2 style="font-size:1.05rem;color:var(--white);margin-bottom:0.35rem">&#128231; Email notifications</h2>
+            <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:0.75rem">Choose which emails you receive. Use <strong>Turn off all</strong> to stop every notification type, or toggle individual categories below. Each email also includes an unsubscribe link at the bottom. Push alerts are managed on the <a href="#" onclick="navigate('phone-app');return false" style="color:var(--blue-light)">Phone App</a> page.</p>
+            <div id="account-email-prefs-error" class="error-msg hidden"></div>
+            <div id="account-email-prefs-success" class="success-msg hidden" style="margin-bottom:0.75rem"></div>
+            <div class="account-pref-row" style="border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:0.35rem">
+              <label for="account-email-all-off" style="font-weight:600;color:var(--white)">Turn off all email notifications</label>
+              <input type="checkbox" id="account-email-all-off" onchange="onAccountEmailAllOffChange()">
+            </div>
+            <div id="account-email-prefs-list"></div>
+            <button type="button" class="btn btn-primary btn-sm" style="margin-top:0.85rem" onclick="saveAccountEmailPrefs()">Save email preferences</button>
+          </div>
+        </div>
+
         <!-- ─── PHONE APP (PWA install) ─── -->
         <div id="page-phone-app" class="page hidden">
           <div class="page-header">
@@ -5362,6 +5428,7 @@ const MOBILE_PAGE_TITLES = {
   leads: 'Leads',
   discrepancies: 'Discrepancies',
   'phone-app': 'Phone App',
+  'account-settings': 'My Account',
   messages: 'Messages',
   'cfi-utilization': 'CFI Stats',
 };
@@ -6101,6 +6168,14 @@ async function enterApp() {
     el.style.display = el.classList.contains('hidden') ? 'none' : '';
   });
   navigate(['student', 'renter'].includes(currentUser.role) ? 'portal' : 'dashboard');
+  const pageParam = new URLSearchParams(window.location.search).get('page');
+  if (pageParam === 'account-settings') {
+    navigate('account-settings');
+    try {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+    } catch (_) { /* ignore */ }
+  }
   if (appEl) appEl.classList.remove('app-booting');
   initPWA();
   startAppPolling();
@@ -6297,6 +6372,152 @@ function loadPhoneAppPage() {
 
   el.innerHTML = html;
   if (typeof checkPushStatus === 'function') checkPushStatus();
+}
+
+let accountEmailPrefCategories = [];
+
+async function loadAccountSettingsPage() {
+  const errEl = document.getElementById('account-profile-error');
+  const pwdErr = document.getElementById('account-password-error');
+  const prefsErr = document.getElementById('account-email-prefs-error');
+  if (errEl) { errEl.classList.add('hidden'); errEl.classList.remove('visible'); }
+  if (pwdErr) pwdErr.classList.add('hidden');
+  if (prefsErr) { prefsErr.classList.add('hidden'); prefsErr.classList.remove('visible'); }
+
+  try {
+    const profileData = await api('/api/account/profile');
+    const p = profileData.profile;
+    document.getElementById('account-name').value = p.name || '';
+    document.getElementById('account-email').value = p.email || '';
+    document.getElementById('account-phone').value = p.phone_number || '';
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = err.error || 'Failed to load profile';
+      errEl.classList.add('visible');
+      errEl.classList.remove('hidden');
+    }
+  }
+
+  try {
+    const prefsData = await api('/api/account/email-preferences');
+    accountEmailPrefCategories = prefsData.categories || [];
+    renderAccountEmailPrefs(prefsData.preferences || {});
+  } catch (err) {
+    if (prefsErr) {
+      prefsErr.textContent = err.error || 'Failed to load email preferences';
+      prefsErr.classList.add('visible');
+      prefsErr.classList.remove('hidden');
+    }
+  }
+}
+
+function renderAccountEmailPrefs(prefs) {
+  const allOffEl = document.getElementById('account-email-all-off');
+  const listEl = document.getElementById('account-email-prefs-list');
+  if (!listEl || !allOffEl) return;
+  allOffEl.checked = !!prefs.email_all_off;
+  listEl.innerHTML = accountEmailPrefCategories.map(function (cat) {
+    const rows = cat.types.map(function (t) {
+      const checked = prefs[t.key] !== false ? 'checked' : '';
+      return `<div class="account-pref-row${prefs.email_all_off ? ' disabled' : ''}" data-pref-key="${t.key}">
+        <label for="account-pref-${t.key}">${escHtml(t.label)}</label>
+        <input type="checkbox" id="account-pref-${t.key}" data-pref-key="${t.key}" ${checked}${prefs.email_all_off ? ' disabled' : ''}>
+      </div>`;
+    }).join('');
+    return `<div class="account-pref-category"><h3>${escHtml(cat.label)}</h3>${rows}</div>`;
+  }).join('');
+}
+
+function onAccountEmailAllOffChange() {
+  const allOff = document.getElementById('account-email-all-off').checked;
+  document.querySelectorAll('#account-email-prefs-list .account-pref-row').forEach(function (row) {
+    row.classList.toggle('disabled', allOff);
+    const cb = row.querySelector('input[type="checkbox"]');
+    if (cb) cb.disabled = allOff;
+  });
+}
+
+async function saveAccountProfile(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('account-profile-error');
+  const okEl = document.getElementById('account-profile-success');
+  errEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  try {
+    const body = {
+      name: document.getElementById('account-name').value.trim(),
+      email: document.getElementById('account-email').value.trim(),
+      phone_number: document.getElementById('account-phone').value.trim(),
+    };
+    const data = await api('/api/account/profile', { method: 'PATCH', body: JSON.stringify(body) });
+    if (data.profile) {
+      currentUser.name = data.profile.name;
+      currentUser.email = data.profile.email;
+      currentUser.phone_number = data.profile.phone_number;
+      document.getElementById('sidebar-name').textContent = data.profile.name;
+    }
+    okEl.textContent = 'Profile updated.';
+    okEl.classList.add('visible');
+    okEl.classList.remove('hidden');
+    showToast('Profile saved');
+  } catch (err) {
+    errEl.textContent = err.error || 'Failed to save profile';
+    errEl.classList.add('visible');
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function saveAccountPassword(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('account-password-error');
+  const okEl = document.getElementById('account-password-success');
+  errEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  try {
+    await api('/api/account/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: document.getElementById('account-current-password').value,
+        new_password: document.getElementById('account-new-password').value,
+      }),
+    });
+    document.getElementById('account-current-password').value = '';
+    document.getElementById('account-new-password').value = '';
+    okEl.textContent = 'Password updated.';
+    okEl.classList.add('visible');
+    okEl.classList.remove('hidden');
+    showToast('Password changed');
+  } catch (err) {
+    errEl.textContent = err.error || 'Failed to change password';
+    errEl.classList.add('visible');
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function saveAccountEmailPrefs() {
+  const errEl = document.getElementById('account-email-prefs-error');
+  const okEl = document.getElementById('account-email-prefs-success');
+  errEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  const body = { email_all_off: document.getElementById('account-email-all-off').checked };
+  accountEmailPrefCategories.forEach(function (cat) {
+    cat.types.forEach(function (t) {
+      const cb = document.getElementById('account-pref-' + t.key);
+      if (cb) body[t.key] = cb.checked;
+    });
+  });
+  try {
+    const data = await api('/api/account/email-preferences', { method: 'PATCH', body: JSON.stringify(body) });
+    renderAccountEmailPrefs(data.preferences || body);
+    okEl.textContent = 'Email preferences saved.';
+    okEl.classList.add('visible');
+    okEl.classList.remove('hidden');
+    showToast('Email preferences saved');
+  } catch (err) {
+    errEl.textContent = err.error || 'Failed to save preferences';
+    errEl.classList.add('visible');
+    errEl.classList.remove('hidden');
+  }
 }
 
 // ─── TRAINING PROGRAMS ADMIN ─────────────────────────────
@@ -6772,6 +6993,7 @@ function navigate(page) {
   else if (page === 'availability') loadAvailabilityPage();
   else if (page === 'instructor-schedules') loadInstructorSchedulesPage();
   else if (page === 'phone-app') loadPhoneAppPage();
+  else if (page === 'account-settings') loadAccountSettingsPage();
   else if (page === 'messages') loadMessagesPage();
   else if (page === 'cfi-utilization') loadCfiUtilizationPage();
   // admin-settings has no async data to load — static page

@@ -245,6 +245,25 @@ function passwordResetEmail({ name, resetUrl }) {
 }
 
 /**
+ * Profile change confirmation — sent when email or phone is updated.
+ */
+function profileChangeEmail({ name, changes }) {
+  const lines = changes.map((c) => `<tr><td style="padding:6px 0;font-size:14px;color:#64748b;width:120px;">${escEmailHtml(c.label)}</td><td style="padding:6px 0;font-size:14px;font-weight:600;color:#1a202c;">${escEmailHtml(c.value)}</td></tr>`).join('');
+  const textLines = changes.map((c) => `${c.label}: ${c.value}`).join('\n');
+  const html = wrapEmailHtml(`
+    <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#080E1A;">Profile Updated</h2>
+    <p style="margin:0 0 16px;">Hi ${escEmailHtml(name)},</p>
+    <p style="margin:0 0 20px;">Your New Tech Aviation account profile was updated:</p>
+    <table cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:0 0 24px;">
+      ${lines}
+    </table>
+    <p style="margin:0;font-size:13px;color:#94a3b8;">If you did not make this change, contact New Tech Aviation immediately.</p>
+  `);
+  const text = `Hi ${name},\n\nYour New Tech Aviation profile was updated:\n${textLines}\n\nIf you did not make this change, contact us immediately.`;
+  return { subject: 'Your New Tech Aviation profile was updated', html, text };
+}
+
+/**
  * Invite email — sent when an owner/instructor creates an account for someone.
  */
 function inviteEmail({ name, email, password, role, invitedByName }) {
@@ -664,6 +683,7 @@ module.exports = {
   ADMIN_NOTIFICATION_EMAILS,
   welcomeEmail,
   passwordResetEmail,
+  profileChangeEmail,
   inviteEmail,
   bookingConfirmationEmail,
   groundingSquawkEmail,
