@@ -5091,6 +5091,16 @@ window.onerror = function(msg, url, line, col, err) {
 let currentUser = null;
 let token = localStorage.getItem('fs_token');
 let currentPage = 'dashboard';
+/** Deep-link target (e.g. My Account from email) — captured before enterApp clears the URL */
+let pendingStartupPage = null;
+(function captureStartupRoute() {
+  try {
+    const q = new URLSearchParams(window.location.search).get('page');
+    const h = (window.location.hash || '').replace(/^#/, '');
+    pendingStartupPage = q || h || null;
+  } catch (_) { /* ignore */ }
+})();
+let enterAppPromise = null;
 let visitedPages = new Set(); // tracks which pages have been visited for skeleton loading
 let calendarDate = new Date();
 let scheduleAircraftFilter = localStorage.getItem('fs_schedule_aircraft_filter') || 'all';
@@ -5682,7 +5692,7 @@ document.getElementById('reset-form').addEventListener('submit', async (e) => {
     openAuthModal('signin');
     return;
   }
-  enterApp();
+  // enterApp() is invoked once from init() at end of script (avoids double boot)
 })();
 
 // ─── AUTH ───
@@ -5900,6 +5910,23 @@ function applyStudentRenterNavLayout() {
 }
 
 async function enterApp() {
+  if (enterAppPromise) return enterAppPromise;
+  enterAppPromise = enterAppBody().finally(function () { enterAppPromise = null; });
+  return enterAppPromise;
+}
+
+function resolveStartupPage(defaultPage) {
+  const page = pendingStartupPage === 'account-settings' ? 'account-settings' : defaultPage;
+  if (pendingStartupPage) {
+    pendingStartupPage = null;
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (_) { /* ignore */ }
+  }
+  return page;
+}
+
+async function enterAppBody() {
   document.getElementById('nav-documents')?.remove();
   const appEl = document.getElementById('app-screen');
   if (appEl) appEl.classList.add('app-booting');
@@ -5979,7 +6006,7 @@ async function enterApp() {
     currentUser = freshData.user;
     hasOwnerAccount = freshData.hasOwner;
     syncSidebarAuth(true);
-    navigate('tracking');
+    navigate(resolveStartupPage('tracking'));
     if (appEl) appEl.classList.remove('app-booting');
     initPWA();
     return;
@@ -6167,15 +6194,8 @@ async function enterApp() {
   document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
     el.style.display = el.classList.contains('hidden') ? 'none' : '';
   });
-  navigate(['student', 'renter'].includes(currentUser.role) ? 'portal' : 'dashboard');
-  const pageParam = new URLSearchParams(window.location.search).get('page');
-  if (pageParam === 'account-settings') {
-    navigate('account-settings');
-    try {
-      const cleanUrl = window.location.pathname + window.location.hash;
-      window.history.replaceState({}, '', cleanUrl);
-    } catch (_) { /* ignore */ }
-  }
+  const defaultLanding = ['student', 'renter'].includes(currentUser.role) ? 'portal' : 'dashboard';
+  navigate(resolveStartupPage(defaultLanding));
   if (appEl) appEl.classList.remove('app-booting');
   initPWA();
   startAppPolling();
@@ -7001,6 +7021,13 @@ function navigate(page) {
 
   updateMobileChrome(page);
 }
+
+window.addEventListener('hashchange', function () {
+  const h = (window.location.hash || '').replace(/^#/, '');
+  if (h === 'account-settings' && token && currentUser && typeof navigate === 'function') {
+    navigate('account-settings');
+  }
+});
 
 // ─── DIGITAL ENDORSEMENTS ────────────────────────────────
 

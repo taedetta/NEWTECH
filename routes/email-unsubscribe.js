@@ -4,12 +4,14 @@ const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
 const { EMAIL_TYPES } = require('../lib/email-types');
+const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
 
 function renderPage({ title, message, ok }) {
   const color = ok ? '#059669' : '#DC2626';
   const manageUrl = buildManagePrefsUrl();
+  const appUrl = `${getAppUrl()}/app`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -30,7 +32,7 @@ function renderPage({ title, message, ok }) {
     <h1>${title}</h1>
     <p>${message}</p>
     <a class="btn" href="${manageUrl}">Manage email preferences</a>
-    <p style="margin-top:20px"><a class="link" href="${manageUrl.replace('?page=account-settings', '')}">Open FlightSlate</a></p>
+    <p style="margin-top:20px"><a class="link" href="${appUrl}">Open FlightSlate</a></p>
   </div>
 </body>
 </html>`;
@@ -39,7 +41,7 @@ function renderPage({ title, message, ok }) {
 router.get('/unsubscribe', async (req, res) => {
   try {
     const token = req.query.token;
-    const type = req.query.type || 'all';
+    const rawType = String(req.query.type || 'all').trim();
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -57,22 +59,29 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    const effectiveType = type === 'all' ? 'all' : (EMAIL_TYPES[type] ? type : verified.type);
-    await ensureDefaultPrefs(verified.userId);
-
-    if (effectiveType === 'all') {
-      await updatePrefs(verified.userId, { email_all_off: true });
-    } else {
-      await updatePrefs(verified.userId, { [effectiveType]: false });
+    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
+      return res.status(400).send(renderPage({
+        ok: false,
+        title: 'Invalid preference type',
+        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+      }));
     }
 
-    const label = typeLabel(effectiveType);
+    await ensureDefaultPrefs(verified.userId);
+
+    if (rawType === 'all') {
+      await updatePrefs(verified.userId, { email_all_off: true });
+    } else {
+      await updatePrefs(verified.userId, { [rawType]: false });
+    }
+
+    const label = typeLabel(rawType);
     return res.send(renderPage({
       ok: true,
       title: 'Unsubscribed',
-      message: effectiveType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. You can turn individual types back on anytime in My Account.'
-        : `You have been unsubscribed from <strong>${label}</strong>. Other email types are unchanged unless you turn them off separately.`,
+      message: rawType === 'all'
+        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+        : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
     console.error('[email-unsubscribe] error:', err.message);
