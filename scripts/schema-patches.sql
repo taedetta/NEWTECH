@@ -315,6 +315,13 @@ CREATE TABLE IF NOT EXISTS user_email_preferences (
   instructor_briefing BOOLEAN NOT NULL DEFAULT TRUE,
   endorsement_expiry BOOLEAN NOT NULL DEFAULT TRUE,
   maintenance_alert BOOLEAN NOT NULL DEFAULT TRUE,
+  password_reset BOOLEAN NOT NULL DEFAULT TRUE,
+  account_approved BOOLEAN NOT NULL DEFAULT TRUE,
+  account_rejected BOOLEAN NOT NULL DEFAULT TRUE,
+  signup_pending BOOLEAN NOT NULL DEFAULT TRUE,
+  account_invite BOOLEAN NOT NULL DEFAULT TRUE,
+  profile_change BOOLEAN NOT NULL DEFAULT TRUE,
+  welcome BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE user_email_preferences ADD COLUMN IF NOT EXISTS password_reset BOOLEAN NOT NULL DEFAULT TRUE;

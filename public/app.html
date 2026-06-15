@@ -6382,23 +6382,31 @@ async function loadAccountSettingsPage() {
   const prefsErr = document.getElementById('account-email-prefs-error');
   if (errEl) { errEl.classList.add('hidden'); errEl.classList.remove('visible'); }
   if (pwdErr) pwdErr.classList.add('hidden');
-  if (prefsErr) prefsErr.classList.add('hidden');
+  if (prefsErr) { prefsErr.classList.add('hidden'); prefsErr.classList.remove('visible'); }
+
   try {
-    const [profileData, prefsData] = await Promise.all([
-      api('/api/users/me/profile'),
-      api('/api/users/me/email-preferences'),
-    ]);
+    const profileData = await api('/api/account/profile');
     const p = profileData.profile;
     document.getElementById('account-name').value = p.name || '';
     document.getElementById('account-email').value = p.email || '';
     document.getElementById('account-phone').value = p.phone_number || '';
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = err.error || 'Failed to load profile';
+      errEl.classList.add('visible');
+      errEl.classList.remove('hidden');
+    }
+  }
+
+  try {
+    const prefsData = await api('/api/account/email-preferences');
     accountEmailPrefCategories = prefsData.categories || [];
     renderAccountEmailPrefs(prefsData.preferences || {});
   } catch (err) {
-    if (errEl) {
-      errEl.textContent = err.error || 'Failed to load account settings';
-      errEl.classList.add('visible');
-      errEl.classList.remove('hidden');
+    if (prefsErr) {
+      prefsErr.textContent = err.error || 'Failed to load email preferences';
+      prefsErr.classList.add('visible');
+      prefsErr.classList.remove('hidden');
     }
   }
 }
@@ -6441,7 +6449,7 @@ async function saveAccountProfile(e) {
       email: document.getElementById('account-email').value.trim(),
       phone_number: document.getElementById('account-phone').value.trim(),
     };
-    const data = await api('/api/users/me/profile', { method: 'PATCH', body: JSON.stringify(body) });
+    const data = await api('/api/account/profile', { method: 'PATCH', body: JSON.stringify(body) });
     if (data.profile) {
       currentUser.name = data.profile.name;
       currentUser.email = data.profile.email;
@@ -6466,7 +6474,7 @@ async function saveAccountPassword(e) {
   errEl.classList.add('hidden');
   okEl.classList.add('hidden');
   try {
-    await api('/api/users/me/change-password', {
+    await api('/api/account/change-password', {
       method: 'POST',
       body: JSON.stringify({
         current_password: document.getElementById('account-current-password').value,
@@ -6499,7 +6507,7 @@ async function saveAccountEmailPrefs() {
     });
   });
   try {
-    const data = await api('/api/users/me/email-preferences', { method: 'PATCH', body: JSON.stringify(body) });
+    const data = await api('/api/account/email-preferences', { method: 'PATCH', body: JSON.stringify(body) });
     renderAccountEmailPrefs(data.preferences || body);
     okEl.textContent = 'Email preferences saved.';
     okEl.classList.add('visible');

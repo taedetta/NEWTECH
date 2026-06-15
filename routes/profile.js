@@ -195,7 +195,7 @@ router.get('/email-preferences', authenticateToken, async (req, res) => {
     const categories = getPreferenceCatalog(role, is_instructor);
     res.json({ preferences: prefs, categories });
   } catch (err) {
-    console.error('[profile] GET email-preferences error:', err.message);
+    console.error('[profile] GET email-preferences error:', err.message, err.stack);
     res.status(500).json({ error: 'Failed to load email preferences' });
   }
 });
