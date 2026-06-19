@@ -6,6 +6,8 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 const trainingDb = require('../db/training');
 
 const router = express.Router();
+const adminOnly = [authenticateToken, requireRole('owner', 'admin')];
+const adminTrainingPaths = (path) => [path, `/admin${path}`];
 
 router.get('/programs', authenticateToken, async (req, res) => {
   try {
@@ -155,8 +157,10 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin: training programs management
-router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) => {
+// Admin: training programs management. The router is mounted at both
+// /api/training and /api/admin/training, so register both current UI paths and
+// legacy /admin/* paths.
+router.post(adminTrainingPaths('/programs'), ...adminOnly, async (req, res) => {
   try {
     const { name, code, description } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'name and code are required' });
@@ -172,7 +176,7 @@ router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) =
   }
 });
 
-router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(adminTrainingPaths('/programs/:id'), ...adminOnly, async (req, res) => {
   try {
     const { name, description } = req.body;
     const result = await pool.query(
@@ -187,7 +191,7 @@ router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res
   }
 });
 
-router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(adminTrainingPaths('/programs/:id'), ...adminOnly, async (req, res) => {
   const client = await pool.connect();
   try {
     const id = parseInt(req.params.id);
@@ -208,7 +212,7 @@ router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, 
   }
 });
 
-router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => {
+router.post(adminTrainingPaths('/stages'), ...adminOnly, async (req, res) => {
   try {
     const { program_id, name, description, order_index } = req.body;
     if (!program_id || !name) return res.status(400).json({ error: 'program_id and name are required' });
@@ -228,81 +232,7 @@ router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => 
   }
 });
 
-router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
-  try {
-    const { name, description, order_index } = req.body;
-    const result = await pool.query(
-      `UPDATE program_stages SET name = COALESCE($1, name), description = COALESCE($2, description), order_index = COALESCE($3, order_index) WHERE id = $4 RETURNING *`,
-      [name || null, description || null, order_index || null, req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Stage not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Admin update stage error:', err);
-    res.status(500).json({ error: 'Failed to update stage' });
-  }
-});
-
-router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
-  try {
-    const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1`, [req.params.id]);
-    if (parseInt(inUse.rows[0].cnt) > 0) {
-      return res.status(409).json({ error: 'Cannot delete: students are currently in this stage. Reassign them first.' });
-    }
-    await pool.query('DELETE FROM program_stages WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Admin delete stage error:', err);
-    res.status(500).json({ error: 'Failed to delete stage' });
-  }
-});
-
-router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) => {
-  try {
-    const { stage_id, name, description, proficiency_standard, order_index } = req.body;
-    if (!stage_id || !name) return res.status(400).json({ error: 'stage_id and name are required' });
-    let idx = order_index;
-    if (!idx) {
-      const maxR = await pool.query(`SELECT COALESCE(MAX(order_index), 0) + 1 as next_idx FROM stage_maneuvers WHERE stage_id = $1`, [stage_id]);
-      idx = maxR.rows[0].next_idx;
-    }
-    const result = await pool.query(
-      `INSERT INTO stage_maneuvers (stage_id, name, description, proficiency_standard, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [stage_id, name, description || null, proficiency_standard || null, idx]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error('Admin create maneuver error:', err);
-    res.status(500).json({ error: 'Failed to create maneuver' });
-  }
-});
-
-router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
-  try {
-    const { name, description, proficiency_standard, order_index } = req.body;
-    const result = await pool.query(
-      `UPDATE stage_maneuvers SET name = COALESCE($1, name), description = COALESCE($2, description), proficiency_standard = COALESCE($3, proficiency_standard), order_index = COALESCE($4, order_index), updated_at = NOW() WHERE id = $5 RETURNING *`,
-      [name || null, description || null, proficiency_standard || null, order_index || null, req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Maneuver not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Admin update maneuver error:', err);
-    res.status(500).json({ error: 'Failed to update maneuver' });
-  }
-});
-
-router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
-  try {
-    await pool.query('DELETE FROM stage_maneuvers WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Admin delete maneuver error:', err);
-    res.status(500).json({ error: 'Failed to delete maneuver' });
-  }
-});
-
-router.put('/admin/stages/reorder', requireRole('owner', 'admin'), async (req, res) => {
+router.put(adminTrainingPaths('/stages/reorder'), ...adminOnly, async (req, res) => {
   try {
     const { stages } = req.body;
     if (!Array.isArray(stages)) return res.status(400).json({ error: 'stages array required' });
@@ -323,6 +253,80 @@ router.put('/admin/stages/reorder', requireRole('owner', 'admin'), async (req, r
   } catch (err) {
     console.error('Stage reorder error:', err);
     res.status(500).json({ error: 'Failed to reorder stages' });
+  }
+});
+
+router.put(adminTrainingPaths('/stages/:id'), ...adminOnly, async (req, res) => {
+  try {
+    const { name, description, order_index } = req.body;
+    const result = await pool.query(
+      `UPDATE program_stages SET name = COALESCE($1, name), description = COALESCE($2, description), order_index = COALESCE($3, order_index) WHERE id = $4 RETURNING *`,
+      [name || null, description || null, order_index || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Stage not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Admin update stage error:', err);
+    res.status(500).json({ error: 'Failed to update stage' });
+  }
+});
+
+router.delete(adminTrainingPaths('/stages/:id'), ...adminOnly, async (req, res) => {
+  try {
+    const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1`, [req.params.id]);
+    if (parseInt(inUse.rows[0].cnt) > 0) {
+      return res.status(409).json({ error: 'Cannot delete: students are currently in this stage. Reassign them first.' });
+    }
+    await pool.query('DELETE FROM program_stages WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Admin delete stage error:', err);
+    res.status(500).json({ error: 'Failed to delete stage' });
+  }
+});
+
+router.post(adminTrainingPaths('/maneuvers'), ...adminOnly, async (req, res) => {
+  try {
+    const { stage_id, name, description, proficiency_standard, order_index } = req.body;
+    if (!stage_id || !name) return res.status(400).json({ error: 'stage_id and name are required' });
+    let idx = order_index;
+    if (!idx) {
+      const maxR = await pool.query(`SELECT COALESCE(MAX(order_index), 0) + 1 as next_idx FROM stage_maneuvers WHERE stage_id = $1`, [stage_id]);
+      idx = maxR.rows[0].next_idx;
+    }
+    const result = await pool.query(
+      `INSERT INTO stage_maneuvers (stage_id, name, description, proficiency_standard, order_index) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [stage_id, name, description || null, proficiency_standard || null, idx]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Admin create maneuver error:', err);
+    res.status(500).json({ error: 'Failed to create maneuver' });
+  }
+});
+
+router.put(adminTrainingPaths('/maneuvers/:id'), ...adminOnly, async (req, res) => {
+  try {
+    const { name, description, proficiency_standard, order_index } = req.body;
+    const result = await pool.query(
+      `UPDATE stage_maneuvers SET name = COALESCE($1, name), description = COALESCE($2, description), proficiency_standard = COALESCE($3, proficiency_standard), order_index = COALESCE($4, order_index), updated_at = NOW() WHERE id = $5 RETURNING *`,
+      [name || null, description || null, proficiency_standard || null, order_index || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Maneuver not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Admin update maneuver error:', err);
+    res.status(500).json({ error: 'Failed to update maneuver' });
+  }
+});
+
+router.delete(adminTrainingPaths('/maneuvers/:id'), ...adminOnly, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM stage_maneuvers WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Admin delete maneuver error:', err);
+    res.status(500).json({ error: 'Failed to delete maneuver' });
   }
 });
 

@@ -2,7 +2,37 @@
 
 const pool = require('./index');
 
+let ensureLocationsTablePromise = null;
+
+async function ensureLocationsTable() {
+  if (!ensureLocationsTablePromise) {
+    ensureLocationsTablePromise = pool.query(`
+      CREATE TABLE IF NOT EXISTS locations (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(10) NOT NULL UNIQUE,
+        name VARCHAR(255) NOT NULL,
+        timezone VARCHAR(64) DEFAULT 'America/New_York',
+        weather_station VARCHAR(10),
+        is_default BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      ALTER TABLE locations ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) DEFAULT 'America/New_York';
+      ALTER TABLE locations ADD COLUMN IF NOT EXISTS weather_station VARCHAR(10);
+      ALTER TABLE locations ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
+      ALTER TABLE locations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      INSERT INTO locations (code, name, weather_station, is_default)
+      SELECT 'KPSK', 'New River Valley (Dublin, VA)', 'KPSK', true
+      WHERE NOT EXISTS (SELECT 1 FROM locations WHERE code = 'KPSK');
+    `).catch((err) => {
+      ensureLocationsTablePromise = null;
+      throw err;
+    });
+  }
+  return ensureLocationsTablePromise;
+}
+
 async function listLocations() {
+  await ensureLocationsTable();
   const result = await pool.query(
     'SELECT * FROM locations ORDER BY is_default DESC, name ASC'
   );
@@ -10,6 +40,7 @@ async function listLocations() {
 }
 
 async function getDefaultLocationId() {
+  await ensureLocationsTable();
   const result = await pool.query(
     'SELECT id FROM locations WHERE is_default = true ORDER BY id LIMIT 1'
   );
@@ -17,6 +48,7 @@ async function getDefaultLocationId() {
 }
 
 async function createLocation({ code, name, timezone, weather_station, is_default }) {
+  await ensureLocationsTable();
   if (is_default) {
     await pool.query('UPDATE locations SET is_default = false');
   }
@@ -30,6 +62,7 @@ async function createLocation({ code, name, timezone, weather_station, is_defaul
 }
 
 async function updateLocation(id, fields) {
+  await ensureLocationsTable();
   const allowed = ['code', 'name', 'timezone', 'weather_station', 'is_default'];
   const updates = [];
   const vals = [];
@@ -51,6 +84,7 @@ async function updateLocation(id, fields) {
 }
 
 module.exports = {
+  ensureLocationsTable,
   listLocations,
   getDefaultLocationId,
   createLocation,
