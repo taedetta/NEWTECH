@@ -27,6 +27,7 @@ const {
 } = require('../lib/school-timezone');
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
+const { overlapWhere } = require('../lib/booking-overlap');
 
 const router = express.Router();
 
@@ -97,8 +98,17 @@ router.get('/', authenticateToken, async (req, res) => {
     `;
     const params = [];
     let paramIdx = 1;
-    if (start) { query += ` AND b.end_time >= $${paramIdx++}`; params.push(start); }
-    if (end) { query += ` AND b.start_time <= $${paramIdx++}`; params.push(end); }
+    if (start && end) {
+      query += ` AND ${overlapWhere('b', '$' + paramIdx, '$' + (paramIdx + 1))}`;
+      params.push(start, end);
+      paramIdx += 2;
+    } else if (start) {
+      query += ` AND b.end_time > $${paramIdx++}`;
+      params.push(start);
+    } else if (end) {
+      query += ` AND b.start_time < $${paramIdx++}`;
+      params.push(end);
+    }
     if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
     if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
     if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
@@ -144,8 +154,17 @@ router.get('/history', authenticateToken, async (req, res) => {
     `;
     const params = [status || 'completed'];
     let paramIdx = 2;
-    if (start) { query += ` AND b.end_time >= $${paramIdx++}`; params.push(start); }
-    if (end) { query += ` AND b.start_time <= $${paramIdx++}`; params.push(end); }
+    if (start && end) {
+      query += ` AND ${overlapWhere('b', '$' + paramIdx, '$' + (paramIdx + 1))}`;
+      params.push(start, end);
+      paramIdx += 2;
+    } else if (start) {
+      query += ` AND b.end_time > $${paramIdx++}`;
+      params.push(start);
+    } else if (end) {
+      query += ` AND b.start_time < $${paramIdx++}`;
+      params.push(end);
+    }
     if (instructor_id) { query += ` AND b.instructor_id = $${paramIdx++}`; params.push(instructor_id); }
     if (student_id) { query += ` AND b.student_id = $${paramIdx++}`; params.push(student_id); }
     if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
@@ -401,7 +420,7 @@ router.get('/roster', authenticateToken, async (req, res) => {
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
       WHERE b.status NOT IN ('cancelled')
-        AND b.start_time <= $2 AND b.end_time >= $1
+        AND ${overlapWhere('b', '$1', '$2')}
     `;
     const params = [dayStart, dayEnd];
     if (req.user.role === 'instructor') {
