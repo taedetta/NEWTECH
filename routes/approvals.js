@@ -13,16 +13,30 @@ const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 
 const router = express.Router();
 
-// All approval endpoints require auth; accessible to owner/admin/instructor
-const canApprove = [authenticateToken, requireRole('owner', 'admin', 'instructor')];
+// All approval endpoints require auth. Instructors may help onboard students/renters,
+// but only owners/admins may process staff-level accounts.
+const canViewApprovals = [authenticateToken, requireRole('owner', 'admin', 'instructor')];
+const INSTRUCTOR_APPROVABLE_ROLES = new Set(['student', 'renter']);
+
+function canProcessPendingUser(actor, pendingUser) {
+  if (['owner', 'admin'].includes(actor.role)) return true;
+  return actor.role === 'instructor' && INSTRUCTOR_APPROVABLE_ROLES.has(pendingUser.role);
+}
+
+function approvalRoleWhere(user, alias = '') {
+  if (['owner', 'admin'].includes(user.role)) return '';
+  const prefix = alias ? `${alias}.` : '';
+  return ` AND ${prefix}role IN ('student', 'renter')`;
+}
 
 // GET /api/approvals/pending — list all pending users
-router.get('/pending', ...canApprove, async (req, res) => {
+router.get('/pending', ...canViewApprovals, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, name, email, role, created_at
        FROM users
        WHERE approval_status = 'pending' AND deleted_at IS NULL
+       ${approvalRoleWhere(req.user)}
        ORDER BY created_at ASC`
     );
     res.json({ users: result.rows });
@@ -33,10 +47,10 @@ router.get('/pending', ...canApprove, async (req, res) => {
 });
 
 // GET /api/approvals/count — badge count for sidebar notification
-router.get('/count', ...canApprove, async (req, res) => {
+router.get('/count', ...canViewApprovals, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT COUNT(*) AS cnt FROM users WHERE approval_status = 'pending' AND deleted_at IS NULL`
+      `SELECT COUNT(*) AS cnt FROM users WHERE approval_status = 'pending' AND deleted_at IS NULL${approvalRoleWhere(req.user)}`
     );
     res.json({ count: parseInt(result.rows[0].cnt, 10) });
   } catch (err) {
@@ -46,9 +60,21 @@ router.get('/count', ...canApprove, async (req, res) => {
 });
 
 // POST /api/approvals/:id/approve — approve a pending user
-router.post('/:id/approve', ...canApprove, async (req, res) => {
+router.post('/:id/approve', ...canViewApprovals, async (req, res) => {
   try {
     const { id } = req.params;
+    const pending = await pool.query(
+      `SELECT id, name, email, role
+       FROM users
+       WHERE id = $1 AND approval_status = 'pending' AND deleted_at IS NULL`,
+      [id]
+    );
+    if (pending.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found or already approved' });
+    }
+    if (!canProcessPendingUser(req.user, pending.rows[0])) {
+      return res.status(403).json({ error: 'Only owners or admins can approve staff accounts' });
+    }
     const result = await pool.query(
       `UPDATE users
        SET approval_status = 'approved',
@@ -81,9 +107,21 @@ router.post('/:id/approve', ...canApprove, async (req, res) => {
 });
 
 // POST /api/approvals/:id/reject — reject (soft-delete) a pending user
-router.post('/:id/reject', ...canApprove, async (req, res) => {
+router.post('/:id/reject', ...canViewApprovals, async (req, res) => {
   try {
     const { id } = req.params;
+    const pending = await pool.query(
+      `SELECT id, name, email, role
+       FROM users
+       WHERE id = $1 AND approval_status = 'pending' AND deleted_at IS NULL`,
+      [id]
+    );
+    if (pending.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found or already processed' });
+    }
+    if (!canProcessPendingUser(req.user, pending.rows[0])) {
+      return res.status(403).json({ error: 'Only owners or admins can reject staff accounts' });
+    }
     const result = await pool.query(
       `UPDATE users
        SET approval_status = 'rejected', deleted_at = NOW(), updated_at = NOW()

@@ -7,6 +7,24 @@ const trainingDb = require('../db/training');
 
 const router = express.Router();
 
+const TRAINING_STAFF_ROLES = new Set(['owner', 'admin', 'instructor']);
+
+function isTrainingStaff(user) {
+  return TRAINING_STAFF_ROLES.has(user?.role);
+}
+
+function requireTrainingStaff(req, res, next) {
+  if (!isTrainingStaff(req.user)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  next();
+}
+
+function canViewStudentTraining(user, studentId) {
+  if (isTrainingStaff(user)) return true;
+  return user?.role === 'student' && user.id === studentId;
+}
+
 router.get('/programs', authenticateToken, async (req, res) => {
   try {
     const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
@@ -31,12 +49,8 @@ router.get('/programs', authenticateToken, async (req, res) => {
 });
 
 // GET /program-enrollments — programs with student enrollment and progress data (instructor+)
-router.get('/program-enrollments', authenticateToken, async (req, res) => {
+router.get('/program-enrollments', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
-    // Instructors can view all enrollments; students can't access this endpoint
-    if (req.user.role === 'student') {
-      return res.status(403).json({ error: 'Access denied' });
-    }
     const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
     const result = [];
     for (const prog of programs.rows) {
@@ -59,6 +73,8 @@ router.get('/program-enrollments', authenticateToken, async (req, res) => {
 router.get('/student-progress', authenticateToken, async (req, res) => {
   try {
     const studentId = req.query.student_id ? parseInt(req.query.student_id) : req.user.id;
+    if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!canViewStudentTraining(req.user, studentId)) return res.status(403).json({ error: 'Access denied' });
     const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
     const stages = await pool.query('SELECT * FROM program_stages ORDER BY program_id, order_index');
     let maneuvers = [];
@@ -88,7 +104,7 @@ router.get('/student-progress', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/student-progress', authenticateToken, async (req, res) => {
+router.post('/student-progress', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
     const { student_id, maneuver_id, status, notes } = req.body;
     if (!student_id || !maneuver_id) return res.status(400).json({ error: 'student_id and maneuver_id are required' });
@@ -140,7 +156,7 @@ router.post('/enroll', authenticateToken, requireRole('owner', 'admin', 'instruc
   }
 });
 
-router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
+router.put('/enrollment/:id/stage', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
     const { current_stage_id } = req.body;
     const result = await pool.query(
@@ -156,7 +172,7 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
 });
 
 // Admin: training programs management
-router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) => {
+router.post(['/admin/programs', '/programs'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, code, description } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'name and code are required' });
@@ -172,7 +188,7 @@ router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) =
   }
 });
 
-router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/programs/:id', '/programs/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, description } = req.body;
     const result = await pool.query(
@@ -187,7 +203,7 @@ router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res
   }
 });
 
-router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(['/admin/programs/:id', '/programs/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
     const id = parseInt(req.params.id);
@@ -208,7 +224,7 @@ router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, 
   }
 });
 
-router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => {
+router.post(['/admin/stages', '/stages'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { program_id, name, description, order_index } = req.body;
     if (!program_id || !name) return res.status(400).json({ error: 'program_id and name are required' });
@@ -228,7 +244,7 @@ router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => 
   }
 });
 
-router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, description, order_index } = req.body;
     const result = await pool.query(
@@ -243,7 +259,7 @@ router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) 
   }
 });
 
-router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1`, [req.params.id]);
     if (parseInt(inUse.rows[0].cnt) > 0) {
@@ -257,7 +273,7 @@ router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, re
   }
 });
 
-router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) => {
+router.post(['/admin/maneuvers', '/maneuvers'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { stage_id, name, description, proficiency_standard, order_index } = req.body;
     if (!stage_id || !name) return res.status(400).json({ error: 'stage_id and name are required' });
@@ -277,7 +293,7 @@ router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) 
   }
 });
 
-router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/maneuvers/:id', '/maneuvers/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, description, proficiency_standard, order_index } = req.body;
     const result = await pool.query(
@@ -292,7 +308,7 @@ router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, re
   }
 });
 
-router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(['/admin/maneuvers/:id', '/maneuvers/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     await pool.query('DELETE FROM stage_maneuvers WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -302,7 +318,7 @@ router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req,
   }
 });
 
-router.put('/admin/stages/reorder', requireRole('owner', 'admin'), async (req, res) => {
+router.put('/admin/stages/reorder', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { stages } = req.body;
     if (!Array.isArray(stages)) return res.status(400).json({ error: 'stages array required' });
@@ -338,7 +354,7 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
   try {
     const studentId = parseInt(req.params.studentId);
     if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
-    if (req.user.role === 'student' && req.user.id !== studentId) return res.status(403).json({ error: 'Access denied' });
+    if (!canViewStudentTraining(req.user, studentId)) return res.status(403).json({ error: 'Access denied' });
     const enrollResult = await pool.query(`
       SELECT st.id as enrollment_id, st.program_id, st.student_id, st.instructor_id, st.status, st.started_at,
              tp.name as program_name, tp.code as program_code, u.name as instructor_name, ps.name as current_stage_name
@@ -439,6 +455,7 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
 
 router.get('/cohort-stats/:programCode', authenticateToken, async (req, res) => {
   try {
+    if (!isTrainingStaff(req.user) && req.user.role !== 'student') return res.status(403).json({ error: 'Access denied' });
     const { programCode } = req.params;
     const progResult = await pool.query('SELECT id FROM training_programs WHERE code = $1', [programCode]);
     if (progResult.rows.length === 0) return res.json({ cohort_size: 0, enough_data: false });
@@ -485,8 +502,7 @@ router.get('/maneuver-progress/:studentId/:enrollmentId', authenticateToken, asy
     const studentId = parseInt(req.params.studentId, 10);
     const enrollmentId = parseInt(req.params.enrollmentId, 10);
     if (isNaN(studentId) || isNaN(enrollmentId)) return res.status(400).json({ error: 'Invalid IDs' });
-    // Students can only view their own; instructors/admin/owner can view any
-    if (req.user.role === 'student' && req.user.id !== studentId) return res.status(403).json({ error: 'Access denied' });
+    if (!canViewStudentTraining(req.user, studentId)) return res.status(403).json({ error: 'Access denied' });
     const rows = await trainingDb.getManeuverProgress(studentId, enrollmentId);
     res.json(rows);
   } catch (err) {
@@ -514,7 +530,7 @@ router.put('/maneuver-progress', authenticateToken, async (req, res) => {
 });
 
 // GET /students — list students with training enrollments (for progress page)
-router.get('/students', authenticateToken, async (req, res) => {
+router.get('/students', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -549,7 +565,7 @@ router.get('/students', authenticateToken, async (req, res) => {
 });
 
 // GET /students/:studentId — single student detail with enrollments + debriefs
-router.get('/students/:studentId', authenticateToken, async (req, res) => {
+router.get('/students/:studentId', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
     if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
@@ -666,7 +682,7 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
 });
 
 // GET /students/:studentId/debriefs — debrief history for a student
-router.get('/students/:studentId/debriefs', authenticateToken, async (req, res) => {
+router.get('/students/:studentId/debriefs', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
     if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
@@ -691,10 +707,8 @@ router.get('/students/:studentId/debriefs', authenticateToken, async (req, res) 
 });
 
 // POST /debriefs — create a flight debrief with optional per-maneuver grades
-router.post('/debriefs', authenticateToken, async (req, res) => {
+router.post('/debriefs', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
-    // Only instructors/admins/owners can create debriefs
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Only instructors can create debriefs' });
     const { student_id, booking_id, stage_id, notes, recommendations, overall_performance, flight_date, grades } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id is required' });
     const debrief = await trainingDb.createDebrief({
@@ -716,9 +730,8 @@ router.post('/debriefs', authenticateToken, async (req, res) => {
 });
 
 // POST /milestones — instructor sign-off on a training stage
-router.post('/milestones', authenticateToken, async (req, res) => {
+router.post('/milestones', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Only instructors can sign off stages' });
     const { student_id, stage_id, enrollment_id, notes, debrief_id } = req.body;
     if (!student_id || !stage_id || !enrollment_id) {
       return res.status(400).json({ error: 'student_id, stage_id, and enrollment_id are required' });
@@ -740,7 +753,7 @@ router.post('/milestones', authenticateToken, async (req, res) => {
 });
 
 // GET /instructors — list instructors with active student count
-router.get('/instructors', authenticateToken, async (req, res) => {
+router.get('/instructors', authenticateToken, requireTrainingStaff, async (req, res) => {
   try {
     // LEFT JOIN so instructors with zero active students still appear
     const result = await pool.query(`
