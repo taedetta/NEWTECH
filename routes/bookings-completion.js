@@ -61,11 +61,22 @@ setInterval(() => {
 
 // Numeric validation helper — rejects NaN, negative, and impossibly large values
 function validateHobbsValue(val, fieldName) {
-  const num = parseFloat(val);
-  if (isNaN(num)) return `${fieldName} must be a valid number`;
+  const num = typeof val === 'string' ? Number(val.trim()) : Number(val);
+  if (!Number.isFinite(num)) return `${fieldName} must be a valid number`;
   if (num < 0) return `${fieldName} cannot be negative`;
   if (num > 99999) return `${fieldName} exceeds maximum allowed value`;
   return null;
+}
+
+function numericOrNull(val) {
+  if (val == null || val === '') return null;
+  const num = typeof val === 'string' ? Number(val.trim()) : Number(val);
+  return Number.isFinite(num) ? num : null;
+}
+
+function canAccessBooking(user, booking) {
+  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  return user.id === booking.instructor_id || user.id === booking.student_id;
 }
 
 /** When a flight finishes before its scheduled end, shrink end_time so the slot can be rebooked. */
@@ -93,6 +104,9 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     }
     if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
     const originalEnd = new Date(b.end_time);
+    const startTime = new Date(b.start_time);
+    if (isNaN(endTime.getTime())) return res.status(400).json({ error: 'Invalid actual_end_time' });
+    if (endTime <= startTime) return res.status(400).json({ error: 'actual_end_time must be after the booking start time' });
     if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
     await client.query('BEGIN');
     const newEndIso = endTime.toISOString();
@@ -116,7 +130,10 @@ router.patch('/:id/hours', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const bookingId = parseInt(req.params.id, 10);
-    const existing = await client.query('SELECT id, status, instructor_id FROM bookings WHERE id = $1', [bookingId]);
+    const existing = await client.query(
+      'SELECT id, status, instructor_id, hobbs_start, hobbs_end, tach_start, tach_end FROM bookings WHERE id = $1',
+      [bookingId]
+    );
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const bookingRow = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
@@ -129,8 +146,21 @@ router.patch('/:id/hours', authenticateToken, async (req, res) => {
     }
 
     const { hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, lesson_type, flight_date } = req.body;
-    if (hobbs_start != null && hobbs_end != null && parseFloat(hobbs_end) <= parseFloat(hobbs_start)) {
+    for (const [field, value] of Object.entries({ hobbs_start, hobbs_end, tach_start, tach_end })) {
+      if (value != null) {
+        const invalid = validateHobbsValue(value, field);
+        if (invalid) return res.status(400).json({ error: invalid });
+      }
+    }
+    const mergedHobbsStart = hobbs_start != null ? numericOrNull(hobbs_start) : numericOrNull(bookingRow.hobbs_start);
+    const mergedHobbsEnd = hobbs_end != null ? numericOrNull(hobbs_end) : numericOrNull(bookingRow.hobbs_end);
+    const mergedTachStart = tach_start != null ? numericOrNull(tach_start) : numericOrNull(bookingRow.tach_start);
+    const mergedTachEnd = tach_end != null ? numericOrNull(tach_end) : numericOrNull(bookingRow.tach_end);
+    if (mergedHobbsStart != null && mergedHobbsEnd != null && mergedHobbsEnd <= mergedHobbsStart) {
       return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
+    }
+    if (mergedTachStart != null && mergedTachEnd != null && mergedTachEnd <= mergedTachStart) {
+      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
     }
 
     await client.query('BEGIN');
@@ -508,6 +538,9 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (!canAccessBooking(req.user, result.rows[0])) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     const ts = new Date().toISOString();
