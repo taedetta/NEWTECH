@@ -10,6 +10,26 @@ const { authenticateToken, requireRole, requirePermission } = require('../middle
 
 const router = express.Router();
 
+function parseMeterInput(value, fieldName) {
+  const num = typeof value === 'string' ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(num)) {
+    const err = new Error(`${fieldName} must be a valid number`);
+    err.status = 400;
+    throw err;
+  }
+  if (num < 0) {
+    const err = new Error(`${fieldName} cannot be negative`);
+    err.status = 400;
+    throw err;
+  }
+  if (num > 99999) {
+    const err = new Error(`${fieldName} exceeds maximum allowed value`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM aircraft ORDER BY tail_number');
@@ -159,23 +179,26 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   }
   const client = await pool.connect();
   try {
+    const hVal = hobbs != null ? parseMeterInput(hobbs, 'hobbs') : null;
+    const tVal = tach != null ? parseMeterInput(tach, 'tach') : null;
+    await client.query('BEGIN');
     const current = await client.query(
-      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE',
       [req.params.id]
     );
-    if (current.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+    if (current.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aircraft not found' });
+    }
     const acRow = current.rows[0];
-    await client.query('BEGIN');
     const sets = [];
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
@@ -189,14 +212,14 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), hVal, note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), tVal, note || null]
       );
     }
     await client.query('COMMIT');
@@ -204,7 +227,7 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Hours update error:', err);
-    res.status(500).json({ error: 'Failed to update hours' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to update hours' });
   } finally {
     client.release();
   }
