@@ -5,6 +5,7 @@
 'use strict';
 
 const pool = require('./index');
+const { canReassignEnrollmentInstructor } = require('../lib/training-permissions');
 
 /**
  * Get a student's active training enrollments with stages, maneuvers, and debriefs.
@@ -296,17 +297,22 @@ async function enrollStudent(studentId, programId, instructorId) {
 
 /**
  * Reassign the instructor on an existing enrollment.
- * Validates enrollment exists and new instructor is valid (or null for unassigned).
+ * Validates enrollment exists, caller may manage it, and new instructor is valid (or null for unassigned).
  */
-async function reassignInstructor(enrollmentId, instructorId) {
+async function reassignInstructor(enrollmentId, instructorId, actor = null) {
   // Verify enrollment exists
   const enrollCheck = await pool.query(
-    'SELECT id, student_id FROM student_training WHERE id = $1',
+    'SELECT id, student_id, instructor_id FROM student_training WHERE id = $1',
     [enrollmentId]
   );
   if (enrollCheck.rows.length === 0) {
     const err = new Error('Enrollment not found');
     err.status = 404;
+    throw err;
+  }
+  if (actor && !canReassignEnrollmentInstructor(actor, enrollCheck.rows[0])) {
+    const err = new Error('Only admins, owners, or the assigned instructor can reassign this enrollment');
+    err.status = 403;
     throw err;
   }
 
