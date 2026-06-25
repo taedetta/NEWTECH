@@ -20,6 +20,8 @@ const trainingRoutes = require('../routes/training');
 const bookingsRoutes = require('../routes/bookings-routes');
 const bookingCompletionRoutes = require('../routes/bookings-completion');
 const aircraftRoutes = require('../routes/aircraft');
+const billingRoutes = require('../routes/billing');
+const usersRoutes = require('../routes/users');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -28,6 +30,7 @@ const users = new Map([
   [2, { id: 2, email: 'student@test.local', name: 'Student', role: 'student', is_instructor: false, approval_status: 'approved', deleted_at: null }],
   [3, { id: 3, email: 'maintenance@test.local', name: 'Maintenance', role: 'maintenance', is_instructor: false, approval_status: 'approved', deleted_at: null }],
   [4, { id: 4, email: 'instructor@test.local', name: 'Instructor', role: 'instructor', is_instructor: true, approval_status: 'approved', deleted_at: null }],
+  [5, { id: 5, email: 'owner@test.local', name: 'Owner', role: 'owner', is_instructor: false, approval_status: 'approved', deleted_at: null }],
 ]);
 
 const otherBooking = {
@@ -71,6 +74,9 @@ function installPoolMock() {
       const user = users.get(Number(params[0]));
       return makeResult(user ? [user] : []);
     }
+    if (text.includes("COUNT(*) FROM users WHERE role = 'owner'")) {
+      return makeResult([{ count: '1' }]);
+    }
     if (text.includes('FROM bookings b') && text.includes('WHERE b.id = $1')) {
       return makeResult(Number(params[0]) === otherBooking.id ? [otherBooking] : []);
     }
@@ -99,6 +105,8 @@ function makeApp() {
   app.use('/api/bookings', bookingsRoutes);
   app.use('/api/bookings', bookingCompletionRoutes);
   app.use('/api/aircraft', aircraftRoutes);
+  app.use('/api/billing', billingRoutes);
+  app.use('/api/users', usersRoutes);
   return app;
 }
 
@@ -169,6 +177,15 @@ async function main() {
       console.error = originalConsoleError;
     }
     assert.strictEqual(res.status, 400, 'negative aircraft Hobbs values must be rejected');
+
+    res = await request(server, 'GET', '/api/billing/summary', { token: tokenFor(3) });
+    assert.strictEqual(res.status, 403, 'maintenance must not read billing summaries');
+
+    res = await request(server, 'GET', '/api/billing/2', { token: tokenFor(3) });
+    assert.strictEqual(res.status, 403, 'maintenance must not read student billing details');
+
+    res = await request(server, 'DELETE', '/api/users/5', { token: tokenFor(1) });
+    assert.strictEqual(res.status, 403, 'admins must not delete the last owner account');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

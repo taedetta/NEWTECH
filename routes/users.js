@@ -218,6 +218,14 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     if (target.role === 'owner' && !['owner', 'admin'].includes(requesterRole)) {
       return res.status(403).json({ error: 'Only owners and admins can remove owner accounts' });
     }
+    if (target.role === 'owner') {
+      const ownerCount = await pool.query(
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
+      );
+      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
+        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      }
+    }
     const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
     const allowed = ['owner', 'admin'].includes(requesterRole) ||
       (target.role === 'instructor' && requesterPerms.can_manage_instructors) ||
