@@ -122,9 +122,9 @@ app.use(createPageViewMiddleware());
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 const profileRoutes = require('./routes/profile');
+app.use('/api/users/me', endorsementsRoutes);  // /api/users/me/cfi-profile legacy alias
 app.use('/api/account', profileRoutes);        // /api/account/profile, email-preferences (isolated from /api/users/me)
 app.use('/api/users/me', profileRoutes);       // legacy alias
-app.use('/api/users/me', endorsementsRoutes);  // /api/users/me/cfi-profile
 const emailUnsubscribeRoutes = require('./routes/email-unsubscribe');
 app.use('/api/email', emailUnsubscribeRoutes);
 app.use('/api/permissions', permissionsRoutes);
