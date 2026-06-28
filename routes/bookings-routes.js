@@ -37,6 +37,16 @@ const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (
 const ACTIVE_BOOKING_SQL = "b.status NOT IN ('cancelled', 'completed')";
 const ACTIVE_BOOKING_SQL_NO_ALIAS = "status NOT IN ('cancelled', 'completed')";
 
+function isActiveBookingStatus(status) {
+  return !['cancelled', 'completed'].includes(String(status || 'confirmed').toLowerCase());
+}
+
+function shouldCheckBookingConflicts({ currentStatus, nextStatus, scheduleChanged }) {
+  const willBeActive = isActiveBookingStatus(nextStatus);
+  const wasActive = isActiveBookingStatus(currentStatus);
+  return willBeActive && (scheduleChanged || !wasActive);
+}
+
 /** Serialize concurrent bookings for the same aircraft/instructor/student. */
 async function lockBookingResources(client, { aircraft_id, instructor_id, student_id }) {
   const acId = aircraft_id != null ? parseInt(aircraft_id, 10) : null;
@@ -841,6 +851,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
     const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const nextStatus = status !== undefined ? status : b.status;
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -885,18 +896,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const needsConflictCheck = shouldCheckBookingConflicts({
+      currentStatus: b.status,
+      nextStatus,
+      scheduleChanged,
+    });
+    if (needsConflictCheck) {
       await client.query('BEGIN');
       try {
-        if (needsConflictCheck) {
-          await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-          const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-          if (conflicts.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Scheduling conflict', conflicts });
-          }
+        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+        if (conflicts.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
         }
         const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
         let booking_type = await deriveBookingType(client, sid, iid);
@@ -994,3 +1006,5 @@ module.exports.lockBookingResources = lockBookingResources;
 module.exports.ACTIVE_BOOKING_SQL = ACTIVE_BOOKING_SQL;
 module.exports.isInstructorAvailable = isInstructorAvailable;
 module.exports.findNextAvailableSlots = findNextAvailableSlots;
+module.exports.isActiveBookingStatus = isActiveBookingStatus;
+module.exports.shouldCheckBookingConflicts = shouldCheckBookingConflicts;

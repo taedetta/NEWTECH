@@ -13,6 +13,7 @@
     "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
     "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
     "test:schema": "node scripts/verify-schema.js --fix",
+    "test:critical-bugs": "node scripts/critical-bugs-regression.js",
     "test:pipeline": "node scripts/test-complete-pipeline.js"
   },
   "dependencies": {
