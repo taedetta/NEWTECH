@@ -5,7 +5,7 @@ const assert = require('assert');
 const {
   isActiveBookingStatus,
   shouldCheckBookingConflicts,
-} = require('../routes/bookings-routes');
+} = require('../lib/booking-overlap');
 
 function testBookingUpdateConflictDecisions() {
   assert.strictEqual(isActiveBookingStatus('confirmed'), true);
