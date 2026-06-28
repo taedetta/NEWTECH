@@ -854,6 +854,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status) {
+      const allowedStatuses = ['confirmed', 'completed', 'cancelled'];
+      if (!allowedStatuses.includes(status)) return res.status(400).json({ error: 'Invalid booking status' });
+      if (b.status === 'completed' && status !== 'completed') {
+        return res.status(400).json({ error: 'Completed bookings cannot be changed back to an active or cancelled status. Edit hours or void billing instead.' });
+      }
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
