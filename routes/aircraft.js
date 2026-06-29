@@ -10,6 +10,14 @@ const { authenticateToken, requireRole, requirePermission } = require('../middle
 
 const router = express.Router();
 
+function parseMeterValue(value, fieldName) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return { error: `${fieldName} must be a valid number` };
+  if (num < 0) return { error: `${fieldName} cannot be negative` };
+  if (num > 99999) return { error: `${fieldName} exceeds maximum allowed value` };
+  return { value: num };
+}
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM aircraft ORDER BY tail_number');
@@ -60,7 +68,7 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 });
 
 // DELETE /api/aircraft/:id — Owner/Admin only. Cancels future bookings, removes related downtime/squawks, then deletes the aircraft.
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintenance'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
     const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);
@@ -149,14 +157,15 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
 });
 
 // PATCH /api/aircraft/:id/hobbs
-router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
-  if (!['owner', 'instructor', 'admin', 'maintenance'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Only instructors and above can update aircraft hours' });
-  }
+router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   const { hobbs, tach, note } = req.body;
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
+  const parsedHobbs = hobbs != null ? parseMeterValue(hobbs, 'hobbs') : null;
+  if (parsedHobbs?.error) return res.status(400).json({ error: parsedHobbs.error });
+  const parsedTach = tach != null ? parseMeterValue(tach, 'tach') : null;
+  if (parsedTach?.error) return res.status(400).json({ error: parsedTach.error });
   const client = await pool.connect();
   try {
     const current = await client.query(
@@ -170,12 +179,12 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
+      const hVal = parsedHobbs.value;
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
+      const tVal = parsedTach.value;
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
@@ -189,14 +198,14 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), parsedHobbs.value, note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), parsedTach.value, note || null]
       );
     }
     await client.query('COMMIT');

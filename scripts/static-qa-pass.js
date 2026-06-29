@@ -85,6 +85,54 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical authorization/data-integrity guardrails
+console.log('\n=== Critical route guardrails ===');
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8');
+const bookingsCompletionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+const approvalsSrc = fs.readFileSync(path.join(root, 'routes/approvals.js'), 'utf8');
+
+const guardrails = [
+  {
+    name: 'training progress writes are staff-only',
+    ok: /router\.post\('\/student-progress', authenticateToken, requireRole\('owner', 'admin', 'instructor'\)/.test(trainingSrc),
+  },
+  {
+    name: 'training student list is staff-only',
+    ok: /router\.get\('\/students', authenticateToken, requireRole\('owner', 'admin', 'instructor'\)/.test(trainingSrc),
+  },
+  {
+    name: 'training admin routes authenticate before role checks',
+    ok: /router\.post\('\/admin\/programs', authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc),
+  },
+  {
+    name: 'aircraft delete excludes maintenance role',
+    ok: /router\.delete\('\/:id', authenticateToken, requireRole\('owner', 'admin'\)/.test(aircraftSrc)
+      && !/router\.delete\('\/:id', authenticateToken, requireRole\('owner', 'admin', 'maintenance'\)/.test(aircraftSrc),
+  },
+  {
+    name: 'manual aircraft hours require aircraft-management permission',
+    ok: /router\.patch\('\/:id\/hobbs', authenticateToken, requirePermission\('can_manage_aircraft'\)/.test(aircraftSrc),
+  },
+  {
+    name: 'booking completion serializes on booking row',
+    ok: bookingsCompletionSrc.includes('FOR UPDATE') && bookingsCompletionSrc.includes('METER_DELTA_GRACE_HOURS'),
+  },
+  {
+    name: 'single booking fetch enforces access',
+    ok: bookingsCompletionSrc.includes('canAccessBooking(req.user, result.rows[0])'),
+  },
+  {
+    name: 'approvals are owner/admin only',
+    ok: /const canApprove = \[authenticateToken, requireRole\('owner', 'admin'\)\]/.test(approvalsSrc),
+  },
+];
+
+for (const g of guardrails) {
+  if (g.ok) ok(g.name);
+  else fail(g.name);
+}
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
