@@ -958,17 +958,33 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
-    if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    if (!canAccessBooking(req.user, b)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (b.status === 'completed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    }
+    if (b.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Booking is already cancelled' });
+    }
     const policy = await getPolicySettings();
     const cancelCheck = validateCancellation({ bookingStart: b.start_time, userRole: req.user.role, isAdmin, policy });
-    if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
+    if (!cancelCheck.allowed) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: cancelCheck.error });
+    }
     const reason = req.body?.reason || null;
-    await client.query('BEGIN');
     await client.query(
       `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
       [reason, req.params.id]

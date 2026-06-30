@@ -186,11 +186,17 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can void billing entries' });
     const bookingId = parseInt(req.params.bookingId);
-    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
-    if (bookingResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    const b = bookingResult.rows[0];
-    if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
     await client.query('BEGIN');
+    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    if (bookingResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    const b = bookingResult.rows[0];
+    if (b.billing_voided) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Already voided' });
+    }
     const hobbsDelta = (b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0;
     const tachDelta = (b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0;
     if (hobbsDelta !== 0 || tachDelta !== 0) {

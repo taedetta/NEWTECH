@@ -3422,54 +3422,54 @@
           <div class="editor-tab-panel" id="editor-tab-code">
             <div class="editor-code-panel">
               <!-- Mode switcher -->
-              <div class=&quot;code-mode-switcher&quot;>
-                <button class=&quot;code-mode-btn active&quot; id=&quot;code-mode-json-btn&quot; onclick=&quot;switchCodeMode('json')&quot;>&#123; JSON Content</button>
-                <button class=&quot;code-mode-btn&quot; id=&quot;code-mode-files-btn&quot; onclick=&quot;switchCodeMode('files')&quot;>&#128196; Project Files</button>
-                <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;download-source-btn&quot; onclick=&quot;downloadSourceCode()&quot; style=&quot;margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;&quot;>&#11015; Download ZIP</button>
+              <div class="code-mode-switcher">
+                <button class="code-mode-btn active" id="code-mode-json-btn" onclick="switchCodeMode('json')">&#123; JSON Content</button>
+                <button class="code-mode-btn" id="code-mode-files-btn" onclick="switchCodeMode('files')">&#128196; Project Files</button>
+                <button class="btn btn-primary btn-sm" id="download-source-btn" onclick="downloadSourceCode()" style="margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;">&#11015; Download ZIP</button>
               </div>
               <!-- JSON Content Mode -->
-              <div class=&quot;code-json-panel&quot; id=&quot;code-json-panel&quot;>
-                <div class=&quot;editor-code-toolbar&quot;>
-                  <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;formatCodeTab()&quot;>✎ Format JSON</button>
-                  <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;validateCodeTab()&quot;>&#10003; Validate</button>
-                  <button class=&quot;btn btn-primary btn-sm&quot; onclick=&quot;saveFromCodeTab()&quot;>&#10003; Save &amp; Publish</button>
-                  <span class=&quot;ec-hint&quot;>Edit raw site content as JSON. Save writes directly to the database.</span>
+              <div class="code-json-panel" id="code-json-panel">
+                <div class="editor-code-toolbar">
+                  <button class="btn btn-secondary btn-sm" onclick="formatCodeTab()">&#9998; Format JSON</button>
+                  <button class="btn btn-secondary btn-sm" onclick="validateCodeTab()">&#10003; Validate</button>
+                  <button class="btn btn-primary btn-sm" onclick="saveFromCodeTab()">&#10003; Save &amp; Publish</button>
+                  <span class="ec-hint">Edit raw site content as JSON. Save writes directly to the database.</span>
                 </div>
-                <div class=&quot;editor-code-error&quot; id=&quot;editor-code-error&quot;></div>
-                <textarea class=&quot;editor-code-textarea&quot; id=&quot;editor-code-textarea&quot; spellcheck=&quot;false&quot; placeholder=&quot;Loading JSON...&quot;></textarea>
+                <div class="editor-code-error" id="editor-code-error"></div>
+                <textarea class="editor-code-textarea" id="editor-code-textarea" spellcheck="false" placeholder="Loading JSON..."></textarea>
               </div>
               <!-- Project Files Mode -->
-              <div class=&quot;code-files-panel&quot; id=&quot;code-files-panel&quot;>
-                <div id=&quot;code-file-tree&quot; class=&quot;file-tree&quot;>
-                  <div class=&quot;code-empty-state&quot;>
-                    <div class=&quot;ces-icon&quot;>&#128196;</div>
+              <div class="code-files-panel" id="code-files-panel">
+                <div id="code-file-tree" class="file-tree">
+                  <div class="code-empty-state">
+                    <div class="ces-icon">&#128196;</div>
                     <p>Loading project files…</p>
                   </div>
                 </div>
-                <div id=&quot;code-file-editor&quot; class=&quot;code-editor-panel&quot; style=&quot;display:none&quot;>
-                  <div class=&quot;code-editor-header&quot;>
-                    <div style=&quot;display:flex;align-items:center;gap:0.6rem&quot;>
-                      <span class=&quot;code-editor-filename&quot; id=&quot;code-filename&quot;></span>
-                      <span class=&quot;code-editor-lang&quot; id=&quot;code-lang&quot;></span>
+                <div id="code-file-editor" class="code-editor-panel" style="display:none">
+                  <div class="code-editor-header">
+                    <div style="display:flex;align-items:center;gap:0.6rem">
+                      <span class="code-editor-filename" id="code-filename"></span>
+                      <span class="code-editor-lang" id="code-lang"></span>
                     </div>
-                    <span id=&quot;code-file-size&quot; style=&quot;font-size:0.7rem;color:#858585&quot;></span>
+                    <span id="code-file-size" style="font-size:0.7rem;color:#858585"></span>
                   </div>
-                  <div class=&quot;code-editor-body&quot; id=&quot;code-editor-body&quot;>
-                    <div class=&quot;code-empty-state&quot;>
-                      <div class=&quot;ces-icon&quot;>&#128269;</div>
+                  <div class="code-editor-body" id="code-editor-body">
+                    <div class="code-empty-state">
+                      <div class="ces-icon">&#128269;</div>
                       <p>Select a file to view and edit its code</p>
                     </div>
                   </div>
-                  <div class=&quot;code-editor-status&quot;>
-                    <span class=&quot;code-status-msg&quot; id=&quot;code-status-msg&quot;></span>
-                    <div class=&quot;code-editor-actions&quot;>
-                      <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;copyCodeContent()&quot;>&#10002; Copy</button>
-                      <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;code-save-btn&quot; onclick=&quot;saveProjectFile()&quot;>&#10003; Save File</button>
+                  <div class="code-editor-status">
+                    <span class="code-status-msg" id="code-status-msg"></span>
+                    <div class="code-editor-actions">
+                      <button class="btn btn-secondary btn-sm" onclick="copyCodeContent()">&#10002; Copy</button>
+                      <button class="btn btn-primary btn-sm" id="code-save-btn" onclick="saveProjectFile()">&#10003; Save File</button>
                     </div>
                   </div>
                 </div>
-                <div id=&quot;code-file-empty&quot; class=&quot;code-empty-state&quot; style=&quot;display:none&quot;>
-                  <div class=&quot;ces-icon&quot;>&#128269;</div>
+                <div id="code-file-empty" class="code-empty-state" style="display:none">
+                  <div class="ces-icon">&#128269;</div>
                   <p>Select a file from the tree to view and edit it</p>
                 </div>
               </div>
@@ -14640,6 +14640,55 @@ function showProgressList() {
   currentProgressStudentId = null;
   document.getElementById('progress-list-view').classList.remove('hidden');
   document.getElementById('progress-detail-view').classList.add('hidden');
+}
+
+function parseHoursPromptValue(value, label) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+(\.\d+)?$/.test(text)) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+  const num = Number(text);
+  if (!Number.isFinite(num) || num > 99999) {
+    throw new Error(`${label} is outside the allowed range`);
+  }
+  return num;
+}
+
+async function openEditStudentHoursModal(studentId, studentName, hobbsHours, tachHours) {
+  try {
+    const hobbsInput = prompt(`Set Hobbs hours for ${studentName}:`, Number(hobbsHours || 0).toFixed(1));
+    if (hobbsInput === null) return;
+    const tachInput = prompt(`Set Tach hours for ${studentName}:`, Number(tachHours || 0).toFixed(1));
+    if (tachInput === null) return;
+    const total_hobbs_hours = parseHoursPromptValue(hobbsInput, 'Hobbs hours');
+    const total_tach_hours = parseHoursPromptValue(tachInput, 'Tach hours');
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify({ total_hobbs_hours, total_tach_hours }),
+    });
+    showToast('Student hours updated', 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.message || err.error || 'Failed to update student hours', 'error');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, meter) {
+  const label = meter === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm(`Reset ${label} hours for ${studentName} to 0?`)) return;
+  try {
+    const payload = meter === 'tach'
+      ? { total_tach_hours: 0 }
+      : { total_hobbs_hours: 0 };
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    showToast(`${label} hours reset`, 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || `Failed to reset ${label.toLowerCase()} hours`, 'error');
+  }
 }
 
 async function toggleEnrollForm() {
