@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { bookingUpdateNeedsConflictCheck } = require('../lib/booking-update-policy');
 
 const router = express.Router();
 
@@ -840,7 +841,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const skipsOperationalDateChecks = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -869,12 +870,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-      skipDiscoveryDurationCheck: !isDiscovery && isStaffHistoricalEdit,
-      skipPastTimeCheck: isStaffHistoricalEdit,
+      skipDiscoveryDurationCheck: !isDiscovery && skipsOperationalDateChecks,
+      skipPastTimeCheck: skipsOperationalDateChecks,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isStaffHistoricalEdit) {
+    if (acId && !skipsOperationalDateChecks) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
@@ -885,8 +886,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const needsConflictCheck = bookingUpdateNeedsConflictCheck({
+      existingStatus: b.status,
+      requestedStatus: status,
+      scheduleChanged,
+    });
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
