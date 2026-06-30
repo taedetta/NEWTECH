@@ -6,6 +6,33 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 
+function loadNotificationPrefsWithStubs({ getPrefs } = {}) {
+  const notificationPrefsPath = require.resolve('../lib/notification-prefs');
+  const emailTemplatesPath = require.resolve('../email-templates');
+  const dbPrefsPath = require.resolve('../db/notification-prefs');
+
+  delete require.cache[notificationPrefsPath];
+  delete require.cache[emailTemplatesPath];
+  delete require.cache[dbPrefsPath];
+
+  require.cache[emailTemplatesPath] = {
+    id: emailTemplatesPath,
+    filename: emailTemplatesPath,
+    loaded: true,
+    exports: { sendEmail: async () => true },
+  };
+  require.cache[dbPrefsPath] = {
+    id: dbPrefsPath,
+    filename: dbPrefsPath,
+    loaded: true,
+    exports: {
+      getPrefs: getPrefs || (async () => ({ email_all_off: false })),
+    },
+  };
+
+  return require('../lib/notification-prefs');
+}
+
 async function test(name, fn) {
   try {
     await fn();
@@ -73,7 +100,7 @@ async function main() {
   });
 
   await test('text-only notification footers do not crash', () => {
-    const { appendUnsubscribeFooter, EMAIL_TYPES } = require('../lib/notification-prefs');
+    const { appendUnsubscribeFooter, EMAIL_TYPES } = loadNotificationPrefsWithStubs();
     const withFooter = appendUnsubscribeFooter(null, 'Endorsement alert body', 42, EMAIL_TYPES.endorsement_expiry);
 
     assert.strictEqual(withFooter.html, null);
@@ -83,36 +110,26 @@ async function main() {
   });
 
   await test('password reset emails bypass opt-out preferences', async () => {
-    const dbPrefsPath = require.resolve('../db/notification-prefs');
-    const notificationPrefsPath = require.resolve('../lib/notification-prefs');
-    const dbPrefs = require(dbPrefsPath);
-    const originalGetPrefs = dbPrefs.getPrefs;
+    const notificationPrefs = loadNotificationPrefsWithStubs({
+      getPrefs: async () => {
+        throw new Error('preferences should not be read for password reset');
+      },
+    });
 
-    dbPrefs.getPrefs = async () => {
-      throw new Error('preferences should not be read for password reset');
-    };
-    delete require.cache[notificationPrefsPath];
-    const notificationPrefs = require('../lib/notification-prefs');
-
-    try {
-      assert.strictEqual(
-        await notificationPrefs.shouldSendEmail(42, notificationPrefs.EMAIL_TYPES.password_reset),
-        true
-      );
-      const catalog = notificationPrefs.getPreferenceCatalog('student', false);
-      assert(!catalog.some((category) => category.types.some((type) => type.key === 'password_reset')));
-      const noFooter = notificationPrefs.appendUnsubscribeFooter(
-        '<p>Reset</p>',
-        'Reset',
-        42,
-        notificationPrefs.EMAIL_TYPES.password_reset
-      );
-      assert.strictEqual(noFooter.html, '<p>Reset</p>');
-      assert.strictEqual(noFooter.text, 'Reset');
-    } finally {
-      dbPrefs.getPrefs = originalGetPrefs;
-      delete require.cache[notificationPrefsPath];
-    }
+    assert.strictEqual(
+      await notificationPrefs.shouldSendEmail(42, notificationPrefs.EMAIL_TYPES.password_reset),
+      true
+    );
+    const catalog = notificationPrefs.getPreferenceCatalog('student', false);
+    assert(!catalog.some((category) => category.types.some((type) => type.key === 'password_reset')));
+    const noFooter = notificationPrefs.appendUnsubscribeFooter(
+      '<p>Reset</p>',
+      'Reset',
+      42,
+      notificationPrefs.EMAIL_TYPES.password_reset
+    );
+    assert.strictEqual(noFooter.html, '<p>Reset</p>');
+    assert.strictEqual(noFooter.text, 'Reset');
   });
 }
 
