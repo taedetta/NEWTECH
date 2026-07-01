@@ -238,7 +238,7 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     if (reason && create_squawk) {
       await pool.query(
         `INSERT INTO squawks (aircraft_id, description, severity, status, expected_downtime, reported_by)
-         VALUES ($1, $2, 'minor', 'scheduled', $3, $4)`,
+         VALUES ($1, $2, 'minor', 'open', $3, $4)`,
         [parseInt(aircraft_id, 10), reason, formatDowntimeLabel(result.rows[0]), req.user.id]
       );
     }
