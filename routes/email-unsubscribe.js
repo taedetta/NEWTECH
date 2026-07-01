@@ -3,7 +3,7 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
+const { EMAIL_TYPES, isRequiredEmailType } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -64,6 +64,14 @@ router.get('/unsubscribe', async (req, res) => {
         ok: false,
         title: 'Invalid preference type',
         message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+      }));
+    }
+
+    if (rawType !== 'all' && isRequiredEmailType(rawType)) {
+      return res.status(400).send(renderPage({
+        ok: false,
+        title: 'Required email',
+        message: 'This email type is required for account access and cannot be disabled. Sign in and open My Account to manage optional email preferences.',
       }));
     }
 
