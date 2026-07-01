@@ -3425,7 +3425,7 @@
               <div class=&quot;code-mode-switcher&quot;>
                 <button class=&quot;code-mode-btn active&quot; id=&quot;code-mode-json-btn&quot; onclick=&quot;switchCodeMode('json')&quot;>&#123; JSON Content</button>
                 <button class=&quot;code-mode-btn&quot; id=&quot;code-mode-files-btn&quot; onclick=&quot;switchCodeMode('files')&quot;>&#128196; Project Files</button>
-                <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;download-source-btn&quot; onclick=&quot;downloadSourceCode()&quot; style=&quot;margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;&quot;>&#11015; Download ZIP</button>
+                <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;editor-download-source-btn&quot; onclick=&quot;downloadEditorSourceCode()&quot; style=&quot;margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;&quot;>&#11015; Download ZIP</button>
               </div>
               <!-- JSON Content Mode -->
               <div class=&quot;code-json-panel&quot; id=&quot;code-json-panel&quot;>
@@ -3560,7 +3560,7 @@
                 &nbsp;&nbsp;├── /docs/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ARCHITECTURE, SETUP, FEATURES, API...<br>
                 &nbsp;&nbsp;└── README.md
               </div>
-              <button id="download-source-btn" onclick="downloadSourceCode()" style="background: linear-gradient(135deg, #38BDF8, #0EA5E9); color: #080E1A; border: none; padding: 10px 22px; border-radius: 8px; font-size: 0.88rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem;">
+              <button id="admin-download-source-btn" onclick="downloadAdminSourceCode()" style="background: linear-gradient(135deg, #38BDF8, #0EA5E9); color: #080E1A; border: none; padding: 10px 22px; border-radius: 8px; font-size: 0.88rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem;">
                 &#8659; Download ZIP
               </button>
               <span id="download-source-status" style="display: none; margin-left: 1rem; font-size: 0.82rem; color: #94A3B8;"></span>
@@ -6836,7 +6836,7 @@ async function addStage(programId) {
   const name = inp ? inp.value.trim() : '';
   if (!name) { alert('Stage name is required'); return; }
   try {
-    await api('/api/admin/training/stages', { method: 'POST', body: JSON.stringify({ program_id: programId, name }) });
+    await api('/api/admin/training/admin/stages', { method: 'POST', body: JSON.stringify({ program_id: programId, name }) });
     await loadProgramsAdmin();
     showToast('Stage added');
   } catch (err) {
@@ -6847,7 +6847,7 @@ async function addStage(programId) {
 async function deleteProgram(programId) {
   if (!confirm('Delete this training program? All stages and maneuvers will be permanently removed. This cannot be undone.')) return;
   try {
-    await api(`/api/admin/training/programs/${programId}`, { method: 'DELETE' });
+    await api(`/api/admin/training/admin/programs/${programId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Program deleted', 'success');
   } catch (err) {
@@ -6858,7 +6858,7 @@ async function deleteProgram(programId) {
 async function deleteStage(stageId, programId) {
   if (!confirm('Delete this stage? Maneuvers in it will also be removed. Students currently in this stage must be reassigned first.')) return;
   try {
-    await api(`/api/admin/training/stages/${stageId}`, { method: 'DELETE' });
+    await api(`/api/admin/training/admin/stages/${stageId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Stage deleted');
   } catch (err) {
@@ -6888,7 +6888,7 @@ async function addManeuver(stageId) {
   const name = inp ? inp.value.trim() : '';
   if (!name) { alert('Maneuver name is required'); return; }
   try {
-    await api('/api/admin/training/maneuvers', { method: 'POST', body: JSON.stringify({ stage_id: stageId, name }) });
+    await api('/api/admin/training/admin/maneuvers', { method: 'POST', body: JSON.stringify({ stage_id: stageId, name }) });
     await loadProgramsAdmin();
     showToast('Maneuver added');
     // Re-expand the stage
@@ -6902,7 +6902,7 @@ async function addManeuver(stageId) {
 async function deleteManeuver(maneuverId) {
   if (!confirm('Delete this maneuver? Student progress records for it will also be removed.')) return;
   try {
-    await api(`/api/admin/training/maneuvers/${maneuverId}`, { method: 'DELETE' });
+    await api(`/api/admin/training/admin/maneuvers/${maneuverId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Maneuver deleted');
   } catch (err) {
@@ -6926,7 +6926,7 @@ async function createNewProgram() {
   const description = document.getElementById('new-prog-desc').value.trim();
   if (!name || !code) { alert('Name and code are required'); return; }
   try {
-    await api('/api/admin/training/programs', { method: 'POST', body: JSON.stringify({ name, code, description }) });
+    await api('/api/admin/training/admin/programs', { method: 'POST', body: JSON.stringify({ name, code, description }) });
     hideNewProgramForm();
     await loadProgramsAdmin();
     showToast('Program created');
@@ -17249,8 +17249,8 @@ function discardEditorChanges() {
 }
 
 // ─── DOWNLOAD SOURCE CODE ───
-function downloadSourceCode() {
-  var btn = document.getElementById('download-source-btn');
+function downloadEditorSourceCode() {
+  var btn = document.getElementById('editor-download-source-btn');
   var origHTML = btn.innerHTML;
   btn.innerHTML = '&#8987; Preparing...';
   btn.disabled = true;
@@ -21459,8 +21459,8 @@ function renderInstructorScheduleCard(inst, selectedDayName) {
 // ─── END INSTRUCTOR AVAILABILITY ─────────────────────────
 
 // ─── ADMIN: SOURCE CODE DOWNLOAD ─────────────────────────
-function downloadSourceCode() {
-  const btn = document.getElementById('download-source-btn');
+function downloadAdminSourceCode() {
+  const btn = document.getElementById('admin-download-source-btn');
   const status = document.getElementById('download-source-status');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
   if (status) { status.style.display = 'inline'; status.textContent = 'Building archive — this may take a few seconds…'; }

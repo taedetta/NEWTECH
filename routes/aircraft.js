@@ -9,6 +9,30 @@ const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
+const MAX_METER_VALUE = 99999;
+
+function parseMeterValue(value, fieldName) {
+  if (value == null || value === '') return null;
+  const raw = typeof value === 'string' ? value.trim() : value;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    throw new Error(`${fieldName} must be a valid number`);
+  }
+  if (n < 0) {
+    throw new Error(`${fieldName} cannot be negative`);
+  }
+  if (n > MAX_METER_VALUE) {
+    throw new Error(`${fieldName} exceeds maximum allowed value`);
+  }
+  return n;
+}
+
+function validateOptionalDate(value, fieldName) {
+  if (value == null || value === '') return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) throw new Error(`${fieldName} must be a valid date`);
+  return value;
+}
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -44,6 +68,9 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { tail_number, make_model, type, year, hourly_rate, status, notes } = req.body;
+    if (status != null && !['available', 'maintenance'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be "available" or "maintenance"' });
+    }
     const result = await pool.query(
       `UPDATE aircraft SET tail_number = COALESCE($1, tail_number), make_model = COALESCE($2, make_model),
        type = COALESCE($3, type), year = COALESCE($4, year), hourly_rate = COALESCE($5, hourly_rate),
@@ -157,25 +184,60 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
+  let hVal = null;
+  let tVal = null;
+  try {
+    hVal = parseMeterValue(hobbs, 'hobbs');
+    tVal = parseMeterValue(tach, 'tach');
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (hVal == null && tVal == null) {
+    return res.status(400).json({ error: 'hobbs or tach value is required' });
+  }
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const current = await client.query(
-      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE',
       [req.params.id]
     );
-    if (current.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+    if (current.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aircraft not found' });
+    }
     const acRow = current.rows[0];
-    await client.query('BEGIN');
+    const currentHobbs = getMeterHobbs(acRow);
+    const currentTach = getMeterTach(acRow);
+    const canCorrectBackwards = ['owner', 'admin'].includes(req.user.role);
+    if (!canCorrectBackwards && hVal != null && currentHobbs != null) {
+      if (hVal < currentHobbs - 0.1) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'hobbs cannot be lower than the current aircraft reading' });
+      }
+      if (hVal > currentHobbs + 25) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'hobbs jump is too large for a manual update; ask an owner/admin to correct it' });
+      }
+    }
+    if (!canCorrectBackwards && tVal != null && currentTach != null) {
+      if (tVal < currentTach - 0.1) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'tach cannot be lower than the current aircraft reading' });
+      }
+      if (tVal > currentTach + 25) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'tach jump is too large for a manual update; ask an owner/admin to correct it' });
+      }
+    }
     const sets = [];
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
@@ -189,14 +251,14 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, currentHobbs, hVal, note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, currentTach, tVal, note || null]
       );
     }
     await client.query('COMMIT');
@@ -235,13 +297,21 @@ router.get('/:id/hours-history', authenticateToken, async (req, res) => {
 router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { next_100hr_due, next_annual_due } = req.body;
+    let next100 = null;
+    let annualDue = null;
+    try {
+      next100 = parseMeterValue(next_100hr_due, 'next_100hr_due');
+      annualDue = validateOptionalDate(next_annual_due, 'next_annual_due');
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = await pool.query(
       `UPDATE aircraft
        SET next_100hr_due = $1, next_annual_due = $2, updated_at = NOW()
        WHERE id = $3 RETURNING *`,
       [
-        next_100hr_due != null ? parseFloat(next_100hr_due) : null,
-        next_annual_due || null,
+        next100,
+        annualDue,
         req.params.id
       ]
     );
@@ -272,10 +342,18 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
   try {
     const { ad_number, description, due_date, due_hobbs } = req.body;
     if (!description) return res.status(400).json({ error: 'Description is required' });
+    let dueHobbs = null;
+    let dueDate = null;
+    try {
+      dueHobbs = parseMeterValue(due_hobbs, 'due_hobbs');
+      dueDate = validateOptionalDate(due_date, 'due_date');
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = await pool.query(
       `INSERT INTO airworthiness_directives (aircraft_id, ad_number, description, due_date, due_hobbs)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, ad_number || null, description, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null]
+      [req.params.id, ad_number || null, description, dueDate, dueHobbs]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -288,6 +366,14 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
 router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { status, description, due_date, due_hobbs, ad_number } = req.body;
+    let dueHobbs = null;
+    let dueDate = null;
+    try {
+      dueHobbs = due_hobbs !== undefined ? parseMeterValue(due_hobbs, 'due_hobbs') : null;
+      dueDate = due_date !== undefined ? validateOptionalDate(due_date, 'due_date') : null;
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = await pool.query(
       `UPDATE airworthiness_directives
        SET status = COALESCE($1, status),
@@ -297,7 +383,7 @@ router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_
            ad_number = COALESCE($5, ad_number),
            updated_at = NOW()
        WHERE id = $6 AND aircraft_id = $7 RETURNING *`,
-      [status || null, description || null, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null, ad_number || null, req.params.adId, req.params.id]
+      [status || null, description || null, dueDate, dueHobbs, ad_number || null, req.params.adId, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'AD not found' });
     res.json(result.rows[0]);
