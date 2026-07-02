@@ -4,6 +4,20 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
+require.cache[require.resolve('../email-templates')] = {
+  exports: {
+    sendEmail: async () => true,
+  },
+};
+
+require.cache[require.resolve('../db/notification-prefs')] = {
+  exports: {
+    getPrefs: async () => {
+      throw new Error('required emails should not load preferences');
+    },
+  },
+};
+
 const {
   EMAIL_TYPES,
   appendUnsubscribeFooter,
