@@ -6037,10 +6037,10 @@ async function enterAppBody() {
     }
   }
 
-  // Leads: owner/admin only — between Pending Approvals and Discrepancies
+  // Leads: owner/admin/instructor — between Pending Approvals and Discrepancies
   const navLeads = document.getElementById('nav-leads');
   if (navLeads) {
-    const canSeeLeads = ['owner', 'admin'].includes(currentUser.role);
+    const canSeeLeads = ['owner', 'admin', 'instructor'].includes(currentUser.role);
     navLeads.classList.toggle('hidden', !canSeeLeads);
     if (canSeeLeads) loadLeadsBadge();
   }
@@ -20330,14 +20330,17 @@ async function loadLeads() {
   const emptyEl = document.getElementById('leads-empty');
   const listEl = document.getElementById('leads-list');
   const filter = document.getElementById('leads-status-filter').value;
-  const canManage = ['owner', 'admin'].includes(currentUser.role);
+  const canAdminLeads = ['owner', 'admin'].includes(currentUser.role);
+
+  const addLeadBtn = document.querySelector('#page-leads .page-header .btn-primary');
+  if (addLeadBtn) addLeadBtn.style.display = canAdminLeads ? '' : 'none';
 
   tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--gray-500);padding:2rem">Loading...</td></tr>';
   emptyEl.classList.add('hidden');
   listEl.classList.remove('hidden');
 
   const actTh = document.getElementById('leads-actions-th');
-  if (actTh) { actTh.style.display = canManage ? '' : 'none'; if (canManage) actTh.textContent = 'Actions'; }
+  if (actTh) { actTh.style.display = canAdminLeads ? '' : 'none'; if (canAdminLeads) actTh.textContent = 'Actions'; }
 
   try {
     const data = await api('/api/leads');
@@ -20356,7 +20359,7 @@ async function loadLeads() {
       const dateStr = l.created_at ? new Date(l.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
       const prefDate = l.preferred_date ? String(l.preferred_date) : '—';
       const msg = l.message ? `<span title="${escHtml(l.message)}" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;cursor:default">${escHtml(l.message).slice(0, 30)}${l.message.length > 30 ? '…' : ''}</span>` : '—';
-      const actionTd = canManage
+      const actionTd = canAdminLeads
         ? `<td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" style="font-size:0.72rem;padding:2px 8px;margin-right:4px" onclick="openLeadDetail(${l.id})">View</button>
             <button class="btn btn-sm" style="font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteLead(${l.id}, '${escHtml(l.name).replace(/'/g, "\\'")}')">Delete</button>
@@ -20376,7 +20379,7 @@ async function loadLeads() {
       </tr>`;
     }).join('');
   } catch (err) {
-    const msg = err?.status === 403 ? 'Access denied — admin/owner only' : (err?.error || 'Failed to load leads');
+    const msg = err?.status === 403 ? 'Access denied' : (err?.error || 'Failed to load leads');
     tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:2rem">${escHtml(msg)}</td></tr>`;
     console.error('[loadLeads] error:', err);
   }

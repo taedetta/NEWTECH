@@ -1,6 +1,6 @@
 /**
  * routes/leads.js — Discovery flight lead capture endpoints.
- * Owns: POST /api/leads (public form submission), GET/PATCH/DELETE /api/leads (admin/owner only).
+ * Owns: POST /api/leads (public form submission), GET/PATCH /api/leads (owner/admin/instructor), DELETE/manual (owner/admin).
  * Does NOT own: user authentication, aircraft/booking data, flight logs.
  */
 
@@ -34,6 +34,9 @@ setInterval(() => {
     else ipSubmissions.set(ip, fresh);
   }
 }, 60 * 60 * 1000);
+
+const LEADS_STAFF_ROLES = ['owner', 'admin', 'instructor'];
+const LEADS_ADMIN_ROLES = ['owner', 'admin'];
 
 const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || process.env.DATA_BACKUP_EMAIL || 'aviationnewtech@gmail.com';
 const APP_URL = process.env.APP_URL || 'https://www.newtechaviation.com';
@@ -170,7 +173,7 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/leads/manual — admin/owner manual entry
-router.post('/manual', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.post('/manual', authenticateToken, requireRole(...LEADS_ADMIN_ROLES), async (req, res) => {
   const { name, email, phone, preferred_date, experience_level, message, program_interest, status, notes } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
   if (!email || !email.trim()) return res.status(400).json({ error: 'Email is required.' });
@@ -194,7 +197,7 @@ router.post('/manual', authenticateToken, requireRole('owner', 'admin'), async (
 });
 
 // GET /api/leads/count — badge count for new (uncontacted) leads
-router.get('/count', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.get('/count', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   try {
     const count = await countNewLeads();
     return res.json({ count });
@@ -204,8 +207,8 @@ router.get('/count', authenticateToken, requireRole('owner', 'admin'), async (re
   }
 });
 
-// GET /api/leads — admin/owner only
-router.get('/', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+// GET /api/leads — owner/admin/instructor
+router.get('/', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   try {
     const leads = await listLeads();
     return res.json({ leads });
@@ -216,7 +219,7 @@ router.get('/', authenticateToken, requireRole('owner', 'admin'), async (req, re
 });
 
 // GET /api/leads/:id — single lead with activity history
-router.get('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.get('/:id', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const lead = await getLeadById(id);
@@ -230,7 +233,7 @@ router.get('/:id', authenticateToken, requireRole('owner', 'admin'), async (req,
 });
 
 // POST /api/leads/:id/notes — add note to lead history
-router.post('/:id/notes', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.post('/:id/notes', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   const { note } = req.body;
   if (!note || !note.trim()) return res.status(400).json({ error: 'Note is required.' });
   try {
@@ -246,8 +249,8 @@ router.post('/:id/notes', authenticateToken, requireRole('owner', 'admin'), asyn
   }
 });
 
-// PATCH /api/leads/:id/status — admin/owner only
-router.patch('/:id/status', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+// PATCH /api/leads/:id/status — owner/admin/instructor
+router.patch('/:id/status', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   const validStatuses = ['new', 'contacted', 'booked', 'no_show', 'converted'];
@@ -266,7 +269,7 @@ router.patch('/:id/status', authenticateToken, requireRole('owner', 'admin'), as
 });
 
 // POST /api/leads/:id/follow-up — send follow-up email
-router.post('/:id/follow-up', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.post('/:id/follow-up', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const lead = await getLeadById(id);
@@ -293,7 +296,7 @@ router.post('/:id/follow-up', authenticateToken, requireRole('owner', 'admin'), 
 });
 
 // POST /api/leads/:id/convert — mark converted + link user if exists
-router.post('/:id/convert', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.post('/:id/convert', authenticateToken, requireRole(...LEADS_STAFF_ROLES), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const lead = await getLeadById(id);
@@ -320,7 +323,7 @@ router.post('/:id/convert', authenticateToken, requireRole('owner', 'admin'), as
 });
 
 // DELETE /api/leads/:id — admin/owner only
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole(...LEADS_ADMIN_ROLES), async (req, res) => {
   const db = require('../db/index');
   try {
     const id = parseInt(req.params.id);
