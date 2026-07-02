@@ -241,6 +241,10 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       `UPDATE users SET deleted_at = NOW(), password_hash = NULL, updated_at = NOW() WHERE id = $1`,
       [targetId]
     );
+    await pool.query(
+      'UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+      [targetId]
+    ).catch(e => console.error('[users] reset-token invalidation failed:', e.message));
     res.json({ ok: true });
   } catch (err) {
     console.error('Delete user error:', err);
@@ -371,7 +375,8 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
       'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
       [req.user.id]
     );
-    if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
+    const requesterRole = requester.rows[0]?.role;
+    if (!requester.rows.length || !['owner', 'admin'].includes(requesterRole)) {
       return res.status(403).json({ error: 'Only owners and admins can change user roles' });
     }
     const targetId = parseInt(req.params.id, 10);
@@ -385,6 +390,9 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     const validRoles = ['student', 'instructor', 'admin', 'renter', 'owner', 'maintenance'];
     if (!role || !validRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
+    }
+    if (role === 'owner' && requesterRole !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can grant owner access' });
     }
     const targetResult = await pool.query(
       'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL', [targetId]
@@ -479,8 +487,24 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    function parseHours(value, field) {
+      if (typeof value === 'string' && value.trim() === '') throw new Error(`${field} is required`);
+      const num = Number(value);
+      if (!Number.isFinite(num) || num < 0 || num > 99999) throw new Error(`${field} must be a number between 0 and 99999`);
+      return Math.round(num * 10) / 10;
+    }
+    try {
+      if (total_hobbs_hours !== undefined) {
+        updates.push(`total_hobbs_hours = $${idx++}`);
+        vals.push(parseHours(total_hobbs_hours, 'total_hobbs_hours'));
+      }
+      if (total_tach_hours !== undefined) {
+        updates.push(`total_tach_hours = $${idx++}`);
+        vals.push(parseHours(total_tach_hours, 'total_tach_hours'));
+      }
+    } catch (validationErr) {
+      return res.status(400).json({ error: validationErr.message });
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,

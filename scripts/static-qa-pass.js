@@ -85,6 +85,44 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical beta hardening guardrails
+console.log('\n=== Critical hardening guardrails ===');
+const authMwSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+if (!authMwSrc.includes('approval_status !== \'approved\'') || !authMwSrc.includes('deleted_at')) {
+  fail('authenticateToken does not reject inactive/unapproved accounts');
+} else ok('auth middleware revalidates active approved users');
+
+const authRouteSrc = fs.readFileSync(path.join(root, 'routes/auth.js'), 'utf8');
+if (authRouteSrc.includes('Reactivate soft-deleted account') || authRouteSrc.includes('password_hash = $1, deleted_at = NULL')) {
+  fail('login/reset routes still reactivate deleted accounts');
+} else ok('auth routes do not reactivate deleted accounts');
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+const serverSrc = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+if (!trainingSrc.includes("router.use('/admin', authenticateToken, requireRole('owner', 'admin'))")) {
+  fail('training admin routes missing authenticateToken guard');
+} else ok('training admin routes require authenticated owner/admin');
+if (!serverSrc.includes("req.url = `/admin${req.url}`")) {
+  fail('admin training mount does not route /api/admin/training/* into admin handlers');
+} else ok('admin training mount reaches admin handlers');
+
+const bookingCompletionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!bookingCompletionSrc.includes('FOR UPDATE') || !bookingCompletionSrc.includes('MAX_COMPLETION_METER_DELTA')) {
+  fail('booking completion lacks row locking or meter delta cap');
+} else ok('booking completion locks rows and caps meter jumps');
+if (!bookingCompletionSrc.includes('canAccessBooking(req.user')) {
+  fail('single booking fetch missing participant/staff authorization');
+} else ok('single booking fetch is authorized');
+
+const bookingRoutesSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
+if (!bookingRoutesSrc.includes('completed bookings cannot be reverted')) {
+  fail('booking editor can still revert completed status');
+} else ok('booking editor blocks completed status rewrites');
+
+if (!appHtml.includes('function openEditStudentHoursModal') || !appHtml.includes('function confirmResetStudentHours')) {
+  fail('Progress Edit/Reset hours handlers missing');
+} else ok('Progress hours handlers present');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
