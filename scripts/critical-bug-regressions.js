@@ -18,6 +18,14 @@ require.cache[require.resolve('../db/notification-prefs')] = {
   },
 };
 
+require.cache[require.resolve('../lib/unsubscribe-token')] = {
+  exports: {
+    buildUnsubscribeUrl: (userId, type) => `/api/email/unsubscribe?user=${userId}&type=${type}`,
+    buildManagePrefsUrl: () => '/app#account',
+    typeLabel: (type) => type,
+  },
+};
+
 const {
   EMAIL_TYPES,
   appendUnsubscribeFooter,
