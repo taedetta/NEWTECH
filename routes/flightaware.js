@@ -23,12 +23,18 @@ const FA_TRACK_STATIC_TTL = 15 * 60 * 1000;
 const AIRPORT_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const LOCAL_TRACK_MAX = 600;
 
+/** FlightAware AeroAPI altitude is in hundreds of feet (26 => 2600 ft MSL). */
+function altitudeToFeet(alt) {
+  if (alt == null || !Number.isFinite(Number(alt))) return null;
+  return Math.round(Number(alt) * 100);
+}
+
 function mapPosition(pos) {
   if (!pos || pos.latitude == null || pos.longitude == null) return null;
   return {
     latitude: pos.latitude,
     longitude: pos.longitude,
-    altitude: pos.altitude,
+    altitude: altitudeToFeet(pos.altitude),
     groundspeed: pos.groundspeed,
     heading: pos.heading,
     timestamp: pos.timestamp,
