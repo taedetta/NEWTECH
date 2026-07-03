@@ -5,14 +5,35 @@ const pool = require('../db/index');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const result = await pool.query(
+      `SELECT id, email, name, role, is_instructor
+       FROM users
+       WHERE id = $1
+         AND deleted_at IS NULL
+         AND COALESCE(approval_status, 'approved') = 'approved'`,
+      [decoded.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Account is inactive or no longer approved' });
+    }
+    const user = result.rows[0];
+    req.user = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      is_instructor: !!user.is_instructor,
+    };
     next();
-  } catch {
+  } catch (err) {
+    if (err.name !== 'JsonWebTokenError' && err.name !== 'TokenExpiredError') {
+      console.error('Authentication check error:', err.message);
+    }
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -69,7 +90,12 @@ async function getUserPermissions(userId, role) {
 function requirePermission(permKey) {
   return async (req, res, next) => {
     try {
-      if (['owner', 'admin', 'maintenance'].includes(req.user.role)) return next();
+      if (['owner', 'admin'].includes(req.user.role)) return next();
+      if (req.user.role === 'maintenance') {
+        return permKey === 'can_manage_aircraft'
+          ? next()
+          : res.status(403).json({ error: 'Insufficient permissions' });
+      }
       if (req.user.role !== 'instructor') {
         return res.status(403).json({ error: 'Insufficient permissions' });
       }

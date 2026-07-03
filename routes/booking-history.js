@@ -26,6 +26,9 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { period, specific_date, sort, aircraft_id, student_id, instructor_id, status, scope } = req.query;
     const { role, id: userId } = req.user;
+    if (!['owner', 'admin', 'instructor', 'student', 'renter'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const historyScope = scope || 'mine';
 
     // Date range from period preset
