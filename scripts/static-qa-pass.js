@@ -85,6 +85,46 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical regression checks from beta testing
+console.log('\n=== Critical regression checks ===');
+const authSrc = fs.readFileSync(path.join(root, 'middleware', 'auth.js'), 'utf8');
+if (!authSrc.includes('deleted_at IS NULL') || !authSrc.includes("COALESCE(approval_status, 'approved') = 'approved'")) {
+  fail('authenticateToken must revalidate active approved users from DB');
+} else ok('Auth middleware revalidates active approved users');
+
+if (authSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('maintenance must not bypass every permission key');
+} else ok('Maintenance permission bypass is scoped');
+
+const approvalsSrc = fs.readFileSync(path.join(root, 'routes', 'approvals.js'), 'utf8');
+if (!approvalsSrc.includes("requireRole('owner', 'admin')") || approvalsSrc.includes("requireRole('owner', 'admin', 'instructor')")) {
+  fail('Approvals must be owner/admin only');
+} else ok('Approvals are owner/admin only');
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes', 'training.js'), 'utf8');
+if (!trainingSrc.includes('function isTrainingStaff') || !trainingSrc.includes("router.post(['/programs', '/admin/programs'], authenticateToken, requireRole('owner', 'admin')")) {
+  fail('Training admin/program routes must be authenticated and match /api/admin/training/*');
+} else ok('Training admin routes are authenticated and correctly mounted');
+
+const bookingCompletionSrc = fs.readFileSync(path.join(root, 'routes', 'bookings-completion.js'), 'utf8');
+if (!bookingCompletionSrc.includes('FOR UPDATE') || !bookingCompletionSrc.includes('maxMeterDelta')) {
+  fail('Booking completion must lock rows and cap meter deltas');
+} else ok('Booking completion has row locks and meter delta cap');
+
+const billingDeleteMatch = appHtml.match(/async function confirmDeleteBillingFlight[\s\S]*?^}/m);
+if (!billingDeleteMatch || billingDeleteMatch[0].includes('/api/booking-history/flights/')) {
+  fail('Billing delete action must void billing entry, not hard-delete booking history');
+} else ok('Billing delete action uses billing void endpoint');
+
+const imageUploadMatch = appHtml.match(/async function handleEditorImageUpload[\s\S]*?^}/m);
+if (!imageUploadMatch || imageUploadMatch[0].includes('/api/site-content/upload-image')) {
+  fail('Website editor image upload must not call missing upload-image API');
+} else ok('Website editor image upload is locally staged for publish');
+
+if (!appHtml.includes('async function openEditStudentHoursModal') || !appHtml.includes('async function confirmResetStudentHours')) {
+  fail('Progress student hours Edit/Reset handlers missing');
+} else ok('Progress student hours handlers present');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');

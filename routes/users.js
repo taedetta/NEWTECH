@@ -476,11 +476,26 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     if (total_hobbs_hours === undefined && total_tach_hours === undefined) {
       return res.status(400).json({ error: 'No hours provided' });
     }
+    const parseHours = (value, field) => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string' && /^\d+(\.\d{1,2})?$/.test(value.trim())) return Number(value);
+      throw Object.assign(new Error(`${field} must be a valid non-negative number`), { status: 400 });
+    };
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    if (total_hobbs_hours !== undefined) {
+      const n = parseHours(total_hobbs_hours, 'total_hobbs_hours');
+      if (n > 99999) return res.status(400).json({ error: 'total_hobbs_hours exceeds maximum allowed value' });
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(n);
+    }
+    if (total_tach_hours !== undefined) {
+      const n = parseHours(total_tach_hours, 'total_tach_hours');
+      if (n > 99999) return res.status(400).json({ error: 'total_tach_hours exceeds maximum allowed value' });
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(n);
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
@@ -489,6 +504,7 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('User hours update error:', err);
     res.status(500).json({ error: 'Failed to update user hours' });
   }

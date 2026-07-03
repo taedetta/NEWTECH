@@ -163,13 +163,12 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
-    if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
+    const approvalStatus = user.approval_status || 'approved';
+    if (user.deleted_at || approvalStatus === 'rejected') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active.' });
     }
     // Account pending approval — correct credentials but not yet activated
-    if (user.approval_status === 'pending') {
+    if (approvalStatus === 'pending') {
       return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
     }
     const token = jwt.sign(
@@ -253,7 +252,10 @@ router.post('/reset-password', async (req, res) => {
       `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
-       WHERE prt.token_hash = $1 AND prt.used_at IS NULL`,
+       WHERE prt.token_hash = $1
+         AND prt.used_at IS NULL
+         AND u.deleted_at IS NULL
+         AND COALESCE(u.approval_status, 'approved') = 'approved'`,
       [tokenHash]
     );
     if (result.rows.length === 0) {
@@ -264,9 +266,9 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
     }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, deleted_at = NULL, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
-    console.log(`[auth] Password reset + account reactivation for user_id=${row.user_id} (${row.email})`);
+    console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[reset-password] error:', err.message);
@@ -288,7 +290,9 @@ router.get('/me', authenticateToken, async (req, res) => {
       [req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    if (result.rows[0].deleted_at) return res.status(401).json({ error: 'Account has been deleted' });
+    if (result.rows[0].deleted_at || (result.rows[0].approval_status && result.rows[0].approval_status !== 'approved')) {
+      return res.status(401).json({ error: 'Account is inactive or no longer approved' });
+    }
     const u = result.rows[0];
     const permissions = ['owner', 'admin'].includes(u.role)
       ? { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true, can_edit_website: true }

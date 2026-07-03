@@ -14642,6 +14642,51 @@ function showProgressList() {
   document.getElementById('progress-detail-view').classList.add('hidden');
 }
 
+async function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  if (!['owner', 'admin'].includes(currentUser.role)) return;
+  const hobbsInput = prompt('Set total Hobbs hours for ' + studentName, Number(currentHobbs || 0).toFixed(1));
+  if (hobbsInput === null) return;
+  const tachInput = prompt('Set total Tach hours for ' + studentName, Number(currentTach || 0).toFixed(1));
+  if (tachInput === null) return;
+
+  const hobbs = Number(hobbsInput);
+  const tach = Number(tachInput);
+  if (!Number.isFinite(hobbs) || hobbs < 0 || hobbs > 99999 || !Number.isFinite(tach) || tach < 0 || tach > 99999) {
+    showToast('Hours must be valid non-negative numbers', 'error');
+    return;
+  }
+
+  try {
+    await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify({
+        total_hobbs_hours: hobbs.toFixed(1),
+        total_tach_hours: tach.toFixed(1)
+      })
+    });
+    showToast('Student hours updated', 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to update student hours', 'error');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, meterType) {
+  if (!['owner', 'admin'].includes(currentUser.role)) return;
+  const label = meterType === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm('Reset ' + label + ' hours for ' + studentName + ' to 0.0?')) return;
+  const body = meterType === 'tach'
+    ? { total_tach_hours: '0.0' }
+    : { total_hobbs_hours: '0.0' };
+  try {
+    await api('/api/users/' + studentId + '/hours', { method: 'PUT', body: JSON.stringify(body) });
+    showToast(label + ' hours reset', 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to reset student hours', 'error');
+  }
+}
+
 async function toggleEnrollForm() {
   const container = document.getElementById('enroll-form-container');
   const wasHidden = container.classList.contains('hidden');
@@ -15715,10 +15760,10 @@ async function saveEditBillingFlight() {
 }
 
 async function confirmDeleteBillingFlight(id, dateStr) {
-  if (!confirm('Delete flight billing entry from ' + dateStr + '? This removes the charge record. Cannot be undone.')) return;
+  if (!confirm('Void flight billing entry from ' + dateStr + '? This removes the charge while preserving booking history.')) return;
   try {
-    await api('/api/booking-history/flights/' + id, { method: 'DELETE' });
-    showToast('Flight billing entry deleted', 'success');
+    await api('/api/billing/flights/' + id, { method: 'DELETE' });
+    showToast('Flight billing entry voided', 'success');
     if (currentBillingStudentId != null) await loadBillingForStudent(currentBillingStudentId);
     else await loadBilling();
   } catch(e) {
@@ -17422,14 +17467,10 @@ async function handleEditorImageUpload(key, input) {
 
   try {
     const base64 = await fileToBase64(file);
-    const resp = await api('/api/site-content/upload-image', {
-      method: 'POST',
-      body: JSON.stringify({ filename: file.name, base64, mimeType: file.type })
-    });
-
-    editorContent[key] = resp.url;
+    const dataUrl = 'data:' + (file.type || 'image/jpeg') + ';base64,' + base64;
+    editorContent[key] = dataUrl;
     if (preview) {
-      preview.src = resp.url;
+      preview.src = dataUrl;
       preview.style.display = 'block';
     }
     markEditorDirty();
