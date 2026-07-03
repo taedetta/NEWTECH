@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { getBookingUpdatePolicy } = require('../lib/booking-update-policy');
 
 const router = express.Router();
 
@@ -873,20 +874,24 @@ router.put('/:id', authenticateToken, async (req, res) => {
       skipPastTimeCheck: isStaffHistoricalEdit,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
-    // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isStaffHistoricalEdit) {
-      const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
-      if (downtimeHit) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
-      }
-    }
     const scheduleChanged = acId !== b.aircraft_id
       || sid !== b.student_id
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const updatePolicy = getBookingUpdatePolicy({
+      existingStatus: b.status,
+      requestedStatus: status,
+      scheduleChanged,
+    });
+    // Downtime check on updates — inactive historical edits do not block schedule resources.
+    if (acId && updatePolicy.needsDowntimeCheck) {
+      const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
+      if (downtimeHit) {
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
+      }
+    }
+    const needsConflictCheck = updatePolicy.needsConflictCheck;
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
