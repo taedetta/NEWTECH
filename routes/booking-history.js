@@ -8,6 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 
 const router = express.Router();
 
@@ -368,28 +369,40 @@ router.post('/manual', authenticateToken, async (req, res) => {
       if (!acId || hobbs_start == null || hobbs_end == null) return res.status(400).json({ error: 'Aircraft, hobbs_start, and hobbs_end are required for flight sessions' });
       const hStart = parseFloat(hobbs_start);
       const hEnd = parseFloat(hobbs_end);
-      if (hEnd <= hStart) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
+      if (!Number.isFinite(hStart) || !Number.isFinite(hEnd) || hEnd <= hStart) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
       const tStart = tach_start != null ? parseFloat(tach_start) : null;
       const tEnd = tach_end != null ? parseFloat(tach_end) : null;
       const tS = tStart != null ? tStart : null;
       const tE = tEnd != null ? tEnd : null;
+      if ((tS != null && !Number.isFinite(tS)) || (tE != null && !Number.isFinite(tE))) return res.status(400).json({ error: 'tach values must be valid numbers' });
+      if (tS != null && tE != null && tE <= tS) return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
       const hDelta = hEnd - hStart;
       const tDelta = (tS != null && tE != null) ? (tE - tS) : null;
       const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
+      if (!Number.isFinite(dualHrs) || dualHrs < 0) return res.status(400).json({ error: 'dual_instruction_hours must be a valid non-negative number' });
       const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        const bookingType = iid ? 'dual' : 'student_solo';
         const bkResult = await client.query(
-          `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, lesson_type, notes, created_by, booking_type, hobbs_start, hobbs_end)
-           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11) RETURNING id`,
-          [sid, iid, acId, startTime.toISOString(), endTime.toISOString(), lesson_type || null, notes || null, userId, iid ? 'dual' : 'student_solo', hStart, hEnd]
+          `INSERT INTO bookings
+             (student_id, instructor_id, aircraft_id, start_time, end_time, status, lesson_type, notes,
+              created_by, booking_type, hobbs_start, hobbs_end, tach_start, tach_end)
+           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13)
+           RETURNING *`,
+          [sid, iid, acId, startTime.toISOString(), endTime.toISOString(), lesson_type || null, notes || null,
+           userId, bookingType, hStart, hEnd, tS, tE]
         );
-        const bkId = bkResult.rows[0].id;
+        const booking = bkResult.rows[0];
+        const bkId = booking.id;
         await client.query(
-          `INSERT INTO flight_logs (booking_id, flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta, dual_instruction_hours, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [bkId, flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
+          `INSERT INTO flight_logs
+             (booking_id, aircraft_id, student_id, instructor_id, booking_type, flight_date,
+              hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
+              dual_instruction_hours, notes, submitted_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+          [bkId, acId, sid, iid, bookingType, flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null, userId]
         );
         if (acId) {
           await applyAircraftMeterReadings(client, acId, {
@@ -400,6 +413,18 @@ router.post('/manual', authenticateToken, async (req, res) => {
           });
         }
         await client.query(`UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, sid]);
+        if (iid) {
+          await client.query(`UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, iid]);
+          const studentName = (await client.query('SELECT name FROM users WHERE id = $1', [sid])).rows[0]?.name || null;
+          await syncInstructorHoursFromFlight(client, {
+            booking,
+            hobbsFlown: hDelta,
+            dualHrs,
+            flightDate: flight_date,
+            studentName,
+            preserveRatesRow: { notes: notes || null },
+          });
+        }
         await client.query('COMMIT');
         res.json({ booking_id: bkId });
       } catch (err) {
