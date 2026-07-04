@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { getBookingUpdateConflictPolicy } = require('../lib/booking-update-policy');
 
 const router = express.Router();
 
@@ -865,6 +866,18 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
+    const effectiveStatus = status !== undefined ? status : b.status;
+    const scheduleChanged = acId !== b.aircraft_id
+      || sid !== b.student_id
+      || iid !== b.instructor_id
+      || stIso !== new Date(b.start_time).toISOString()
+      || etIso !== new Date(b.end_time).toISOString();
+    const conflictPolicy = getBookingUpdateConflictPolicy({
+      currentStatus: b.status,
+      nextStatus: effectiveStatus,
+      scheduleChanged,
+      skipForHistoricalEdit: isStaffHistoricalEdit,
+    });
     const isDiscovery = isDiscoveryLessonType(effectiveLessonType);
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
@@ -874,19 +887,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isStaffHistoricalEdit) {
+    if (acId && (!isStaffHistoricalEdit || conflictPolicy.activatesBlockingStatus)) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
-    const scheduleChanged = acId !== b.aircraft_id
-      || sid !== b.student_id
-      || iid !== b.instructor_id
-      || stIso !== new Date(b.start_time).toISOString()
-      || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const { needsConflictCheck } = conflictPolicy;
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
