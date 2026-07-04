@@ -5,14 +5,36 @@ const pool = require('../db/index');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const result = await pool.query(
+      `SELECT id, email, name, role, is_instructor, approval_status, deleted_at
+       FROM users
+       WHERE id = $1`,
+      [decoded.id]
+    );
+    const user = result.rows[0];
+    if (!user || user.deleted_at || user.approval_status !== 'approved') {
+      res.clearCookie?.('token');
+      return res.status(401).json({ error: 'Account is not active' });
+    }
+    // Hydrate current DB role/state so demotions and approval changes take effect immediately.
+    req.user = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      is_instructor: !!user.is_instructor,
+      approval_status: user.approval_status,
+    };
     next();
-  } catch {
+  } catch (err) {
+    if (err.name !== 'JsonWebTokenError' && err.name !== 'TokenExpiredError') {
+      console.error('Authentication lookup error:', err.message);
+    }
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -69,7 +91,11 @@ async function getUserPermissions(userId, role) {
 function requirePermission(permKey) {
   return async (req, res, next) => {
     try {
-      if (['owner', 'admin', 'maintenance'].includes(req.user.role)) return next();
+      if (['owner', 'admin'].includes(req.user.role)) return next();
+      if (req.user.role === 'maintenance') {
+        if (permKey === 'can_manage_aircraft') return next();
+        return res.status(403).json({ error: 'Insufficient permissions' });
+      }
       if (req.user.role !== 'instructor') {
         return res.status(403).json({ error: 'Insufficient permissions' });
       }

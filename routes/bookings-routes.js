@@ -68,7 +68,7 @@ function normBookingUserId(v) {
 
 /** Who may view/update/cancel a booking (staff or assigned participant). */
 function canAccessBooking(user, booking) {
-  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  if (['owner', 'admin'].includes(user.role)) return true;
   return user.id === booking.instructor_id || user.id === booking.student_id;
 }
 
@@ -694,6 +694,9 @@ router.post('/', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
+    if (req.user.role === 'maintenance') {
+      return res.status(403).json({ error: 'Maintenance users cannot create flight bookings' });
+    }
     let sid = student_id ? parseInt(student_id) : null;
     const iid = instructor_id ? parseInt(instructor_id) : null;
     if (['student', 'renter'].includes(req.user.role)) {
@@ -713,6 +716,10 @@ router.post('/', authenticateToken, async (req, res) => {
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const forceBooking = isAdmin && (req.body.force_booking === true || req.body.force_booking === 'true');
+    if (!isAdmin && (req.body.force_booking === true || req.body.force_booking === 'true')) {
+      return res.status(403).json({ error: 'Only owners and admins can force bookings outside normal availability' });
+    }
     const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
@@ -766,8 +773,7 @@ router.post('/', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
-    const selfService = ['student', 'renter', 'instructor'].includes(req.user.role);
-    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+    if (iid && !forceBooking) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
       if (!availCheck.available) {
@@ -854,6 +860,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status && status !== b.status) {
+      return res.status(400).json({ error: 'Use the complete or cancel workflow to change booking status' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
