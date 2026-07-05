@@ -85,6 +85,45 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical security/data-integrity guardrails
+console.log('\n=== Critical guardrails ===');
+const authSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+if (!/async function authenticateToken/.test(authSrc) || !authSrc.includes('FROM users') || !authSrc.includes('approval_status')) {
+  fail('authenticateToken must re-verify account state from DB');
+} else ok('DB-backed token revalidation');
+if (authSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('maintenance role must not bypass every permission check');
+} else ok('maintenance permission is scoped');
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+for (const marker of [
+  "router.post('/student-progress', authenticateToken, requireTrainingStaff",
+  "router.put('/enrollment/:id/stage', authenticateToken, requireTrainingStaff",
+  "router.post('/debriefs', authenticateToken, requireTrainingStaff",
+  "router.post('/milestones', authenticateToken, requireTrainingStaff",
+  "router.get('/students', authenticateToken",
+  "canViewStudentTraining(req.user, studentId)",
+]) {
+  if (!trainingSrc.includes(marker)) fail(`Training guardrail missing: ${marker}`);
+}
+if (!failures.some((f) => f.includes('Training guardrail'))) ok('training endpoints gated');
+
+const bookingCompletionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!bookingCompletionSrc.includes('FOR UPDATE') || !bookingCompletionSrc.includes("status = 'confirmed'")) {
+  fail('booking completion/end-early must re-check confirmed status under write lock/conditional update');
+} else ok('booking completion race guard');
+
+const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8');
+if (!aircraftSrc.includes("router.delete('/:id', authenticateToken, requireRole('owner', 'admin')")) {
+  fail('aircraft delete must be owner/admin only');
+} else ok('aircraft delete owner/admin only');
+if (!aircraftSrc.includes("router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft')")) {
+  fail('aircraft hour updates must require can_manage_aircraft');
+} else ok('aircraft hour permission enforced');
+if (!aircraftSrc.includes('parseStrictNonNegativeNumber')) {
+  fail('aircraft numeric fields must use strict validation');
+} else ok('aircraft numeric validation');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
