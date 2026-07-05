@@ -94,12 +94,19 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
     const originalEnd = new Date(b.end_time);
     if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
+    if (endTime <= new Date(b.start_time)) return res.status(400).json({ error: 'actual_end_time must be after the booking start time' });
     await client.query('BEGIN');
     const newEndIso = endTime.toISOString();
     const updated = await client.query(
-      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      `UPDATE bookings SET end_time = $1, updated_at = NOW()
+       WHERE id = $2 AND status = 'confirmed'
+       RETURNING *`,
       [newEndIso, req.params.id]
     );
+    if (updated.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    }
     await client.query('COMMIT');
     res.json({ ok: true, new_end_time: newEndIso, booking: updated.rows[0] });
   } catch (err) {
@@ -168,7 +175,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     const bResult = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
     if (bResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    const b = bResult.rows[0];
+    let b = bResult.rows[0];
     if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
     const isAdmin = ['owner', 'admin'].includes(verifiedRole);
     if (!isAdmin) {
@@ -185,15 +192,26 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
-      const finishedEnd = completionEndTime(b);
       await client.query('BEGIN');
-      await client.query(
-        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
+      const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (locked.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Booking not found' });
+      }
+      if (locked.rows[0].status !== 'confirmed') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+      }
+      b = locked.rows[0];
+      const finishedEnd = completionEndTime(b);
+      const noChangeUpdate = await client.query(
+        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW()
+         WHERE id = $2 AND status = 'confirmed'
+         RETURNING *`,
         [finishedEnd, req.params.id]
       );
       await client.query('COMMIT');
-      const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-      res.json({ booking: updated.rows[0], log_id: null });
+      res.json({ booking: noChangeUpdate.rows[0], log_id: null });
 
       // Send flight completed email (no_change — no hobbs/tach data)
       sendFlightCompletedEmail(req.params.id, req.user.id, req.user.role, null, null, null);
@@ -291,6 +309,16 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
     await client.query('BEGIN');
+    const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (locked.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    if (locked.rows[0].status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    }
+    b = locked.rows[0];
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]

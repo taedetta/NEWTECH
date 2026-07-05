@@ -10,6 +10,23 @@ const { authenticateToken, requireRole, requirePermission } = require('../middle
 
 const router = express.Router();
 
+function parseStrictNonNegativeNumber(value, fieldName) {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(text)) {
+    const err = new Error(`${fieldName} must be a valid non-negative number`);
+    err.status = 400;
+    throw err;
+  }
+  const num = Number(text);
+  if (!Number.isFinite(num) || num > 99999) {
+    const err = new Error(`${fieldName} exceeds maximum allowed value`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM aircraft ORDER BY tail_number');
@@ -60,7 +77,7 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 });
 
 // DELETE /api/aircraft/:id — Owner/Admin only. Cancels future bookings, removes related downtime/squawks, then deletes the aircraft.
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintenance'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
     const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);
@@ -149,16 +166,15 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
 });
 
 // PATCH /api/aircraft/:id/hobbs
-router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
-  if (!['owner', 'instructor', 'admin', 'maintenance'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Only instructors and above can update aircraft hours' });
-  }
+router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   const { hobbs, tach, note } = req.body;
-  if (hobbs == null && tach == null) {
+  if ((hobbs == null || hobbs === '') && (tach == null || tach === '')) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
   const client = await pool.connect();
   try {
+    const hVal = parseStrictNonNegativeNumber(hobbs, 'hobbs');
+    const tVal = parseStrictNonNegativeNumber(tach, 'tach');
     const current = await client.query(
       'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
       [req.params.id]
@@ -169,13 +185,11 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     const sets = [];
     const vals = [];
     let idx = 1;
-    if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
+    if (hVal != null) {
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
-    if (tach != null) {
-      const tVal = parseFloat(tach);
+    if (tVal != null) {
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
@@ -185,18 +199,18 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       `UPDATE aircraft SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
       vals
     );
-    if (hobbs != null) {
+    if (hVal != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), hVal, note || null]
       );
     }
-    if (tach != null) {
+    if (tVal != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), tVal, note || null]
       );
     }
     await client.query('COMMIT');
@@ -204,7 +218,7 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Hours update error:', err);
-    res.status(500).json({ error: 'Failed to update hours' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to update hours' });
   } finally {
     client.release();
   }
@@ -235,12 +249,13 @@ router.get('/:id/hours-history', authenticateToken, async (req, res) => {
 router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { next_100hr_due, next_annual_due } = req.body;
+    const next100hrDue = parseStrictNonNegativeNumber(next_100hr_due, 'next_100hr_due');
     const result = await pool.query(
       `UPDATE aircraft
        SET next_100hr_due = $1, next_annual_due = $2, updated_at = NOW()
        WHERE id = $3 RETURNING *`,
       [
-        next_100hr_due != null ? parseFloat(next_100hr_due) : null,
+        next100hrDue,
         next_annual_due || null,
         req.params.id
       ]
@@ -249,7 +264,7 @@ router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Inspections update error:', err);
-    res.status(500).json({ error: 'Failed to update inspections' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to update inspections' });
   }
 });
 
@@ -272,15 +287,16 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
   try {
     const { ad_number, description, due_date, due_hobbs } = req.body;
     if (!description) return res.status(400).json({ error: 'Description is required' });
+    const dueHobbs = parseStrictNonNegativeNumber(due_hobbs, 'due_hobbs');
     const result = await pool.query(
       `INSERT INTO airworthiness_directives (aircraft_id, ad_number, description, due_date, due_hobbs)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, ad_number || null, description, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null]
+      [req.params.id, ad_number || null, description, due_date || null, dueHobbs]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('AD create error:', err);
-    res.status(500).json({ error: 'Failed to create AD' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to create AD' });
   }
 });
 
@@ -288,6 +304,7 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
 router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { status, description, due_date, due_hobbs, ad_number } = req.body;
+    const dueHobbs = due_hobbs !== undefined ? parseStrictNonNegativeNumber(due_hobbs, 'due_hobbs') : null;
     const result = await pool.query(
       `UPDATE airworthiness_directives
        SET status = COALESCE($1, status),
@@ -297,13 +314,13 @@ router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_
            ad_number = COALESCE($5, ad_number),
            updated_at = NOW()
        WHERE id = $6 AND aircraft_id = $7 RETURNING *`,
-      [status || null, description || null, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null, ad_number || null, req.params.adId, req.params.id]
+      [status || null, description || null, due_date || null, dueHobbs, ad_number || null, req.params.adId, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'AD not found' });
     res.json(result.rows[0]);
   } catch (err) {
     console.error('AD update error:', err);
-    res.status(500).json({ error: 'Failed to update AD' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to update AD' });
   }
 });
 

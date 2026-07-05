@@ -313,11 +313,91 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const bookingResult = await client.query(
+        `SELECT b.*,
+                fl.hobbs_delta AS log_hobbs_delta,
+                fl.tach_delta AS log_tach_delta
+         FROM bookings b
+         LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+         WHERE b.id = $1
+         FOR UPDATE OF b`,
+        [bookingId]
+      );
+      const booking = bookingResult.rows[0];
+      if (booking?.status === 'completed' && !booking.billing_voided) {
+        const hobbsDelta = booking.log_hobbs_delta != null
+          ? parseFloat(booking.log_hobbs_delta)
+          : ((booking.hobbs_end != null && booking.hobbs_start != null) ? parseFloat(booking.hobbs_end) - parseFloat(booking.hobbs_start) : 0);
+        const tachDelta = booking.log_tach_delta != null
+          ? parseFloat(booking.log_tach_delta)
+          : ((booking.tach_end != null && booking.tach_start != null) ? parseFloat(booking.tach_end) - parseFloat(booking.tach_start) : 0);
+        const h = Number.isFinite(hobbsDelta) ? hobbsDelta : 0;
+        const t = Number.isFinite(tachDelta) ? tachDelta : 0;
+        if (h !== 0 || t !== 0) {
+          if (booking.student_id) {
+            await client.query(
+              `UPDATE users SET
+                 total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2, 0)
+               WHERE id = $3`,
+              [h, t, booking.student_id]
+            );
+          }
+          if (booking.instructor_id) {
+            await client.query(
+              `UPDATE users SET
+                 total_hobbs_hours = GREATEST(COALESCE(total_hobbs_hours, 0) - $1, 0),
+                 total_tach_hours = GREATEST(COALESCE(total_tach_hours, 0) - $2, 0)
+               WHERE id = $3`,
+              [h, t, booking.instructor_id]
+            );
+          }
+        }
+        await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
+      }
       // Clean up all related records before deleting the booking.
       // flight_hobbs_readings & flight_discrepancies have ON DELETE CASCADE,
       // but admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
+      if (booking?.aircraft_id) {
+        const latestHobbs = await client.query(
+          `SELECT new_value FROM aircraft_hours_history
+           WHERE aircraft_id = $1 AND field = 'hobbs'
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+          [booking.aircraft_id]
+        );
+        const latestTach = await client.query(
+          `SELECT new_value FROM aircraft_hours_history
+           WHERE aircraft_id = $1 AND field = 'tach'
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+          [booking.aircraft_id]
+        );
+        const sets = [];
+        const vals = [];
+        let idx = 1;
+        const hobbsFallback = booking.hobbs_start != null ? booking.hobbs_start : null;
+        const tachFallback = booking.tach_start != null ? booking.tach_start : null;
+        const hobbsValue = latestHobbs.rows.length ? latestHobbs.rows[0].new_value : hobbsFallback;
+        const tachValue = latestTach.rows.length ? latestTach.rows[0].new_value : tachFallback;
+        if (hobbsValue != null) {
+          sets.push(`current_hobbs = $${idx}`, `total_hobbs_hours = $${idx}`);
+          vals.push(hobbsValue);
+          idx++;
+        }
+        if (tachValue != null) {
+          sets.push(`current_tach = $${idx}`, `total_tach_hours = $${idx}`);
+          vals.push(tachValue);
+          idx++;
+        }
+        if (sets.length) {
+          sets.push('updated_at = NOW()');
+          vals.push(booking.aircraft_id);
+          await client.query(`UPDATE aircraft SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+        }
+      }
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
       await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
       await client.query('UPDATE training_progress SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
