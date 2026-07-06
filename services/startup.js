@@ -11,6 +11,7 @@ const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
 const { getPlatformAdminEmail } = require('../lib/platform-admin');
 const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
+const { resolveProjectPath, isProjectPathError } = require('../lib/project-path');
 
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
@@ -252,19 +253,22 @@ async function rehydrateFileOverrides(pool) {
       return;
     }
 
-    const projectRoot = path.join(__dirname, '..');
+    const projectRoot = path.resolve(__dirname, '..');
     let applied = 0;
     let skipped = 0;
 
     for (const row of result.rows) {
       try {
-        const fullPath = path.join(projectRoot, row.file_path);
-        // Safety: only write within project root
-        if (!fullPath.startsWith(projectRoot)) {
+        let resolvedPath;
+        try {
+          resolvedPath = resolveProjectPath(projectRoot, row.file_path, { allowRoot: false });
+        } catch (pathErr) {
+          if (!isProjectPathError(pathErr)) throw pathErr;
           console.warn(`[file-overrides] Skipping path outside project root: ${row.file_path}`);
           skipped++;
           continue;
         }
+        const fullPath = resolvedPath.fullPath;
         // Ensure parent directory exists
         const dir = path.dirname(fullPath);
         if (!fs.existsSync(dir)) {
