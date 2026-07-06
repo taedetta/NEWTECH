@@ -186,13 +186,30 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can void billing entries' });
     const bookingId = parseInt(req.params.bookingId);
-    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
-    if (bookingResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    const b = bookingResult.rows[0];
-    if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
     await client.query('BEGIN');
-    const hobbsDelta = (b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0;
-    const tachDelta = (b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0;
+    const bookingResult = await client.query(
+      `SELECT b.*, fl.hobbs_delta AS log_hobbs_delta, fl.tach_delta AS log_tach_delta
+       FROM bookings b
+       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+       WHERE b.id = $1
+       FOR UPDATE OF b`,
+      [bookingId]
+    );
+    if (bookingResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    const b = bookingResult.rows[0];
+    if (b.billing_voided) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Already voided' });
+    }
+    const hobbsDelta = b.log_hobbs_delta != null
+      ? parseFloat(b.log_hobbs_delta)
+      : ((b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0);
+    const tachDelta = b.log_tach_delta != null
+      ? parseFloat(b.log_tach_delta)
+      : ((b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0);
     if (hobbsDelta !== 0 || tachDelta !== 0) {
       if (b.student_id) await client.query(
         `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
@@ -211,6 +228,7 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
         [hobbsDelta, tachDelta, b.aircraft_id]
       );
     }
+    await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
     await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);
     await client.query('COMMIT');
     res.json({ ok: true });

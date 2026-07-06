@@ -111,6 +111,25 @@ router.put('/site-content', authenticateToken, requirePermission('can_edit_websi
   }
 });
 
+router.post('/site-content/upload-image', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
+  try {
+    const { base64, mimeType } = req.body || {};
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!base64 || typeof base64 !== 'string') return res.status(400).json({ error: 'base64 image data is required' });
+    if (!allowed.has(mimeType)) return res.status(400).json({ error: 'Only JPEG, PNG, and WebP images are supported' });
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(base64)) return res.status(400).json({ error: 'Invalid base64 image data' });
+    const compact = base64.replace(/\s/g, '');
+    const buffer = Buffer.from(compact, 'base64');
+    const maxBytes = 15 * 1024 * 1024;
+    if (buffer.length === 0) return res.status(400).json({ error: 'Image is empty' });
+    if (buffer.length > maxBytes) return res.status(413).json({ error: 'Image too large (max 15MB)' });
+    res.json({ url: `data:${mimeType};base64,${compact}` });
+  } catch (err) {
+    console.error('Site content image upload error:', err);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
 router.get('/project-files', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {
     const projectRoot = path.join(__dirname, '..');
