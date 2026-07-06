@@ -9672,7 +9672,7 @@ function openManualEntryModal() {
 
   // Reset form
   document.getElementById('me-error').classList.add('hidden');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = SchoolTime.calendarDate(new Date());
   document.getElementById('me-date').value = today;
   document.getElementById('me-session-type').value = 'flight';
   document.getElementById('me-notes').value = '';
@@ -11053,18 +11053,36 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
 function applyBookingSlot(startIso, endIso) {
   const start = new Date(startIso);
   const end = new Date(endIso);
-  const dateStr = start.toISOString().slice(0, 10);
-  const startHM = `${String(start.getUTCHours()).padStart(2,'0')}:${String(start.getUTCMinutes()).padStart(2,'0')}`;
-  const endHM = `${String(end.getUTCHours()).padStart(2,'0')}:${String(end.getUTCMinutes()).padStart(2,'0')}`;
+  const dateStr = SchoolTime.calendarDate(start);
+  const endDateStr = SchoolTime.calendarDate(end);
+  const startHM = SchoolTime.timeHmFromIso(startIso);
+  const endHM = SchoolTime.timeHmFromIso(endIso);
 
   const dateEl = document.getElementById('booking-date');
-  if (dateEl) dateEl.value = dateStr;
+  if (dateEl) {
+    dateEl.value = dateStr;
+    selectedBookingDate = dateStr;
+  }
+  const multidayEl = document.getElementById('booking-multiday');
+  const endDateEl = document.getElementById('booking-end-date');
+  if (multidayEl && endDateEl) {
+    const isMultiday = endDateStr && endDateStr > dateStr;
+    multidayEl.checked = isMultiday;
+    endDateEl.classList.toggle('hidden', !isMultiday);
+    if (isMultiday) endDateEl.value = endDateStr;
+  }
   // Rebuild time pickers for new date, then set values
   rebuildBookingTimePickers();
   const startSel = document.getElementById('booking-start');
   const endSel = document.getElementById('booking-end');
-  if (startSel) startSel.value = startHM;
-  if (endSel) endSel.value = endHM;
+  if (startSel) {
+    ensureTimeSelectOption(startSel, startHM, 'suggested');
+    startSel.value = startHM;
+  }
+  if (endSel) {
+    ensureTimeSelectOption(endSel, endHM, 'suggested');
+    endSel.value = endHM;
+  }
   // Refresh availability display
   refreshBookingAvailability();
   // Clear conflict message
@@ -12937,8 +12955,8 @@ function buildAvailabilityConflictHtml(err) {
     html += err.next_slots.map(s => {
       const sd = new Date(s.start_time);
       const ed = new Date(s.end_time);
-      const dl = sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
-      const tl = `${formatTimeStr(sd.getUTCHours(), sd.getUTCMinutes())}\u2013${formatTimeStr(ed.getUTCHours(), ed.getUTCMinutes())}`;
+      const dl = SchoolTime.formatDate(sd, { weekday: 'short', month: 'short', day: 'numeric' });
+      const tl = `${SchoolTime.formatTime(sd)}\u2013${SchoolTime.formatTime(ed)}`;
       return `<span style="display:inline-block;margin:0.2rem 0.3rem 0 0;font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:5px;background:rgba(56,189,248,0.1);color:var(--sky);cursor:pointer;border:1px solid rgba(56,189,248,0.15);" onclick="applyBookingSlot('${s.start_time}','${s.end_time}')">${dl} ${tl}</span>`;
     }).join('');
   }
@@ -16156,7 +16174,7 @@ function setHistoryPeriod(period) {
     dateWrap.style.display = (period === 'day') ? '' : 'none';
     if (period === 'day') {
       const picker = document.getElementById('history-date-picker');
-      if (!picker.value) picker.value = new Date().toISOString().slice(0, 10);
+      if (!picker.value) picker.value = SchoolTime.calendarDate(new Date());
     }
   }
   loadHistoryLegacyPage();
@@ -16280,7 +16298,7 @@ async function loadHistoryLegacyPage() {
         ? `<td style="white-space:nowrap">${isGround
           ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})">✏</button>`
           : `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditBookingModal(${r.id})" title="Edit full booking">Booking</button><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})" title="Edit hours/charges">Hours</button>`
-        }${canDeleteHistory ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button>` : ''}</td>`
+        }${canDeleteHistory ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}', '${isGround ? 'ground' : 'flight'}')">🗑</button>` : ''}</td>`
         : '';
       return `<tr>
         <td style="white-space:nowrap">${dateStr}</td>
@@ -16329,7 +16347,7 @@ function renderHistoryCard(r, canEditHistory, canDeleteHistory, fmtVal, fmtDolla
         ? '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit</button>'
         : '<button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(' + r.id + ')">Edit Booking</button>' +
           '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit Hours</button>') +
-      (canDeleteHistory ? '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\')">Delete</button>' : '') +
+      (canDeleteHistory ? '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\', \'' + (isGround ? 'ground' : 'flight') + '\')">Delete</button>' : '') +
       '</div>'
     : '';
   var cancelNote = (r.status === 'cancelled' && r.cancellation_reason)
@@ -16489,10 +16507,11 @@ async function saveEditHistory() {
   }
 }
 
-async function confirmDeleteHistoryEntry(id, dateStr) {
-  if (!confirm('Delete this booking record from ' + dateStr + '? This cannot be undone.')) return;
+async function confirmDeleteHistoryEntry(id, dateStr, sessionType) {
+  const isGround = sessionType === 'ground';
+  if (!confirm('Delete this ' + (isGround ? 'ground session' : 'booking record') + ' from ' + dateStr + '? This cannot be undone.')) return;
   try {
-    await api('/api/booking-history/flights/' + id, { method: 'DELETE' });
+    await api('/api/booking-history/' + (isGround ? 'ground-sessions/' : 'flights/') + id, { method: 'DELETE' });
     showToast('Booking record deleted', 'success');
     await loadHistoryLegacyPage();
   } catch(e) {
@@ -19133,7 +19152,7 @@ async function loadInstructorHoursPage() {
   if (gsInstructorGroup) gsInstructorGroup.style.display = isAdminOrOwner ? '' : 'none';
 
   // Set default date in form
-  var today = new Date().toISOString().slice(0,10);
+  var today = SchoolTime.calendarDate(new Date());
   document.getElementById('ih-date').value = today;
   document.getElementById('gs-date').value = today;
 
@@ -19806,7 +19825,7 @@ async function submitGSEntry() {
 
   var body = {
     student_id: parseInt(studentId),
-    session_date: sessionDate || new Date().toISOString().slice(0, 10),
+    session_date: sessionDate || SchoolTime.calendarDate(new Date()),
     ground_hours: parseFloat(groundHours),
     notes: notes,
   };

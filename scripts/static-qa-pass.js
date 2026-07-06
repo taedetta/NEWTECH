@@ -85,6 +85,43 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical beta guardrails
+console.log('\n=== Critical beta guardrails ===');
+const authMiddlewareSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+if (!authMiddlewareSrc.includes('deleted_at IS NULL') || !authMiddlewareSrc.includes('approval_status')) {
+  fail('authenticateToken does not revalidate active approved users from DB');
+} else ok('Auth middleware revalidates active approved users');
+if (authMiddlewareSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('Maintenance role still bypasses all permission checks');
+} else ok('Maintenance permissions are scoped');
+
+const bookingCompletionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!bookingCompletionSrc.includes('FOR UPDATE') || !bookingCompletionSrc.includes("status = 'confirmed'")) {
+  fail('Booking completion/end-early routes missing row-lock/status guards');
+} else ok('Booking completion routes include row-lock/status guards');
+if (!bookingCompletionSrc.includes('COMPLETION_DURATION_GRACE_HOURS')) {
+  fail('Booking completion missing scheduled-duration meter cap');
+} else ok('Booking completion caps meter deltas against scheduled duration');
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+if (!trainingSrc.includes("router.post(['/admin/programs', '/programs'], authenticateToken")) {
+  fail('Training admin program route missing authenticated /api/admin/training alias');
+} else ok('Training admin routes include authenticated aliases');
+if (!trainingSrc.includes('canViewTrainingStudent') || !trainingSrc.includes('isTrainingStaff')) {
+  fail('Training routes missing staff/student access helpers');
+} else ok('Training routes include access helpers');
+
+const cmsSrc = fs.readFileSync(path.join(root, 'routes/cms.js'), 'utf8');
+if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
+  fail('CMS image upload endpoint missing');
+} else ok('CMS image upload endpoint present');
+
+if (!appHtml.includes('const dateStr = SchoolTime.calendarDate(start)') ||
+    !appHtml.includes("sessionType === 'ground'") ||
+    !appHtml.includes('SchoolTime.calendarDate(new Date())')) {
+  fail('Frontend critical date/history fixes missing');
+} else ok('Frontend booking/history date guardrails present');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
