@@ -7,6 +7,7 @@ const archiver = require('archiver');
 const pool = require('../db/index');
 const { saveFileOverride, removeOverride, getUnsyncedOverrides, getAllOverrides, markSynced, clearAllOverrides, countUnsynced } = require('../db/file-overrides');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
+const { resolveProjectPath, isProjectPathError } = require('../lib/project-path');
 
 const router = express.Router();
 
@@ -113,10 +114,16 @@ router.put('/site-content', authenticateToken, requirePermission('can_edit_websi
 
 router.get('/project-files', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {
-    const projectRoot = path.join(__dirname, '..');
-    const searchPath = req.query.path ? path.join(projectRoot, req.query.path) : projectRoot;
-    const relPath = req.query.path || '.';
-    if (!searchPath.startsWith(projectRoot)) return res.status(403).json({ error: 'Access denied: path outside project root' });
+    const projectRoot = path.resolve(__dirname, '..');
+    let resolvedPath;
+    try {
+      resolvedPath = resolveProjectPath(projectRoot, req.query.path || '.', { allowRoot: true });
+    } catch (pathErr) {
+      if (isProjectPathError(pathErr)) return res.status(pathErr.statusCode).json({ error: pathErr.message });
+      throw pathErr;
+    }
+    const searchPath = resolvedPath.fullPath;
+    const relPath = resolvedPath.relPath;
     const blockedPatterns = ['node_modules', '.git', '.env', 'session-env', 'shell-snapshots', 'test-fixtures', 'migrations/node_modules'];
     if (blockedPatterns.some(p => searchPath.includes(p))) return res.status(403).json({ error: 'Access denied: protected directory' });
     const stat = fs.statSync(searchPath);
@@ -152,9 +159,16 @@ router.put('/project-files', authenticateToken, requirePermission('can_edit_webs
   try {
     const { path: filePath, content } = req.body;
     if (!filePath || content === undefined) return res.status(400).json({ error: 'Missing path or content' });
-    const projectRoot = path.join(__dirname, '..');
-    const fullPath = path.join(projectRoot, filePath);
-    if (!fullPath.startsWith(projectRoot)) return res.status(403).json({ error: 'Access denied: path outside project root' });
+    const projectRoot = path.resolve(__dirname, '..');
+    let resolvedPath;
+    try {
+      resolvedPath = resolveProjectPath(projectRoot, filePath, { allowRoot: false });
+    } catch (pathErr) {
+      if (isProjectPathError(pathErr)) return res.status(pathErr.statusCode).json({ error: pathErr.message });
+      throw pathErr;
+    }
+    const fullPath = resolvedPath.fullPath;
+    const safeFilePath = resolvedPath.relPath;
     const blockedPatterns = ['node_modules', '.git', '.env', 'package-lock.json', 'session-env', 'shell-snapshots', 'migrate.js', 'render.yaml'];
     if (blockedPatterns.some(p => fullPath.includes(p))) return res.status(403).json({ error: 'Access denied: protected file' });
 
@@ -165,14 +179,14 @@ router.put('/project-files', authenticateToken, requirePermission('can_edit_webs
     // Railway's filesystem is ephemeral — without this, editor changes
     // are lost every time the app rebuilds from GitHub.
     try {
-      await saveFileOverride(filePath, content, req.user?.id);
+      await saveFileOverride(safeFilePath, content, req.user?.id);
     } catch (dbErr) {
       // Non-fatal: filesystem write succeeded, the live app is updated.
       // DB persistence failing means the change won't survive next deploy.
       console.error('[file-overrides] DB persist failed (file was still saved to disk):', dbErr.message);
     }
 
-    res.json({ success: true, path: filePath, persisted: true });
+    res.json({ success: true, path: safeFilePath, persisted: true });
   } catch (err) {
     console.error('project-files PUT error:', err.message);
     res.status(500).json({ error: 'Failed to save file' });
@@ -181,7 +195,7 @@ router.put('/project-files', authenticateToken, requirePermission('can_edit_webs
 
 router.get('/download-source', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {
-    const projectRoot = path.join(__dirname, '..');
+    const projectRoot = path.resolve(__dirname, '..');
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const zipName = `nta-source-${dateStr}.zip`;
     res.set('Content-Type', 'application/zip');
@@ -192,7 +206,18 @@ router.get('/download-source', authenticateToken, requirePermission('can_edit_we
     // Filesystem may be stale if rehydration hasn't run yet after a deploy.
     const overrides = await getAllOverrides();
     const overrideMap = {};
-    for (const o of overrides) overrideMap[o.file_path] = o.content;
+    for (const o of overrides) {
+      try {
+        const safeOverridePath = resolveProjectPath(projectRoot, o.file_path, { allowRoot: false });
+        overrideMap[safeOverridePath.relPath] = o.content;
+      } catch (pathErr) {
+        if (isProjectPathError(pathErr)) {
+          console.warn(`[file-overrides] Skipping unsafe override path in download: ${o.file_path}`);
+          continue;
+        }
+        throw pathErr;
+      }
+    }
 
     const archive = archiver('zip', { zlib: { level: 6 } });
     archive.on('error', (err) => { console.error('Archive error:', err); if (!res.headersSent) res.status(500).json({ error: 'Archive failed' }); });
