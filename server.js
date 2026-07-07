@@ -141,7 +141,10 @@ app.use('/api', cmsRoutes);                    // /api/site-content, /api/projec
 app.use(seoRoutes);                            // /, /mosaic, /become-a-pilot, /sitemap.xml, /robots.txt, /app/*
 app.use('/api/flights', flightawareRoutes);    // /api/flights/tracking
 app.use('/api/training', trainingRoutes);
-app.use('/api/admin/training', trainingRoutes); // /api/admin/training/programs|stages|maneuvers
+app.use('/api/admin/training', (req, res, next) => {
+  req.url = `/admin${req.url}`;
+  next();
+}, trainingRoutes); // /api/admin/training/programs|stages|maneuvers
 app.use('/api/endorsements', endorsementsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/admin', adminRoutes);            // /api/admin/reset-all-data, /api/admin/download-source

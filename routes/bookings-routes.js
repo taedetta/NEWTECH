@@ -840,7 +840,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -853,7 +853,17 @@ router.put('/:id', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
       }
     }
-    if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status !== undefined) {
+      if (!isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+      const allowedStatuses = ['confirmed', 'cancelled', 'completed'];
+      if (!allowedStatuses.includes(status)) return res.status(400).json({ error: 'Invalid booking status' });
+      if (status !== b.status && (status === 'completed' || b.status === 'completed')) {
+        return res.status(400).json({ error: 'Use the flight completion flow to complete flights; completed bookings cannot be reverted here' });
+      }
+      if (status !== b.status && b.status === 'cancelled') {
+        return res.status(400).json({ error: 'Cancelled bookings cannot be reactivated from this editor' });
+      }
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -885,7 +895,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
+    const skipConflictCheck = isHistoricalBooking;
     const needsConflictCheck = scheduleChanged && !skipConflictCheck;
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');

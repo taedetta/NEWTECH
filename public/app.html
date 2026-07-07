@@ -6028,11 +6028,11 @@ async function enterAppBody() {
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
     });
 
-  // Show approvals nav for owner/admin/instructor
+  // Show approvals nav for owner/admin only
   const navApprovals = document.getElementById('nav-approvals');
   if (navApprovals) {
-    navApprovals.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
-    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+    navApprovals.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
+    if (['owner', 'admin'].includes(currentUser.role)) {
       loadApprovalsBadge();
     }
   }
@@ -6206,13 +6206,9 @@ function startAppPolling() {
   if (appPollTimer) clearInterval(appPollTimer);
   appPollTimer = setInterval(function() {
     if (!token || !currentUser) return;
-    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
-      loadApprovalsBadge();
-      if (['owner', 'admin'].includes(currentUser.role)) {
-        loadLeadsBadge();
-        loadDiscrepanciesBadge();
-      }
-    }
+    if (['owner', 'admin'].includes(currentUser.role)) loadApprovalsBadge();
+    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) loadLeadsBadge();
+    if (['owner', 'admin'].includes(currentUser.role)) loadDiscrepanciesBadge();
     if (currentPage === 'schedule') loadCalendar();
     else if (currentPage === 'dashboard') loadDashboard();
     else if (currentPage === 'approvals') loadApprovals();
@@ -14640,6 +14636,80 @@ function showProgressList() {
   currentProgressStudentId = null;
   document.getElementById('progress-list-view').classList.remove('hidden');
   document.getElementById('progress-detail-view').classList.add('hidden');
+}
+
+function closeStudentHoursModal() {
+  const existing = document.getElementById('student-hours-modal');
+  if (existing) existing.remove();
+}
+
+function validStudentHoursValue(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 && num <= 99999;
+}
+
+function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  if (!['owner', 'admin'].includes(currentUser?.role)) return;
+  closeStudentHoursModal();
+  const modal = document.createElement('div');
+  modal.id = 'student-hours-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <h3>Edit Student Hours</h3>
+        <button class="modal-close" onclick="closeStudentHoursModal()">&times;</button>
+      </div>
+      <p style="color:var(--gray-400);font-size:0.85rem;margin:0.25rem 0 1rem">${escHtml(studentName)}</p>
+      <form id="student-hours-form">
+        <label>Total Hobbs Hours</label>
+        <input type="number" id="student-hours-hobbs" min="0" max="99999" step="0.1" value="${Number(currentHobbs || 0).toFixed(1)}" required>
+        <label style="margin-top:0.75rem">Total Tach Hours</label>
+        <input type="number" id="student-hours-tach" min="0" max="99999" step="0.1" value="${Number(currentTach || 0).toFixed(1)}" required>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeStudentHoursModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Hours</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('student-hours-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const hobbs = document.getElementById('student-hours-hobbs').value;
+    const tach = document.getElementById('student-hours-tach').value;
+    if (!validStudentHoursValue(hobbs) || !validStudentHoursValue(tach)) {
+      showToast('Hours must be numbers between 0 and 99999', 'error');
+      return;
+    }
+    try {
+      await api(`/api/users/${studentId}/hours`, {
+        method: 'PUT',
+        body: JSON.stringify({ total_hobbs_hours: Number(hobbs), total_tach_hours: Number(tach) }),
+      });
+      closeStudentHoursModal();
+      showToast('Student hours updated', 'success');
+      await openProgressDetail(studentId);
+    } catch (err) {
+      showToast(err.error || 'Failed to update student hours', 'error');
+    }
+  });
+}
+
+async function confirmResetStudentHours(studentId, studentName, meterType) {
+  if (!['owner', 'admin'].includes(currentUser?.role)) return;
+  const label = meterType === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm(`Reset ${label} hours for ${studentName} to 0?`)) return;
+  const body = meterType === 'tach'
+    ? { total_tach_hours: 0 }
+    : { total_hobbs_hours: 0 };
+  try {
+    await api(`/api/users/${studentId}/hours`, { method: 'PUT', body: JSON.stringify(body) });
+    showToast(`${label} hours reset`, 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || `Failed to reset ${label.toLowerCase()} hours`, 'error');
+  }
 }
 
 async function toggleEnrollForm() {

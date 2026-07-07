@@ -17,11 +17,17 @@ const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../
 
 const router = express.Router();
 
+function canAccessBooking(user, booking) {
+  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  return user.id === booking.instructor_id || user.id === booking.student_id;
+}
+
 // ── Hobbs submission rate limiter: >5 failed attempts in 10 min → block 15 min ──
 const hobbsFailMap = new Map();
 const HOBBS_FAIL_WINDOW = 10 * 60 * 1000; // 10 minutes
 const HOBBS_FAIL_MAX = 5;
 const HOBBS_BLOCK_DURATION = 15 * 60 * 1000; // 15 minutes
+const MAX_COMPLETION_METER_DELTA = 24; // one completion should not jump a meter by multiple days of flying
 
 function checkHobbsRateLimit(userId) {
   const key = String(userId);
@@ -84,17 +90,33 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const { actual_end_time } = req.body;
     if (!actual_end_time) return res.status(400).json({ error: 'actual_end_time is required' });
     const endTime = new Date(actual_end_time);
-    const result = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (isNaN(endTime.getTime())) return res.status(400).json({ error: 'Invalid actual_end_time' });
+    await client.query('BEGIN');
+    const result = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
     const b = result.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isAdmin && req.user.id !== b.instructor_id && req.user.id !== b.student_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    if (b.status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    }
+    const startTime = new Date(b.start_time);
     const originalEnd = new Date(b.end_time);
-    if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
-    await client.query('BEGIN');
+    if (endTime <= startTime) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'actual_end_time must be after the booking start time' });
+    }
+    if (endTime >= originalEnd) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
+    }
     const newEndIso = endTime.toISOString();
     const updated = await client.query(
       `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
@@ -166,27 +188,32 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     if (dbUser.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
     const verifiedRole = dbUser.rows[0].role;
 
-    const bResult = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (bResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    await client.query('BEGIN');
+    const reject = async (statusCode, payload) => {
+      await client.query('ROLLBACK').catch(() => {});
+      return res.status(statusCode).json(payload);
+    };
+
+    const bResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (bResult.rows.length === 0) return reject(404, { error: 'Booking not found' });
     const b = bResult.rows[0];
-    if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    if (b.status !== 'confirmed') return reject(400, { error: 'Only confirmed bookings can be completed' });
     const isAdmin = ['owner', 'admin'].includes(verifiedRole);
     if (!isAdmin) {
       if (b.instructor_id) {
         if (req.user.id !== b.instructor_id) {
-          return res.status(403).json({
+          return reject(403, {
             error: 'Only the assigned instructor (or admin) can complete this flight and enter Hobbs/Tach hours.',
           });
         }
       } else if (req.user.id !== b.student_id && req.user.id !== b.instructor_id) {
-        return res.status(403).json({ error: 'Access denied' });
+        return reject(403, { error: 'Access denied' });
       }
     }
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
       const finishedEnd = completionEndTime(b);
-      await client.query('BEGIN');
       await client.query(
         `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
         [finishedEnd, req.params.id]
@@ -203,34 +230,41 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // ── Hobbs rate limit check — block after repeated bad submissions ──
     const rlCheck = checkHobbsRateLimit(req.user.id);
     if (rlCheck.blocked) {
-      return res.status(429).json({ error: `Too many failed Hobbs submissions. Try again in ${rlCheck.retryAfter} seconds.` });
+      return reject(429, { error: `Too many failed Hobbs submissions. Try again in ${rlCheck.retryAfter} seconds.` });
     }
 
     // Normal path — validate hobbs before starting transaction
-    if (hobbs_start == null || hobbs_end == null) return res.status(400).json({ error: 'hobbs_start and hobbs_end are required' });
+    if (hobbs_start == null || hobbs_end == null) return reject(400, { error: 'hobbs_start and hobbs_end are required' });
 
     // ── Input sanitization: reject NaN, negative, impossibly large values ──
     const hStartErr = validateHobbsValue(hobbs_start, 'hobbs_start');
-    if (hStartErr) { recordHobbsFail(req.user.id); return res.status(400).json({ error: hStartErr }); }
+    if (hStartErr) { recordHobbsFail(req.user.id); return reject(400, { error: hStartErr }); }
     const hEndErr = validateHobbsValue(hobbs_end, 'hobbs_end');
-    if (hEndErr) { recordHobbsFail(req.user.id); return res.status(400).json({ error: hEndErr }); }
+    if (hEndErr) { recordHobbsFail(req.user.id); return reject(400, { error: hEndErr }); }
 
     const hStart = parseFloat(hobbs_start);
     const hEnd = parseFloat(hobbs_end);
-    if (hEnd <= hStart) { recordHobbsFail(req.user.id); return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' }); }
+    if (hEnd <= hStart) { recordHobbsFail(req.user.id); return reject(400, { error: 'hobbs_end must be greater than hobbs_start' }); }
+    if (hEnd - hStart > MAX_COMPLETION_METER_DELTA) {
+      recordHobbsFail(req.user.id);
+      return reject(400, { error: `Hobbs time cannot exceed ${MAX_COMPLETION_METER_DELTA} hours for one completion` });
+    }
 
     // Validate tach values if provided — both or neither
     if ((tach_start != null) !== (tach_end != null)) {
-      return res.status(400).json({ error: 'Both tach_start and tach_end are required when logging tach time' });
+      return reject(400, { error: 'Both tach_start and tach_end are required when logging tach time' });
     }
     if (tach_start != null) {
       const tStartErr = validateHobbsValue(tach_start, 'tach_start');
-      if (tStartErr) return res.status(400).json({ error: tStartErr });
+      if (tStartErr) return reject(400, { error: tStartErr });
       const tEndErr = validateHobbsValue(tach_end, 'tach_end');
-      if (tEndErr) return res.status(400).json({ error: tEndErr });
+      if (tEndErr) return reject(400, { error: tEndErr });
     }
     if (tach_start != null && tach_end != null && parseFloat(tach_end) <= parseFloat(tach_start)) {
-      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
+      return reject(400, { error: 'tach_end must be greater than tach_start' });
+    }
+    if (tach_start != null && parseFloat(tach_end) - parseFloat(tach_start) > MAX_COMPLETION_METER_DELTA) {
+      return reject(400, { error: `Tach time cannot exceed ${MAX_COMPLETION_METER_DELTA} hours for one completion` });
     }
 
     const tStart = tach_start != null ? parseFloat(tach_start) : null;
@@ -239,7 +273,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // ── Server-side meter validation: start cannot be before aircraft current reading ──
     if (b.aircraft_id) {
       const acResult = await client.query(
-        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE',
         [b.aircraft_id]
       );
       if (acResult.rows.length > 0) {
@@ -248,13 +282,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         if (currentHobbs != null && currentHobbs > 0) {
           if (hStart < currentHobbs - 0.1) {
             recordHobbsFail(req.user.id);
-            return res.status(400).json({
+            return reject(400, {
               error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
             });
           }
           if (hStart > currentHobbs + 5) {
             recordHobbsFail(req.user.id);
-            return res.status(400).json({
+            return reject(400, {
               error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
             });
           }
@@ -262,12 +296,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         const currentTach = getMeterTach(acRow);
         if (tStart != null && currentTach != null && currentTach > 0) {
           if (tStart < currentTach - 0.1) {
-            return res.status(400).json({
+            return reject(400, {
               error: `Tach start (${tStart.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
             });
           }
           if (tStart > currentTach + 5) {
-            return res.status(400).json({
+            return reject(400, {
               error: `Tach start (${tStart.toFixed(1)}) is unusually high vs aircraft reading (${currentTach.toFixed(1)}). Verify the meter.`,
             });
           }
@@ -280,7 +314,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
       const dualErr = validateHobbsValue(dual_instruction_hours, 'dual_instruction_hours');
-      if (dualErr) return res.status(400).json({ error: dualErr });
+      if (dualErr) return reject(400, { error: dualErr });
     }
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
     const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : 0;
@@ -290,7 +324,6 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const xcFlag = !!is_xc;
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
-    await client.query('BEGIN');
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
@@ -508,6 +541,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (!canAccessBooking(req.user, result.rows[0])) return res.status(403).json({ error: 'Access denied' });
     res.json(result.rows[0]);
   } catch (err) {
     const ts = new Date().toISOString();
