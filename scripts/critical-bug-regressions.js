@@ -1,6 +1,18 @@
 'use strict';
 
 const assert = require('assert');
+const dbIndexPath = require.resolve('../db/index');
+
+require.cache[dbIndexPath] = {
+  id: dbIndexPath,
+  filename: dbIndexPath,
+  loaded: true,
+  exports: {
+    query: async () => {
+      throw new Error('unexpected database query in critical-bug regressions');
+    },
+  },
+};
 
 const { EMAIL_TYPES, isMandatoryEmailType } = require('../lib/email-types');
 const {
