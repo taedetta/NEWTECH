@@ -85,6 +85,47 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Auth/account-state guardrails
+console.log('\n=== Auth guardrails ===');
+const authMiddlewareSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+const authRouteSrc = fs.readFileSync(path.join(root, 'routes/auth.js'), 'utf8');
+const loginRouteSrc = authRouteSrc.slice(
+  authRouteSrc.indexOf("router.post('/login'"),
+  authRouteSrc.indexOf("router.post('/logout'")
+);
+const resetRouteSrc = authRouteSrc.slice(
+  authRouteSrc.indexOf("router.post('/reset-password'"),
+  authRouteSrc.indexOf("router.get('/me'")
+);
+if (!/SELECT[\s\S]*deleted_at[\s\S]*approval_status[\s\S]*FROM users[\s\S]*WHERE id = \$1/.test(authMiddlewareSrc)) {
+  fail('authenticateToken does not revalidate deleted/approval state from DB');
+} else ok('authenticateToken revalidates account state');
+if (!authMiddlewareSrc.includes("approvalStatus !== 'approved'")) {
+  fail('authenticateToken does not block non-approved accounts');
+} else ok('authenticateToken blocks non-approved accounts');
+if (authMiddlewareSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('requirePermission grants maintenance every permission');
+} else ok('requirePermission scopes maintenance permissions');
+if (/UPDATE users SET deleted_at = NULL/.test(loginRouteSrc) || /Reactivated soft-deleted/.test(loginRouteSrc)) {
+  fail('login route can reactivate soft-deleted accounts');
+} else ok('login route does not reactivate deleted accounts');
+if (!loginRouteSrc.includes("approvalStatus !== 'approved'")) {
+  fail('login route does not block rejected/non-approved accounts');
+} else ok('login route blocks rejected/non-approved accounts');
+if (!resetRouteSrc.includes('u.deleted_at IS NULL') || !resetRouteSrc.includes("COALESCE(u.approval_status, 'approved') = 'approved'")) {
+  fail('reset-password route can reset inactive/non-approved accounts');
+} else ok('reset-password limited to active approved accounts');
+
+// 8. Training admin route guardrails
+console.log('\n=== Training admin routes ===');
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+if (!trainingSrc.includes("const adminGuard = [authenticateToken, requireRole('owner', 'admin')]")) {
+  fail('training adminGuard missing authenticateToken');
+} else ok('training adminGuard includes authenticateToken');
+if (!trainingSrc.includes("router.post(['/admin/programs', '/programs'], ...adminGuard")) {
+  fail('training program admin route missing /api/admin/training alias');
+} else ok('training admin aliases registered');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
