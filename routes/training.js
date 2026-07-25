@@ -6,6 +6,7 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 const trainingDb = require('../db/training');
 
 const router = express.Router();
+const adminGuard = [authenticateToken, requireRole('owner', 'admin')];
 
 router.get('/programs', authenticateToken, async (req, res) => {
   try {
@@ -155,8 +156,8 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin: training programs management
-router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) => {
+// Admin: training programs management. Root aliases support /api/admin/training/*.
+router.post(['/admin/programs', '/programs'], ...adminGuard, async (req, res) => {
   try {
     const { name, code, description } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'name and code are required' });
@@ -172,7 +173,7 @@ router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) =
   }
 });
 
-router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/programs/:id(\\d+)', '/programs/:id(\\d+)'], ...adminGuard, async (req, res) => {
   try {
     const { name, description } = req.body;
     const result = await pool.query(
@@ -187,7 +188,7 @@ router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res
   }
 });
 
-router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(['/admin/programs/:id(\\d+)', '/programs/:id(\\d+)'], ...adminGuard, async (req, res) => {
   const client = await pool.connect();
   try {
     const id = parseInt(req.params.id);
@@ -208,7 +209,7 @@ router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, 
   }
 });
 
-router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => {
+router.post(['/admin/stages', '/stages'], ...adminGuard, async (req, res) => {
   try {
     const { program_id, name, description, order_index } = req.body;
     if (!program_id || !name) return res.status(400).json({ error: 'program_id and name are required' });
@@ -228,7 +229,7 @@ router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => 
   }
 });
 
-router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/stages/:id(\\d+)', '/stages/:id(\\d+)'], ...adminGuard, async (req, res) => {
   try {
     const { name, description, order_index } = req.body;
     const result = await pool.query(
@@ -243,7 +244,7 @@ router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) 
   }
 });
 
-router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(['/admin/stages/:id(\\d+)', '/stages/:id(\\d+)'], ...adminGuard, async (req, res) => {
   try {
     const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1`, [req.params.id]);
     if (parseInt(inUse.rows[0].cnt) > 0) {
@@ -257,7 +258,7 @@ router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, re
   }
 });
 
-router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) => {
+router.post(['/admin/maneuvers', '/maneuvers'], ...adminGuard, async (req, res) => {
   try {
     const { stage_id, name, description, proficiency_standard, order_index } = req.body;
     if (!stage_id || !name) return res.status(400).json({ error: 'stage_id and name are required' });
@@ -277,7 +278,7 @@ router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) 
   }
 });
 
-router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/maneuvers/:id(\\d+)', '/maneuvers/:id(\\d+)'], ...adminGuard, async (req, res) => {
   try {
     const { name, description, proficiency_standard, order_index } = req.body;
     const result = await pool.query(
@@ -292,7 +293,7 @@ router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, re
   }
 });
 
-router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete(['/admin/maneuvers/:id(\\d+)', '/maneuvers/:id(\\d+)'], ...adminGuard, async (req, res) => {
   try {
     await pool.query('DELETE FROM stage_maneuvers WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -302,7 +303,7 @@ router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req,
   }
 });
 
-router.put('/admin/stages/reorder', requireRole('owner', 'admin'), async (req, res) => {
+router.put(['/admin/stages/reorder', '/stages/reorder'], ...adminGuard, async (req, res) => {
   try {
     const { stages } = req.body;
     if (!Array.isArray(stages)) return res.status(400).json({ error: 'stages array required' });
