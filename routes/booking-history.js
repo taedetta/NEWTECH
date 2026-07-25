@@ -21,6 +21,10 @@ function canEditGroundSessionHistory(role, userId, session) {
   return role === 'instructor' && session.instructor_id === userId;
 }
 
+function canEditBillingAmounts(role) {
+  return ['owner', 'admin'].includes(role);
+}
+
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -221,8 +225,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     const dateVal = flight_date
       || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
       || new Date().toISOString().slice(0, 10);
+    const mayEditBilling = canEditBillingAmounts(role);
+    const requestedLessonType = mayEditBilling ? lesson_type : undefined;
     const effectiveLessonType = inferLessonType(
-      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+      requestedLessonType !== undefined && requestedLessonType !== '' && requestedLessonType !== null ? requestedLessonType : b.lesson_type,
       b
     );
 
@@ -240,8 +246,8 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
+        aircraft_charge_amount: mayEditBilling ? aircraft_charge_amount : undefined,
+        instruction_charge_amount: mayEditBilling ? instruction_charge_amount : undefined,
         submitted_by: userId,
       });
 
@@ -285,7 +291,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
+    const instrCharge = canEditBillingAmounts(role) && instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
       : (gs.instructor_rate != null
         ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100

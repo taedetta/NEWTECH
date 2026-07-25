@@ -195,6 +195,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const { role, id: userId } = req.user;
+    const isAdmin = ['owner', 'admin'].includes(role);
     const entryId = parseInt(req.params.id);
     const existing = await client.query('SELECT * FROM instructor_hours WHERE id = $1', [entryId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
@@ -222,20 +223,27 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
 
     await client.query('BEGIN');
+    const nextAircraftRate = isAdmin
+      ? (aircraft_rate !== undefined ? parseFloat(aircraft_rate) : row.aircraft_rate)
+      : row.aircraft_rate;
+    const nextInstructorRate = isAdmin
+      ? (instructor_rate !== undefined ? parseFloat(instructor_rate) : row.instructor_rate)
+      : row.instructor_rate;
+
     const result = await client.query(`
       UPDATE instructor_hours SET entry_date = COALESCE($1, entry_date), aircraft_hours = $2, instruction_hours = $3,
         aircraft_rate = $4, instructor_rate = $5, notes = $6, student_name = $7,
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       nextAircraftRate,
+       nextInstructorRate,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
 
     if (result.rows[0].booking_id) {
-      await syncFlightRecordFromInstructorHours(client, result.rows[0]);
+      await syncFlightRecordFromInstructorHours(client, result.rows[0], { allowRateOverrides: isAdmin });
     }
 
     await client.query('COMMIT');
