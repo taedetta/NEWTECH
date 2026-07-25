@@ -854,6 +854,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (!isAdmin && isHistoricalBooking && lesson_type !== undefined) {
+      const previousLessonType = b.lesson_type == null ? '' : String(b.lesson_type);
+      const requestedLessonType = lesson_type == null ? '' : String(lesson_type);
+      if (requestedLessonType !== previousLessonType) {
+        return res.status(403).json({ error: 'Only admins can change lesson type on completed bookings' });
+      }
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();

@@ -300,6 +300,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       : null;
     const { aircraftChargeAmount: aircraftChargeAmt, instructionChargeAmount: instrChargeAmt } = computeFlightCharges({
       lessonType: b.lesson_type,
+      bookingType: b.booking_type,
       hobbsDelta: hobbsFlown,
       dualHrs,
       hourlyRate: acRate?.hourly_rate,
