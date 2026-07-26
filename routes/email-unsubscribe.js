@@ -3,7 +3,7 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
+const { EMAIL_TYPES, isRequiredEmailType } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -59,7 +59,7 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
+    if (rawType !== 'all' && (!EMAIL_TYPES[rawType] || isRequiredEmailType(rawType))) {
       return res.status(400).send(renderPage({
         ok: false,
         title: 'Invalid preference type',
@@ -80,7 +80,7 @@ router.get('/unsubscribe', async (req, res) => {
       ok: true,
       title: 'Unsubscribed',
       message: rawType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+        ? 'You will no longer receive optional email notifications from New Tech Aviation. Required account emails, including password resets, will still be delivered.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
