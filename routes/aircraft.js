@@ -157,6 +157,21 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
+  const parseMeterValue = (value, field) => {
+    const str = String(value).trim();
+    if (!/^\d+(\.\d+)?$/.test(str)) {
+      const err = new Error(`${field} must be a non-negative number`);
+      err.status = 400;
+      throw err;
+    }
+    const num = Number(str);
+    if (!Number.isFinite(num) || num > 99999) {
+      const err = new Error(`${field} exceeds maximum allowed value`);
+      err.status = 400;
+      throw err;
+    }
+    return num;
+  };
   const client = await pool.connect();
   try {
     const current = await client.query(
@@ -170,12 +185,12 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
+      const hVal = parseMeterValue(hobbs, 'hobbs');
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
+      const tVal = parseMeterValue(tach, 'tach');
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
@@ -189,20 +204,21 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), parseMeterValue(hobbs, 'hobbs'), note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), parseMeterValue(tach, 'tach'), note || null]
       );
     }
     await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('Hours update error:', err);
     res.status(500).json({ error: 'Failed to update hours' });
   } finally {

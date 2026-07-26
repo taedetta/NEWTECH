@@ -6836,7 +6836,7 @@ async function addStage(programId) {
   const name = inp ? inp.value.trim() : '';
   if (!name) { alert('Stage name is required'); return; }
   try {
-    await api('/api/admin/training/stages', { method: 'POST', body: JSON.stringify({ program_id: programId, name }) });
+    await api('/api/training/admin/stages', { method: 'POST', body: JSON.stringify({ program_id: programId, name }) });
     await loadProgramsAdmin();
     showToast('Stage added');
   } catch (err) {
@@ -6847,7 +6847,7 @@ async function addStage(programId) {
 async function deleteProgram(programId) {
   if (!confirm('Delete this training program? All stages and maneuvers will be permanently removed. This cannot be undone.')) return;
   try {
-    await api(`/api/admin/training/programs/${programId}`, { method: 'DELETE' });
+    await api(`/api/training/admin/programs/${programId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Program deleted', 'success');
   } catch (err) {
@@ -6858,7 +6858,7 @@ async function deleteProgram(programId) {
 async function deleteStage(stageId, programId) {
   if (!confirm('Delete this stage? Maneuvers in it will also be removed. Students currently in this stage must be reassigned first.')) return;
   try {
-    await api(`/api/admin/training/stages/${stageId}`, { method: 'DELETE' });
+    await api(`/api/training/admin/stages/${stageId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Stage deleted');
   } catch (err) {
@@ -6888,7 +6888,7 @@ async function addManeuver(stageId) {
   const name = inp ? inp.value.trim() : '';
   if (!name) { alert('Maneuver name is required'); return; }
   try {
-    await api('/api/admin/training/maneuvers', { method: 'POST', body: JSON.stringify({ stage_id: stageId, name }) });
+    await api('/api/training/admin/maneuvers', { method: 'POST', body: JSON.stringify({ stage_id: stageId, name }) });
     await loadProgramsAdmin();
     showToast('Maneuver added');
     // Re-expand the stage
@@ -6902,7 +6902,7 @@ async function addManeuver(stageId) {
 async function deleteManeuver(maneuverId) {
   if (!confirm('Delete this maneuver? Student progress records for it will also be removed.')) return;
   try {
-    await api(`/api/admin/training/maneuvers/${maneuverId}`, { method: 'DELETE' });
+    await api(`/api/training/admin/maneuvers/${maneuverId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Maneuver deleted');
   } catch (err) {
@@ -6926,7 +6926,7 @@ async function createNewProgram() {
   const description = document.getElementById('new-prog-desc').value.trim();
   if (!name || !code) { alert('Name and code are required'); return; }
   try {
-    await api('/api/admin/training/programs', { method: 'POST', body: JSON.stringify({ name, code, description }) });
+    await api('/api/training/admin/programs', { method: 'POST', body: JSON.stringify({ name, code, description }) });
     hideNewProgramForm();
     await loadProgramsAdmin();
     showToast('Program created');
@@ -14633,6 +14633,52 @@ async function openProgressDetail(studentId) {
     `;
   } catch (err) {
     detailContent.innerHTML = `<div style="color:var(--red);padding:1rem">${err.error || 'Failed to load student detail'}</div>`;
+  }
+}
+
+async function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  if (!['owner', 'admin'].includes(currentUser.role)) return;
+  const hobbsRaw = prompt(`Set total Hobbs hours for ${studentName}:`, Number(currentHobbs || 0).toFixed(1));
+  if (hobbsRaw === null) return;
+  const tachRaw = prompt(`Set total Tach hours for ${studentName}:`, Number(currentTach || 0).toFixed(1));
+  if (tachRaw === null) return;
+  const hobbs = Number(hobbsRaw);
+  const tach = Number(tachRaw);
+  if (!Number.isFinite(hobbs) || hobbs < 0 || !Number.isFinite(tach) || tach < 0) {
+    alert('Hours must be non-negative numbers.');
+    return;
+  }
+  try {
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        total_hobbs_hours: Math.round(hobbs * 10) / 10,
+        total_tach_hours: Math.round(tach * 10) / 10,
+      }),
+    });
+    showToast('Student hours updated', 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    alert(err.error || err.message || 'Failed to update student hours');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, field) {
+  if (!['owner', 'admin'].includes(currentUser.role)) return;
+  const label = field === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm(`Reset ${studentName}'s total ${label} hours to 0?`)) return;
+  const body = field === 'tach'
+    ? { total_tach_hours: 0 }
+    : { total_hobbs_hours: 0 };
+  try {
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    showToast(`${label} hours reset`, 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    alert(err.error || err.message || `Failed to reset ${label} hours`);
   }
 }
 

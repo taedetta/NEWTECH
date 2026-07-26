@@ -61,8 +61,10 @@ setInterval(() => {
 
 // Numeric validation helper — rejects NaN, negative, and impossibly large values
 function validateHobbsValue(val, fieldName) {
-  const num = parseFloat(val);
-  if (isNaN(num)) return `${fieldName} must be a valid number`;
+  const str = String(val).trim();
+  if (!/^\d+(\.\d+)?$/.test(str)) return `${fieldName} must be a valid number`;
+  const num = Number(str);
+  if (!Number.isFinite(num)) return `${fieldName} must be a valid number`;
   if (num < 0) return `${fieldName} cannot be negative`;
   if (num > 99999) return `${fieldName} exceeds maximum allowed value`;
   return null;
@@ -93,6 +95,8 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     }
     if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
     const originalEnd = new Date(b.end_time);
+    const originalStart = new Date(b.start_time);
+    if (endTime <= originalStart) return res.status(400).json({ error: 'actual_end_time must be after the scheduled start time' });
     if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
     await client.query('BEGIN');
     const newEndIso = endTime.toISOString();
@@ -149,6 +153,7 @@ router.patch('/:id/hours', authenticateToken, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[bookings-completion] PATCH /:id/hours error:', err.message);
+    if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: err.message || 'Failed to update booking hours' });
   } finally {
     client.release();
@@ -162,7 +167,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
             is_night, is_xc, is_instrument, is_solo } = req.body;
 
     // Re-verify user role from DB — don't trust JWT alone for critical operations
-    const dbUser = await client.query('SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL', [req.user.id]);
+    const dbUser = await client.query(
+      `SELECT id, role FROM users
+       WHERE id = $1 AND deleted_at IS NULL AND approval_status = 'approved'`,
+      [req.user.id]
+    );
     if (dbUser.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
     const verifiedRole = dbUser.rows[0].role;
 
@@ -187,6 +196,15 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     if (no_change) {
       const finishedEnd = completionEndTime(b);
       await client.query('BEGIN');
+      const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (locked.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Booking not found' });
+      }
+      if (locked.rows[0].status !== 'confirmed') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+      }
       await client.query(
         `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
         [finishedEnd, req.params.id]
@@ -276,6 +294,15 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
 
     const hobbsFlown = hEnd - hStart;
+    const bookingDurationHours = Math.max(0, (new Date(b.end_time) - new Date(b.start_time)) / (1000 * 60 * 60));
+    const maxMeterDelta = Math.min(12, Math.max(2, bookingDurationHours + 1));
+    if (hobbsFlown > maxMeterDelta) {
+      recordHobbsFail(req.user.id);
+      return res.status(400).json({ error: `Hobbs delta (${hobbsFlown.toFixed(1)}) is too large for this booking` });
+    }
+    if (tStart != null && tEnd != null && (tEnd - tStart) > maxMeterDelta) {
+      return res.status(400).json({ error: `Tach delta (${(tEnd - tStart).toFixed(1)}) is too large for this booking` });
+    }
 
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
@@ -291,6 +318,16 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
     await client.query('BEGIN');
+    const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (locked.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    if (locked.rows[0].status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    }
+    Object.assign(b, locked.rows[0]);
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
@@ -508,7 +545,11 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    res.json(result.rows[0]);
+    const b = result.rows[0];
+    const isStaff = ['owner', 'admin', 'maintenance'].includes(req.user.role);
+    const isParticipant = req.user.id === b.student_id || req.user.id === b.instructor_id;
+    if (!isStaff && !isParticipant) return res.status(403).json({ error: 'Access denied' });
+    res.json(b);
   } catch (err) {
     const ts = new Date().toISOString();
     console.error(`[bookings-completion] [${ts}] GET /:id — user=${req.user?.id} error: ${err.message}`);
