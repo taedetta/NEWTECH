@@ -261,6 +261,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
   } catch (err) {
     console.error('Booking history flight update error:', err);
+    if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: err.message || 'Failed to update booking record' });
   }
 });
