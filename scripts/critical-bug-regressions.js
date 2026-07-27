@@ -238,32 +238,41 @@ function createFlightSyncClient() {
 }
 
 async function testFlightSyncDoesNotClobberBookingTimes() {
-  const { syncFlightRecord } = require('../lib/sync-flight-record');
+  const restorePool = installMock('../db/index', { query: async () => ({ rows: [] }) });
+  clearModule('../lib/booking-rules');
+  clearModule('../lib/sync-flight-record');
+  try {
+    const { syncFlightRecord } = require('../lib/sync-flight-record');
 
-  const noDateClient = createFlightSyncClient();
-  await syncFlightRecord(noDateClient, 11, { hobbs_start: 10, hobbs_end: 11.2 });
-  assert(!/start_time/.test(noDateClient.bookingUpdates[0].sql));
-  assert(!/end_time/.test(noDateClient.bookingUpdates[0].sql));
+    const noDateClient = createFlightSyncClient();
+    await syncFlightRecord(noDateClient, 11, { hobbs_start: 10, hobbs_end: 11.2 });
+    assert(!/start_time/.test(noDateClient.bookingUpdates[0].sql));
+    assert(!/end_time/.test(noDateClient.bookingUpdates[0].sql));
 
-  const sameDateClient = createFlightSyncClient();
-  await syncFlightRecord(sameDateClient, 11, {
-    flight_date: '2026-07-01',
-    hobbs_start: 10,
-    hobbs_end: 11.3,
-  });
-  assert(!/start_time/.test(sameDateClient.bookingUpdates[0].sql));
-  assert(!/end_time/.test(sameDateClient.bookingUpdates[0].sql));
+    const sameDateClient = createFlightSyncClient();
+    await syncFlightRecord(sameDateClient, 11, {
+      flight_date: '2026-07-01',
+      hobbs_start: 10,
+      hobbs_end: 11.3,
+    });
+    assert(!/start_time/.test(sameDateClient.bookingUpdates[0].sql));
+    assert(!/end_time/.test(sameDateClient.bookingUpdates[0].sql));
 
-  const movedDateClient = createFlightSyncClient();
-  await syncFlightRecord(movedDateClient, 11, {
-    flight_date: '2026-07-03',
-    hobbs_start: 10,
-    hobbs_end: 11.4,
-  });
-  assert.match(movedDateClient.bookingUpdates[0].sql, /start_time/);
-  assert.match(movedDateClient.bookingUpdates[0].sql, /end_time/);
-  assert(movedDateClient.bookingUpdates[0].params.includes('2026-07-03T15:30:00.000Z'));
-  assert(movedDateClient.bookingUpdates[0].params.includes('2026-07-03T17:00:00.000Z'));
+    const movedDateClient = createFlightSyncClient();
+    await syncFlightRecord(movedDateClient, 11, {
+      flight_date: '2026-07-03',
+      hobbs_start: 10,
+      hobbs_end: 11.4,
+    });
+    assert.match(movedDateClient.bookingUpdates[0].sql, /start_time/);
+    assert.match(movedDateClient.bookingUpdates[0].sql, /end_time/);
+    assert(movedDateClient.bookingUpdates[0].params.includes('2026-07-03T15:30:00.000Z'));
+    assert(movedDateClient.bookingUpdates[0].params.includes('2026-07-03T17:00:00.000Z'));
+  } finally {
+    clearModule('../lib/sync-flight-record');
+    clearModule('../lib/booking-rules');
+    restorePool();
+  }
 }
 
 (async () => {
