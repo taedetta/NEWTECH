@@ -5,15 +5,37 @@ const pool = require('../db/index');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const result = await pool.query(
+      `SELECT id, email, name, role, deleted_at, approval_status, is_instructor
+       FROM users
+       WHERE id = $1`,
+      [decoded.id]
+    );
+    if (result.rows.length === 0 || result.rows[0].deleted_at) {
+      return res.status(401).json({ error: 'Account is not active' });
+    }
+    if ((result.rows[0].approval_status || 'approved') !== 'approved') {
+      return res.status(403).json({ error: 'Account is not approved' });
+    }
+    req.user = {
+      id: result.rows[0].id,
+      email: result.rows[0].email,
+      name: result.rows[0].name,
+      role: result.rows[0].role,
+      is_instructor: !!result.rows[0].is_instructor,
+    };
     next();
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  } catch (err) {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    console.error('Auth verification error:', err.message);
+    return res.status(500).json({ error: 'Authentication check failed' });
   }
 }
 
@@ -25,7 +47,6 @@ function requireRole(...roles) {
     next();
   };
 }
-
 async function getUserPermissions(userId, role) {
   if (role === 'owner' || role === 'admin') {
     return {
@@ -69,7 +90,11 @@ async function getUserPermissions(userId, role) {
 function requirePermission(permKey) {
   return async (req, res, next) => {
     try {
-      if (['owner', 'admin', 'maintenance'].includes(req.user.role)) return next();
+      if (['owner', 'admin'].includes(req.user.role)) return next();
+      if (req.user.role === 'maintenance') {
+        if (permKey === 'can_manage_aircraft') return next();
+        return res.status(403).json({ error: 'Insufficient permissions' });
+      }
       if (req.user.role !== 'instructor') {
         return res.status(403).json({ error: 'Insufficient permissions' });
       }
