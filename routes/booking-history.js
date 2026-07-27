@@ -218,9 +218,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+    const hasFlightDatePatch = Object.prototype.hasOwnProperty.call(req.body || {}, 'flight_date');
+    const dateVal = hasFlightDatePatch && flight_date
+      ? flight_date
+      : undefined;
     const effectiveLessonType = inferLessonType(
       lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
@@ -233,7 +234,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       inTxn = true;
 
       const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+        ...(dateVal !== undefined ? { flight_date: dateVal } : {}),
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
@@ -316,6 +317,7 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
       // Clean up all related records before deleting the booking.
       // flight_hobbs_readings & flight_discrepancies have ON DELETE CASCADE,
       // but admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
+      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
