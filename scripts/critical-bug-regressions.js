@@ -97,15 +97,22 @@ async function testRequiredEmailsBypassPreferences() {
     restoreDb();
   }
 
-  const { rowToPrefs } = require('../db/notification-prefs');
-  const prefs = rowToPrefs({
-    email_all_off: true,
-    password_reset: false,
-    account_approved: false,
-  });
-  assert.strictEqual(prefs.email_all_off, true);
-  assert.strictEqual(prefs.password_reset, true);
-  assert.strictEqual(prefs.account_approved, true);
+  const restorePool = installMock('../db/index', { query: async () => ({ rows: [] }) });
+  clearModule('../db/notification-prefs');
+  try {
+    const { rowToPrefs } = require('../db/notification-prefs');
+    const prefs = rowToPrefs({
+      email_all_off: true,
+      password_reset: false,
+      account_approved: false,
+    });
+    assert.strictEqual(prefs.email_all_off, true);
+    assert.strictEqual(prefs.password_reset, true);
+    assert.strictEqual(prefs.account_approved, true);
+  } finally {
+    clearModule('../db/notification-prefs');
+    restorePool();
+  }
 }
 
 async function testUnsubscribeRequiresPostAndRejectsRequiredTypes() {
