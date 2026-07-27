@@ -163,14 +163,15 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
+    // Deleted/rejected/pending users must re-register and be approved again.
     if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active.' });
     }
-    // Account pending approval — correct credentials but not yet activated
     if (user.approval_status === 'pending') {
       return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    }
+    if (user.approval_status !== 'approved') {
+      return res.status(403).json({ error: 'account_not_approved', message: 'This account is not approved for access.' });
     }
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role },
@@ -290,6 +291,9 @@ router.get('/me', authenticateToken, async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (result.rows[0].deleted_at) return res.status(401).json({ error: 'Account has been deleted' });
     const u = result.rows[0];
+    if ((u.approval_status || 'approved') !== 'approved') {
+      return res.status(403).json({ error: 'Account is not approved' });
+    }
     const permissions = ['owner', 'admin'].includes(u.role)
       ? { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true, can_edit_website: true }
       : {

@@ -3422,54 +3422,54 @@
           <div class="editor-tab-panel" id="editor-tab-code">
             <div class="editor-code-panel">
               <!-- Mode switcher -->
-              <div class=&quot;code-mode-switcher&quot;>
-                <button class=&quot;code-mode-btn active&quot; id=&quot;code-mode-json-btn&quot; onclick=&quot;switchCodeMode('json')&quot;>&#123; JSON Content</button>
-                <button class=&quot;code-mode-btn&quot; id=&quot;code-mode-files-btn&quot; onclick=&quot;switchCodeMode('files')&quot;>&#128196; Project Files</button>
-                <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;download-source-btn&quot; onclick=&quot;downloadSourceCode()&quot; style=&quot;margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;&quot;>&#11015; Download ZIP</button>
+              <div class="code-mode-switcher">
+                <button class="code-mode-btn active" id="code-mode-json-btn" onclick="switchCodeMode('json')">&#123; JSON Content</button>
+                <button class="code-mode-btn" id="code-mode-files-btn" onclick="switchCodeMode('files')">&#128196; Project Files</button>
+                <button class="btn btn-primary btn-sm" id="editor-download-source-btn" onclick="downloadSourceCode('editor')" style="margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;">&#11015; Download ZIP</button>
               </div>
               <!-- JSON Content Mode -->
-              <div class=&quot;code-json-panel&quot; id=&quot;code-json-panel&quot;>
-                <div class=&quot;editor-code-toolbar&quot;>
-                  <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;formatCodeTab()&quot;>✎ Format JSON</button>
-                  <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;validateCodeTab()&quot;>&#10003; Validate</button>
-                  <button class=&quot;btn btn-primary btn-sm&quot; onclick=&quot;saveFromCodeTab()&quot;>&#10003; Save &amp; Publish</button>
-                  <span class=&quot;ec-hint&quot;>Edit raw site content as JSON. Save writes directly to the database.</span>
+              <div class="code-json-panel" id="code-json-panel">
+                <div class="editor-code-toolbar">
+                  <button class="btn btn-secondary btn-sm" onclick="formatCodeTab()">Format JSON</button>
+                  <button class="btn btn-secondary btn-sm" onclick="validateCodeTab()">&#10003; Validate</button>
+                  <button class="btn btn-primary btn-sm" onclick="saveFromCodeTab()">&#10003; Save &amp; Publish</button>
+                  <span class="ec-hint">Edit raw site content as JSON. Save writes directly to the database.</span>
                 </div>
-                <div class=&quot;editor-code-error&quot; id=&quot;editor-code-error&quot;></div>
-                <textarea class=&quot;editor-code-textarea&quot; id=&quot;editor-code-textarea&quot; spellcheck=&quot;false&quot; placeholder=&quot;Loading JSON...&quot;></textarea>
+                <div class="editor-code-error" id="editor-code-error"></div>
+                <textarea class="editor-code-textarea" id="editor-code-textarea" spellcheck="false" placeholder="Loading JSON..."></textarea>
               </div>
               <!-- Project Files Mode -->
-              <div class=&quot;code-files-panel&quot; id=&quot;code-files-panel&quot;>
-                <div id=&quot;code-file-tree&quot; class=&quot;file-tree&quot;>
-                  <div class=&quot;code-empty-state&quot;>
-                    <div class=&quot;ces-icon&quot;>&#128196;</div>
+              <div class="code-files-panel" id="code-files-panel">
+                <div id="code-file-tree" class="file-tree">
+                  <div class="code-empty-state">
+                    <div class="ces-icon">&#128196;</div>
                     <p>Loading project files…</p>
                   </div>
                 </div>
-                <div id=&quot;code-file-editor&quot; class=&quot;code-editor-panel&quot; style=&quot;display:none&quot;>
-                  <div class=&quot;code-editor-header&quot;>
-                    <div style=&quot;display:flex;align-items:center;gap:0.6rem&quot;>
-                      <span class=&quot;code-editor-filename&quot; id=&quot;code-filename&quot;></span>
-                      <span class=&quot;code-editor-lang&quot; id=&quot;code-lang&quot;></span>
+                <div id="code-file-editor" class="code-editor-panel" style="display:none">
+                  <div class="code-editor-header">
+                    <div style="display:flex;align-items:center;gap:0.6rem">
+                      <span class="code-editor-filename" id="code-filename"></span>
+                      <span class="code-editor-lang" id="code-lang"></span>
                     </div>
-                    <span id=&quot;code-file-size&quot; style=&quot;font-size:0.7rem;color:#858585&quot;></span>
+                    <span id="code-file-size" style="font-size:0.7rem;color:#858585"></span>
                   </div>
-                  <div class=&quot;code-editor-body&quot; id=&quot;code-editor-body&quot;>
-                    <div class=&quot;code-empty-state&quot;>
-                      <div class=&quot;ces-icon&quot;>&#128269;</div>
+                  <div class="code-editor-body" id="code-editor-body">
+                    <div class="code-empty-state">
+                      <div class="ces-icon">&#128269;</div>
                       <p>Select a file to view and edit its code</p>
                     </div>
                   </div>
-                  <div class=&quot;code-editor-status&quot;>
-                    <span class=&quot;code-status-msg&quot; id=&quot;code-status-msg&quot;></span>
-                    <div class=&quot;code-editor-actions&quot;>
-                      <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;copyCodeContent()&quot;>&#10002; Copy</button>
-                      <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;code-save-btn&quot; onclick=&quot;saveProjectFile()&quot;>&#10003; Save File</button>
+                  <div class="code-editor-status">
+                    <span class="code-status-msg" id="code-status-msg"></span>
+                    <div class="code-editor-actions">
+                      <button class="btn btn-secondary btn-sm" onclick="copyCodeContent()">Copy</button>
+                      <button class="btn btn-primary btn-sm" id="code-save-btn" onclick="saveProjectFile()">&#10003; Save File</button>
                     </div>
                   </div>
                 </div>
-                <div id=&quot;code-file-empty&quot; class=&quot;code-empty-state&quot; style=&quot;display:none&quot;>
-                  <div class=&quot;ces-icon&quot;>&#128269;</div>
+                <div id="code-file-empty" class="code-empty-state" style="display:none">
+                  <div class="ces-icon">&#128269;</div>
                   <p>Select a file from the tree to view and edit it</p>
                 </div>
               </div>
@@ -14642,6 +14642,53 @@ function showProgressList() {
   document.getElementById('progress-detail-view').classList.add('hidden');
 }
 
+async function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  if (!['owner', 'admin'].includes(currentUser.role)) {
+    showToast('Only owners and admins can edit student hours', 'error');
+    return;
+  }
+  const hobbsInput = prompt('Set total Hobbs hours for ' + studentName + ':', Number(currentHobbs || 0).toFixed(1));
+  if (hobbsInput === null) return;
+  const tachInput = prompt('Set total Tach hours for ' + studentName + ':', Number(currentTach || 0).toFixed(1));
+  if (tachInput === null) return;
+  const hobbs = Number(hobbsInput);
+  const tach = Number(tachInput);
+  if (!Number.isFinite(hobbs) || !Number.isFinite(tach) || hobbs < 0 || tach < 0 || hobbs > 99999 || tach > 99999) {
+    showToast('Hours must be valid numbers between 0 and 99999', 'error');
+    return;
+  }
+  try {
+    await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify({ total_hobbs_hours: hobbs, total_tach_hours: tach })
+    });
+    showToast('Student hours updated', 'success');
+    await loadProgressStudent(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to update student hours', 'error');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, field) {
+  if (!['owner', 'admin'].includes(currentUser.role)) {
+    showToast('Only owners and admins can reset student hours', 'error');
+    return;
+  }
+  const label = field === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm('Reset ' + label + ' hours for ' + studentName + ' to 0?')) return;
+  const body = field === 'tach' ? { total_tach_hours: 0 } : { total_hobbs_hours: 0 };
+  try {
+    await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+    showToast(label + ' hours reset', 'success');
+    await loadProgressStudent(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to reset student hours', 'error');
+  }
+}
+
 async function toggleEnrollForm() {
   const container = document.getElementById('enroll-form-container');
   const wasHidden = container.classList.contains('hidden');
@@ -15715,14 +15762,14 @@ async function saveEditBillingFlight() {
 }
 
 async function confirmDeleteBillingFlight(id, dateStr) {
-  if (!confirm('Delete flight billing entry from ' + dateStr + '? This removes the charge record. Cannot be undone.')) return;
+  if (!confirm('Void flight billing entry from ' + dateStr + '? The flight history remains intact.')) return;
   try {
-    await api('/api/booking-history/flights/' + id, { method: 'DELETE' });
-    showToast('Flight billing entry deleted', 'success');
+    await api('/api/billing/flights/' + id, { method: 'DELETE' });
+    showToast('Flight billing entry voided', 'success');
     if (currentBillingStudentId != null) await loadBillingForStudent(currentBillingStudentId);
     else await loadBilling();
   } catch(e) {
-    showToast(e.error || 'Failed to delete entry', 'error');
+    showToast(e.error || 'Failed to void entry', 'error');
   }
 }
 
@@ -17018,6 +17065,8 @@ function populateEditorFields() {
   populateFleetFields();
   renderInstructorEditorItems();
   populateInstructorFields();
+  renderFreeformEditorItems();
+  populateFreeformFields();
   buildDynamicMaps();
 }
 
@@ -17059,6 +17108,16 @@ function collectEditorFields() {
     });
     out['instructor_'+ii+'_image'] = editorContent['instructor_'+ii+'_image'] || '';
     out['instructor_'+ii+'_image_scale'] = editorContent['instructor_'+ii+'_image_scale'] || '100';
+  }
+
+  // Collect freeform text boxes
+  var freeformCount = getFreeformCount();
+  out.freeform_count = String(freeformCount);
+  for (var ff = 1; ff <= freeformCount; ff++) {
+    ['section','text','top','left','width'].forEach(function(f) {
+      var el = document.getElementById('ef-freeform_'+ff+'_'+f);
+      out['freeform_'+ff+'_'+f] = el ? (el.value || '') : (editorContent['freeform_'+ff+'_'+f] || '');
+    });
   }
 
   // Banner show/hide
@@ -18073,6 +18132,81 @@ function removeInstructorItem(n) {
   renderInstructorEditorItems();
   populateInstructorFields();
   buildDynamicMaps();
+  markEditorDirty();
+}
+
+function getFreeformCount() {
+  return Math.max(0, Math.min(20, parseInt(editorContent.freeform_count || '0', 10) || 0));
+}
+
+function renderFreeformEditorItems() {
+  var count = getFreeformCount();
+  var container = document.getElementById('freeform-items-list');
+  if (!container) return;
+  if (count === 0) {
+    container.innerHTML = '<div style="font-size:0.72rem;color:var(--gray-500);padding:0.5rem 0">No freeform text boxes added.</div>';
+    return;
+  }
+  var html = '';
+  for (var n = 1; n <= count; n++) {
+    html += '<div class="freeform-item">' +
+      '<div class="freeform-item-hdr"><span class="freeform-item-label">Text Box '+n+'</span>' +
+        '<div class="freeform-item-actions"><button class="btn-freeform-del" onclick="removeFreeformItem('+n+')" title="Remove text box">&times;</button></div></div>' +
+      '<div class="ef-row"><label>Section</label><select id="ef-freeform_'+n+'_section" onchange="markEditorDirty()">' +
+        '<option value="hero">Hero</option><option value="about">About</option><option value="programs">Programs</option><option value="fleet">Fleet</option><option value="instructors">Instructors</option><option value="contact">Contact</option>' +
+      '</select></div>' +
+      '<div class="ef-row"><label>Text</label><textarea id="ef-freeform_'+n+'_text" rows="2" placeholder="Announcement or callout text" oninput="markEditorDirty()"></textarea></div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem">' +
+        '<div class="ef-row"><label>Top %</label><input type="number" min="0" max="100" id="ef-freeform_'+n+'_top" placeholder="20" oninput="markEditorDirty()"></div>' +
+        '<div class="ef-row"><label>Left %</label><input type="number" min="0" max="100" id="ef-freeform_'+n+'_left" placeholder="10" oninput="markEditorDirty()"></div>' +
+        '<div class="ef-row"><label>Width px</label><input type="number" min="120" max="900" id="ef-freeform_'+n+'_width" placeholder="280" oninput="markEditorDirty()"></div>' +
+      '</div>' +
+    '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function populateFreeformFields() {
+  var count = getFreeformCount();
+  for (var n = 1; n <= count; n++) {
+    ['section','text','top','left','width'].forEach(function(f) {
+      var el = document.getElementById('ef-freeform_'+n+'_'+f);
+      if (!el) return;
+      el.value = editorContent['freeform_'+n+'_'+f] || (f === 'section' ? 'hero' : '');
+    });
+  }
+}
+
+function addFreeformItem() {
+  var count = getFreeformCount();
+  if (count >= 20) { alert('Maximum 20 freeform text boxes allowed.'); return; }
+  var next = count + 1;
+  editorContent.freeform_count = String(next);
+  editorContent['freeform_'+next+'_section'] = 'hero';
+  editorContent['freeform_'+next+'_text'] = '';
+  editorContent['freeform_'+next+'_top'] = '20';
+  editorContent['freeform_'+next+'_left'] = '10';
+  editorContent['freeform_'+next+'_width'] = '280';
+  renderFreeformEditorItems();
+  populateFreeformFields();
+  markEditorDirty();
+}
+
+function removeFreeformItem(n) {
+  var count = getFreeformCount();
+  if (count <= 0) return;
+  if (!confirm('Remove Text Box '+n+'?')) return;
+  for (var i = n; i < count; i++) {
+    ['section','text','top','left','width'].forEach(function(f) {
+      editorContent['freeform_'+i+'_'+f] = editorContent['freeform_'+(i+1)+'_'+f] || '';
+    });
+  }
+  ['section','text','top','left','width'].forEach(function(f) {
+    delete editorContent['freeform_'+count+'_'+f];
+  });
+  editorContent.freeform_count = String(count - 1);
+  renderFreeformEditorItems();
+  populateFreeformFields();
   markEditorDirty();
 }
 
@@ -21462,14 +21596,18 @@ function renderInstructorScheduleCard(inst, selectedDayName) {
 // ─── END INSTRUCTOR AVAILABILITY ─────────────────────────
 
 // ─── ADMIN: SOURCE CODE DOWNLOAD ─────────────────────────
-function downloadSourceCode() {
-  const btn = document.getElementById('download-source-btn');
-  const status = document.getElementById('download-source-status');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
-  if (status) { status.style.display = 'inline'; status.textContent = 'Building archive — this may take a few seconds…'; }
+function downloadSourceCode(context) {
+  const isEditorDownload = context === 'editor';
+  const btn = isEditorDownload
+    ? document.getElementById('editor-download-source-btn')
+    : document.getElementById('download-source-btn');
+  const status = isEditorDownload ? null : document.getElementById('download-source-status');
+  const originalHtml = btn ? btn.innerHTML : '';
+  const endpoint = isEditorDownload ? '/api/download-source' : '/api/admin/download-source';
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  if (status) { status.style.display = 'inline'; status.textContent = 'Building archive - this may take a few seconds...'; }
 
-  // Create a hidden anchor and trigger download via the authenticated session
-  fetch('/api/admin/download-source', {
+  fetch(endpoint, {
     method: 'GET',
     headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('fs_token') || '') },
     credentials: 'include'
@@ -21496,7 +21634,7 @@ function downloadSourceCode() {
     showToast('Download failed: ' + err.message, 'error');
   })
   .finally(() => {
-    if (btn) { btn.disabled = false; btn.innerHTML = '&#8659; Download ZIP'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = originalHtml || '&#8659; Download ZIP'; }
   });
 }
 
