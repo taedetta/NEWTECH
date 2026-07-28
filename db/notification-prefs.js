@@ -1,7 +1,7 @@
 'use strict';
 
 const pool = require('./index');
-const { OPTIONAL_EMAIL_TYPES } = require('../lib/email-types');
+const { mutablePreferenceColumns } = require('../lib/notification-pref-policy');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -22,7 +22,7 @@ const DEFAULT_PREFS = {
 };
 
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
-const MUTABLE_PREF_COLUMNS = PREF_COLUMNS.filter((c) => c === 'email_all_off' || OPTIONAL_EMAIL_TYPES.includes(c));
+const MUTABLE_PREF_COLUMNS = mutablePreferenceColumns(PREF_COLUMNS);
 
 const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
 

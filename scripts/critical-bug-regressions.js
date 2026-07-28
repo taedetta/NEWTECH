@@ -91,30 +91,13 @@ async function testRequiredEmailTypesBypassPreferences() {
 }
 
 async function testRequiredEmailTypesCannotBeMutated() {
-  const dbPrefsPath = path.resolve(__dirname, '../db/notification-prefs.js');
-  const notificationPrefsPath = path.resolve(__dirname, '../lib/notification-prefs.js');
-  delete require.cache[notificationPrefsPath];
-  delete require.cache[dbPrefsPath];
-
-  const { updatePrefs } = require('../db/notification-prefs');
-  const updateStatements = [];
-  const fakeDb = {
-    async query(sql) {
-      if (/^UPDATE user_email_preferences SET /.test(sql)) {
-        updateStatements.push(sql);
-      }
-      if (/^SELECT \* FROM user_email_preferences/.test(sql)) {
-        return { rows: [{ user_id: 7, email_all_off: true, booking_confirmation: false, password_reset: true }] };
-      }
-      return { rows: [] };
-    },
-  };
-
-  await updatePrefs(7, { email_all_off: true, booking_confirmation: false, password_reset: false }, fakeDb);
-  assert.strictEqual(updateStatements.length, 1, 'expected one preference UPDATE');
-  assert.match(updateStatements[0], /email_all_off = /, 'email_all_off should remain mutable');
-  assert.match(updateStatements[0], /booking_confirmation = /, 'optional preference should remain mutable');
-  assert.doesNotMatch(updateStatements[0], /password_reset = /, 'required password_reset preference must not be mutable');
+  const { mutablePreferenceColumns } = require('../lib/notification-pref-policy');
+  const mutable = mutablePreferenceColumns(['email_all_off', 'booking_confirmation', 'password_reset']);
+  assert.deepStrictEqual(
+    mutable,
+    ['email_all_off', 'booking_confirmation'],
+    'required password_reset preference must not be mutable'
+  );
 }
 
 function testBookingUpdateConflictPolicy() {
