@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { mutablePreferenceColumns } = require('../lib/notification-pref-policy');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -21,6 +22,7 @@ const DEFAULT_PREFS = {
 };
 
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
+const MUTABLE_PREF_COLUMNS = mutablePreferenceColumns(PREF_COLUMNS);
 
 const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
 
@@ -96,7 +98,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const sets = [];
   const vals = [];
   let i = 1;
-  for (const col of PREF_COLUMNS) {
+  for (const col of MUTABLE_PREF_COLUMNS) {
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
@@ -115,6 +117,7 @@ async function updatePrefs(userId, patch, db = pool) {
 module.exports = {
   DEFAULT_PREFS,
   PREF_COLUMNS,
+  MUTABLE_PREF_COLUMNS,
   ensureEmailPrefsSchema,
   ensureDefaultPrefs,
   getPrefs,
