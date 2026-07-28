@@ -41,8 +41,7 @@ function instrChargeExpr() {
 
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
-    if (req.user.role === 'renter') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
     let extra = '';
     const params = [];
     if (req.user.role === 'instructor') {
@@ -125,6 +124,9 @@ router.get('/audit-flags', authenticateToken, async (req, res) => {
 router.get('/:studentId', authenticateToken, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
+    if (!['owner', 'admin', 'instructor', 'student', 'renter'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'student' && req.user.id !== studentId) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -204,11 +206,25 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
       );
       if (b.aircraft_id) await client.query(
         `UPDATE aircraft SET
-           total_hobbs_hours = total_hobbs_hours - $1, current_hobbs = current_hobbs - $1,
-           total_tach_hours = total_tach_hours - $2, current_tach = current_tach - $2,
+           total_hobbs_hours = CASE
+             WHEN current_hobbs IS NOT NULL AND $2 IS NOT NULL AND ABS(current_hobbs - $2) <= 0.1 THEN $3
+             ELSE total_hobbs_hours
+           END,
+           current_hobbs = CASE
+             WHEN current_hobbs IS NOT NULL AND $2 IS NOT NULL AND ABS(current_hobbs - $2) <= 0.1 THEN $3
+             ELSE current_hobbs
+           END,
+           total_tach_hours = CASE
+             WHEN current_tach IS NOT NULL AND $4 IS NOT NULL AND ABS(current_tach - $4) <= 0.1 THEN $5
+             ELSE total_tach_hours
+           END,
+           current_tach = CASE
+             WHEN current_tach IS NOT NULL AND $4 IS NOT NULL AND ABS(current_tach - $4) <= 0.1 THEN $5
+             ELSE current_tach
+           END,
            updated_at = NOW()
-         WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.aircraft_id]
+         WHERE id = $1`,
+        [b.aircraft_id, b.hobbs_end, b.hobbs_start, b.tach_end, b.tach_start]
       );
     }
     await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);

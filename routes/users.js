@@ -14,6 +14,22 @@ const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
 const router = express.Router();
 
+function parseStrictNonNegativeNumber(value, fieldName) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+(\.\d+)?$/.test(text)) {
+    const err = new Error(`${fieldName} must be a valid non-negative number`);
+    err.status = 400;
+    throw err;
+  }
+  const num = Number(text);
+  if (!Number.isFinite(num) || num > 99999) {
+    const err = new Error(`${fieldName} exceeds maximum allowed value`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
 // GET /api/users
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -185,14 +201,16 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
     const targetId = parseInt(req.params.id);
     const { instructor_rate } = req.body;
     if (instructor_rate === undefined) return res.status(400).json({ error: 'instructor_rate is required' });
+    const rate = parseStrictNonNegativeNumber(instructor_rate, 'instructor_rate');
     const result = await pool.query(
       `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, instructor_rate`,
-      [parseFloat(instructor_rate), targetId]
+      [rate, targetId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Instructor rate error:', err);
+    if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: 'Failed to update instructor rate' });
   }
 });
@@ -479,8 +497,14 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    if (total_hobbs_hours !== undefined) {
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(parseStrictNonNegativeNumber(total_hobbs_hours, 'total_hobbs_hours'));
+    }
+    if (total_tach_hours !== undefined)  {
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(parseStrictNonNegativeNumber(total_tach_hours, 'total_tach_hours'));
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
@@ -490,6 +514,7 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('User hours update error:', err);
+    if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: 'Failed to update user hours' });
   }
 });
