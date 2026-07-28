@@ -96,6 +96,17 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can delete flight log entries' });
     const logId = parseInt(req.params.id);
+    const linked = await pool.query(
+      `SELECT fl.id, b.id AS booking_id, b.status, COALESCE(b.billing_voided, false) AS billing_voided
+       FROM flight_logs fl
+       LEFT JOIN bookings b ON b.id = fl.booking_id
+       WHERE fl.id = $1`,
+      [logId]
+    );
+    if (linked.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
+    if (linked.rows[0].booking_id && linked.rows[0].status === 'completed' && !linked.rows[0].billing_voided) {
+      return res.status(409).json({ error: 'Cannot delete a linked completed flight log directly. Void or delete the booking history record instead.' });
+    }
     const result = await pool.query('DELETE FROM flight_logs WHERE id = $1 RETURNING id', [logId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
     res.json({ ok: true });

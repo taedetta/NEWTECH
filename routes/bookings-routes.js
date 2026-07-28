@@ -609,7 +609,7 @@ router.post('/recurring', authenticateToken, async (req, res) => {
         start_time: st.toISOString(),
         end_time: et.toISOString(),
         lesson_type, notes,
-        local_date: local_date || st.toISOString().slice(0, 10),
+        local_date: st.toISOString().slice(0, 10),
         local_start, local_end,
         force_booking: req.body.force_booking,
       };
@@ -641,6 +641,8 @@ async function createBookingInternal(client, req) {
   const iid = instructor_id ? parseInt(instructor_id, 10) : null;
   if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
   if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
+  const acId = parseInt(aircraft_id, 10);
+  if (!Number.isFinite(acId)) return { error: 'Invalid aircraft' };
   const start = new Date(start_time);
   const end = new Date(end_time);
   if (end <= start) return { error: 'End time must be after start time' };
@@ -649,10 +651,10 @@ async function createBookingInternal(client, req) {
   const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
   if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
 
-  const grounding = await checkGroundingSquawk(client, aircraft_id);
+  const grounding = await checkGroundingSquawk(client, acId);
   if (grounding.blocked) return { error: `Aircraft grounded: ${grounding.reason}` };
 
-  const downtimeHit = await findOverlappingDowntime(client, aircraft_id, start_time, end_time);
+  const downtimeHit = await findOverlappingDowntime(client, acId, start_time, end_time);
   if (downtimeHit) return { error: 'Aircraft is scheduled for maintenance during this period' };
 
   let booking_type = 'dual';
@@ -661,12 +663,23 @@ async function createBookingInternal(client, req) {
     booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
   } else if (!sid && iid) booking_type = 'instructor_solo';
 
-  const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
+  const preflight = await runPreflightChecks(client, {
+    aircraft_id: acId,
+    student_id: sid,
+    instructor_id: iid,
+    start_time,
+    end_time,
+    booking_type,
+    lesson_type: lesson_type || null,
+    local_date,
+    local_start,
+    local_end,
+  }, req.user.role);
+  if (!preflight.ok) return { error: preflight.errors[0], warnings: preflight.warnings };
+
+  const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [acId]);
   if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
   if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
-
-  const acId = parseInt(aircraft_id, 10);
-  if (!Number.isFinite(acId)) return { error: 'Invalid aircraft' };
 
   await client.query('BEGIN');
   try {
@@ -675,6 +688,19 @@ async function createBookingInternal(client, req) {
     if (conflicts.length) {
       await client.query('ROLLBACK');
       return { error: 'Scheduling conflict', conflicts };
+    }
+    const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+    if (forceBooking && !isAdmin) {
+      await client.query('ROLLBACK');
+      return { error: 'Only owners and admins can force instructor availability' };
+    }
+    if (iid && !forceBooking) {
+      const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
+      const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
+      if (!availCheck.available) {
+        await client.query('ROLLBACK');
+        return { error: 'Instructor not available: ' + (availCheck.reason || 'outside availability') };
+      }
     }
     const result = await client.query(
       `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
@@ -840,7 +866,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -854,6 +880,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (b.status === 'completed' && status && status !== 'completed') {
+      return res.status(400).json({ error: 'Completed bookings cannot be reopened by status edit' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();

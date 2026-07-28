@@ -2468,6 +2468,35 @@ __CMS_INJECT__
             }
           }
 
+          // Freeform text overlays
+          if (c.freeform_items) {
+            try {
+              var freeformItems = JSON.parse(c.freeform_items);
+              if (Array.isArray(freeformItems) && freeformItems.length > 0) {
+                var ffStyle = document.createElement('style');
+                ffStyle.id = 'cms-freeform-style';
+                ffStyle.textContent = '.cms-freeform-box{position:absolute;z-index:20;max-width:min(320px,80vw);padding:0.85rem 1rem;border-radius:14px;background:rgba(15,23,42,.88);color:#fff;box-shadow:0 16px 40px rgba(2,6,23,.25);backdrop-filter:blur(8px);font-weight:600;line-height:1.4}.cms-freeform-box p{margin:0}';
+                document.head.appendChild(ffStyle);
+                freeformItems.forEach(function(item) {
+                  if (!item || !item.text) return;
+                  var sectionId = item.section || 'hero';
+                  if (sectionId === 'location') sectionId = 'location';
+                  var section = document.getElementById(sectionId);
+                  if (!section) return;
+                  if (getComputedStyle(section).position === 'static') section.style.position = 'relative';
+                  var top = Math.max(0, Math.min(100, parseFloat(item.top) || 20));
+                  var left = Math.max(0, Math.min(100, parseFloat(item.left) || 20));
+                  var box = document.createElement('div');
+                  box.className = 'cms-freeform-box';
+                  box.style.top = top + '%';
+                  box.style.left = left + '%';
+                  box.innerHTML = '<p>' + cmsEsc(String(item.text)) + '</p>';
+                  section.appendChild(box);
+                });
+              }
+            } catch(e) {}
+          }
+
           // Contact email link
           if (c.contact_email) {
             var emailLink = document.getElementById('cms-contact-email-link');

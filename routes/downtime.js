@@ -245,13 +245,6 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 
     const overlapping_bookings = await findBookingsOverlappingDowntime(pool, parseInt(aircraft_id, 10), result.rows[0]);
 
-    // Timed/scheduled downtime — clear global maintenance flag so aircraft stays bookable outside the window
-    await pool.query(
-      `UPDATE aircraft SET status = 'available', maintenance_reason = NULL, updated_at = NOW()
-       WHERE id = $1 AND status = 'maintenance'`,
-      [parseInt(aircraft_id, 10)]
-    );
-
     res.status(201).json({
       ...normalizeDowntimeRow(result.rows[0]),
       overlapping_bookings,

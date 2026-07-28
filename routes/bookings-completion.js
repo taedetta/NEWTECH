@@ -22,6 +22,8 @@ const hobbsFailMap = new Map();
 const HOBBS_FAIL_WINDOW = 10 * 60 * 1000; // 10 minutes
 const HOBBS_FAIL_MAX = 5;
 const HOBBS_BLOCK_DURATION = 15 * 60 * 1000; // 15 minutes
+const MAX_COMPLETION_BUFFER_HOURS = 2;
+const MIN_COMPLETION_DELTA_CAP_HOURS = 12;
 
 function checkHobbsRateLimit(userId) {
   const key = String(userId);
@@ -84,20 +86,36 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const { actual_end_time } = req.body;
     if (!actual_end_time) return res.status(400).json({ error: 'actual_end_time is required' });
     const endTime = new Date(actual_end_time);
-    const result = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (isNaN(endTime.getTime())) return res.status(400).json({ error: 'Invalid actual_end_time' });
+    await client.query('BEGIN');
+    const result = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
     const b = result.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isAdmin && req.user.id !== b.instructor_id && req.user.id !== b.student_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    if (b.status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    }
     const originalEnd = new Date(b.end_time);
-    if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
-    await client.query('BEGIN');
+    const originalStart = new Date(b.start_time);
+    if (endTime <= originalStart) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'actual_end_time must be after the booking start time' });
+    }
+    if (endTime >= originalEnd) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
+    }
     const newEndIso = endTime.toISOString();
     const updated = await client.query(
-      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed' RETURNING *`,
       [newEndIso, req.params.id]
     );
     await client.query('COMMIT');
@@ -168,7 +186,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     const bResult = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
     if (bResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    const b = bResult.rows[0];
+    let b = bResult.rows[0];
     if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
     const isAdmin = ['owner', 'admin'].includes(verifiedRole);
     if (!isAdmin) {
@@ -185,10 +203,20 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     // "No change" bypass — mark complete without recording hours or updating totals
     if (no_change) {
-      const finishedEnd = completionEndTime(b);
       await client.query('BEGIN');
+      const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (locked.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Booking not found' });
+      }
+      b = locked.rows[0];
+      if (b.status !== 'confirmed') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+      }
+      const finishedEnd = completionEndTime(b);
       await client.query(
-        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
+        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
         [finishedEnd, req.params.id]
       );
       await client.query('COMMIT');
@@ -276,6 +304,14 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
 
     const hobbsFlown = hEnd - hStart;
+    const scheduledHours = Math.max(0, (new Date(b.end_time) - new Date(b.start_time)) / 3600000);
+    const maxReasonableDelta = Math.max(MIN_COMPLETION_DELTA_CAP_HOURS, scheduledHours + MAX_COMPLETION_BUFFER_HOURS);
+    if (hobbsFlown > maxReasonableDelta) {
+      recordHobbsFail(req.user.id);
+      return res.status(400).json({
+        error: `Hobbs time (${hobbsFlown.toFixed(1)} hrs) is too large for this booking. Verify the meter readings.`,
+      });
+    }
 
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
@@ -283,6 +319,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       if (dualErr) return res.status(400).json({ error: dualErr });
     }
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
+    if (tachFlown != null && tachFlown > maxReasonableDelta) {
+      return res.status(400).json({
+        error: `Tach time (${tachFlown.toFixed(1)} hrs) is too large for this booking. Verify the meter readings.`,
+      });
+    }
     const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : 0;
     const flight_date = new Date(b.start_time).toISOString().slice(0, 10);
     // Flight type flags from post-flight wizard
@@ -291,6 +332,16 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
     await client.query('BEGIN');
+    const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (locked.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    b = locked.rows[0];
+    if (b.status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    }
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]

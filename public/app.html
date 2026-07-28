@@ -14636,6 +14636,47 @@ async function openProgressDetail(studentId) {
   }
 }
 
+async function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  if (!['owner', 'admin'].includes(currentUser.role)) return;
+  const hobbsInput = prompt('Set Hobbs hours for ' + studentName, Number(currentHobbs || 0).toFixed(1));
+  if (hobbsInput === null) return;
+  const tachInput = prompt('Set Tach hours for ' + studentName, Number(currentTach || 0).toFixed(1));
+  if (tachInput === null) return;
+  const hobbs = Number(String(hobbsInput).trim());
+  const tach = Number(String(tachInput).trim());
+  if (!Number.isFinite(hobbs) || hobbs < 0 || !Number.isFinite(tach) || tach < 0) {
+    showToast('Hours must be valid non-negative numbers', 'error');
+    return;
+  }
+  try {
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify({ total_hobbs_hours: hobbs, total_tach_hours: tach }),
+    });
+    showToast('Student hours updated', 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to update student hours', 'error');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, field) {
+  if (!['owner', 'admin'].includes(currentUser.role)) return;
+  const label = field === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm(`Reset ${label} hours for ${studentName} to 0?`)) return;
+  const body = field === 'tach' ? { total_tach_hours: 0 } : { total_hobbs_hours: 0 };
+  try {
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    showToast(label + ' hours reset', 'success');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to reset student hours', 'error');
+  }
+}
+
 function showProgressList() {
   currentProgressStudentId = null;
   document.getElementById('progress-list-view').classList.remove('hidden');
@@ -17018,7 +17059,80 @@ function populateEditorFields() {
   populateFleetFields();
   renderInstructorEditorItems();
   populateInstructorFields();
+  renderFreeformEditorItems();
   buildDynamicMaps();
+}
+
+function parseFreeformItems() {
+  try {
+    var parsed = JSON.parse(editorContent.freeform_items || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function collectFreeformItemsFromDom() {
+  return Array.from(document.querySelectorAll('#freeform-items-list .freeform-item')).map(function(item) {
+    return {
+      text: (item.querySelector('[data-freeform-field="text"]')?.value || '').trim(),
+      section: item.querySelector('[data-freeform-field="section"]')?.value || 'hero',
+      top: item.querySelector('[data-freeform-field="top"]')?.value || '20',
+      left: item.querySelector('[data-freeform-field="left"]')?.value || '20',
+    };
+  }).filter(function(item) { return item.text; });
+}
+
+function syncFreeformItemsFromDom() {
+  editorContent.freeform_items = JSON.stringify(collectFreeformItemsFromDom());
+}
+
+function renderFreeformEditorItems() {
+  var list = document.getElementById('freeform-items-list');
+  if (!list) return;
+  var items = parseFreeformItems();
+  if (!items.length) {
+    list.innerHTML = '<div style="font-size:0.75rem;color:var(--gray-500);padding:0.5rem 0">No text boxes yet.</div>';
+    return;
+  }
+  list.innerHTML = items.map(function(item, idx) {
+    var section = item.section || 'hero';
+    function selected(value) { return section === value ? ' selected' : ''; }
+    return '<div class="freeform-item" data-index="'+idx+'">' +
+      '<div class="freeform-item-hdr"><span class="freeform-item-label">Text Box '+(idx + 1)+'</span>' +
+      '<span class="freeform-item-actions"><button type="button" class="btn-freeform-del" onclick="removeFreeformItem('+idx+')">Remove</button></span></div>' +
+      '<div class="ef-row"><label>Text</label><textarea rows="2" data-freeform-field="text" oninput="syncFreeformItemsFromDom();markEditorDirty()">'+escHtml(item.text || '')+'</textarea></div>' +
+      '<div class="ef-row"><label>Section</label><select data-freeform-field="section" onchange="syncFreeformItemsFromDom();markEditorDirty()">' +
+        '<option value="hero"'+selected('hero')+'>Hero</option>' +
+        '<option value="about"'+selected('about')+'>About</option>' +
+        '<option value="programs"'+selected('programs')+'>Programs</option>' +
+        '<option value="fleet"'+selected('fleet')+'>Fleet</option>' +
+        '<option value="instructors"'+selected('instructors')+'>Instructors</option>' +
+        '<option value="location"'+selected('location')+'>Location</option>' +
+        '<option value="faq"'+selected('faq')+'>FAQ</option>' +
+      '</select></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">' +
+        '<div class="ef-row"><label>Top %</label><input type="number" min="0" max="100" data-freeform-field="top" value="'+escHtml(item.top || '20')+'" oninput="syncFreeformItemsFromDom();markEditorDirty()"></div>' +
+        '<div class="ef-row"><label>Left %</label><input type="number" min="0" max="100" data-freeform-field="left" value="'+escHtml(item.left || '20')+'" oninput="syncFreeformItemsFromDom();markEditorDirty()"></div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function addFreeformItem() {
+  var items = parseFreeformItems();
+  items.push({ text: 'New announcement', section: 'hero', top: '20', left: '20' });
+  editorContent.freeform_items = JSON.stringify(items);
+  renderFreeformEditorItems();
+  markEditorDirty();
+}
+
+function removeFreeformItem(index) {
+  var items = parseFreeformItems();
+  items.splice(index, 1);
+  editorContent.freeform_items = JSON.stringify(items);
+  renderFreeformEditorItems();
+  markEditorDirty();
 }
 
 function collectEditorFields() {
@@ -17064,6 +17178,7 @@ function collectEditorFields() {
   // Banner show/hide
   var bannerShowEl = document.getElementById('ef-banner_show');
   out.banner_show = bannerShowEl ? (bannerShowEl.checked ? 'true' : 'false') : (editorContent.banner_show || 'true');
+  out.freeform_items = JSON.stringify(collectFreeformItemsFromDom());
 
   // Section order and visibility
   out.section_order = JSON.stringify(smSectionOrder);

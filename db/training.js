@@ -375,31 +375,42 @@ async function getProgramEnrollments(programId) {
  * Instructor sign-off: record stage milestone and advance enrollment to next stage.
  */
 async function completeStageMilestone({ studentId, stageId, enrollmentId, completedBy, notes, debriefId }) {
-  const enrollResult = await pool.query(
-    'SELECT * FROM student_training WHERE id = $1 AND student_id = $2',
-    [enrollmentId, studentId]
-  );
-  if (enrollResult.rows.length === 0) {
-    const err = new Error('Enrollment not found');
-    err.status = 404;
-    throw err;
-  }
-  const enroll = enrollResult.rows[0];
-
-  const stageResult = await pool.query(
-    'SELECT id, program_id, order_index FROM program_stages WHERE id = $1',
-    [stageId]
-  );
-  if (stageResult.rows.length === 0 || stageResult.rows[0].program_id !== enroll.program_id) {
-    const err = new Error('Stage not found in this program');
-    err.status = 400;
-    throw err;
-  }
-  const stage = stageResult.rows[0];
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const enrollResult = await client.query(
+      'SELECT * FROM student_training WHERE id = $1 AND student_id = $2 FOR UPDATE',
+      [enrollmentId, studentId]
+    );
+    if (enrollResult.rows.length === 0) {
+      const err = new Error('Enrollment not found');
+      err.status = 404;
+      throw err;
+    }
+    const enroll = enrollResult.rows[0];
+
+    const stageResult = await client.query(
+      'SELECT id, program_id, order_index FROM program_stages WHERE id = $1',
+      [stageId]
+    );
+    if (stageResult.rows.length === 0 || stageResult.rows[0].program_id !== enroll.program_id) {
+      const err = new Error('Stage not found in this program');
+      err.status = 400;
+      throw err;
+    }
+    const stage = stageResult.rows[0];
+
+    const existing = await client.query(
+      `SELECT id FROM milestone_completions
+       WHERE student_id = $1 AND stage_id = $2
+       LIMIT 1`,
+      [studentId, stageId]
+    );
+    if (existing.rows.length > 0) {
+      await client.query('COMMIT');
+      return { ok: true, next_stage_id: enroll.current_stage_id, already_completed: true };
+    }
+
     await client.query(
       `INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes)
        VALUES ($1, $2, $3, $4, $5)`,
