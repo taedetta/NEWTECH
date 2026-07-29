@@ -6,7 +6,7 @@ const {
   bookingBlocksSchedule,
   statusActivatesSchedule,
   shouldCheckBookingConflicts,
-} = require('../routes/bookings-routes');
+} = require('../lib/booking-status');
 
 function runBookingReactivationRegression() {
   assert.strictEqual(bookingBlocksSchedule('confirmed'), true, 'confirmed bookings block the schedule');
