@@ -3,7 +3,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const pool = require('../db/index');
 const { saveFileOverride, removeOverride, getUnsyncedOverrides, getAllOverrides, markSynced, clearAllOverrides, countUnsynced } = require('../db/file-overrides');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
@@ -194,7 +194,7 @@ router.get('/download-source', authenticateToken, requirePermission('can_edit_we
     const overrideMap = {};
     for (const o of overrides) overrideMap[o.file_path] = o.content;
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.on('error', (err) => { console.error('Archive error:', err); if (!res.headersSent) res.status(500).json({ error: 'Archive failed' }); });
     archive.pipe(res);
     const skipPatterns = [/node_modules/, /\.git/, /\.env/, /session-env/, /shell-snapshots/, /test-fixtures/, /\.DS_Store/];
