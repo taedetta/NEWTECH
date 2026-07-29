@@ -7,6 +7,24 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
+async function canAccessStudentDocuments(user, studentId) {
+  if (['owner', 'admin'].includes(user.role)) return true;
+  if (user.role !== 'instructor') return false;
+  const pool = require('../db/index');
+  const result = await pool.query(
+    `SELECT 1
+     FROM student_training
+     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'
+     UNION
+     SELECT 1
+     FROM bookings
+     WHERE student_id = $1 AND instructor_id = $2
+     LIMIT 1`,
+    [studentId, user.id]
+  );
+  return result.rows.length > 0;
+}
+
 router.get('/types', authenticateToken, requireRole('owner', 'admin', 'instructor'), (req, res) => {
   res.json({ types: documentsDb.DOC_TYPES });
 });
@@ -14,6 +32,10 @@ router.get('/types', authenticateToken, requireRole('owner', 'admin', 'instructo
 router.get('/student/:studentId', authenticateToken, requireRole('owner', 'admin', 'instructor'), async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student id' });
+    if (!(await canAccessStudentDocuments(req.user, studentId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const documents = await documentsDb.listDocuments(studentId);
     res.json({ documents });
   } catch (err) {
@@ -25,6 +47,10 @@ router.get('/student/:studentId', authenticateToken, requireRole('owner', 'admin
 router.post('/student/:studentId', authenticateToken, requireRole('owner', 'admin', 'instructor'), async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student id' });
+    if (!(await canAccessStudentDocuments(req.user, studentId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const { doc_type, file_data, file_name, expiry_date, notes, medical_class } = req.body;
     if (!doc_type || !documentsDb.DOC_TYPES.includes(doc_type)) {
       return res.status(400).json({ error: 'Valid doc_type is required' });
@@ -70,9 +96,13 @@ router.post('/student/:studentId', authenticateToken, requireRole('owner', 'admi
 router.delete('/:docId', authenticateToken, requireRole('owner', 'admin', 'instructor'), async (req, res) => {
   try {
     const docId = parseInt(req.params.docId, 10);
+    if (!Number.isFinite(docId)) return res.status(400).json({ error: 'Invalid document id' });
     const pool = require('../db/index');
     const existing = await pool.query('SELECT * FROM student_documents WHERE id = $1', [docId]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!(await canAccessStudentDocuments(req.user, existing.rows[0].student_id))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const doc = await documentsDb.deleteDocument(docId, existing.rows[0].student_id);
     res.json({ ok: true, document: doc });
   } catch (err) {

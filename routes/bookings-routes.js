@@ -854,6 +854,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status && status !== b.status) {
+      if (status === 'completed') {
+        return res.status(400).json({ error: 'Use the flight completion workflow to complete bookings' });
+      }
+      if (b.status === 'completed') {
+        return res.status(400).json({ error: 'Completed bookings cannot be reverted through booking edit' });
+      }
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();

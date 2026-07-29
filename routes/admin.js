@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const path = require('path');
 const fs = require('fs');
 const pool = require('../db/index');
@@ -150,7 +150,7 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     const overrideMap = {};
     for (const o of overrides) overrideMap[o.file_path] = o.content;
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.on('error', (err) => {
       console.error('[download-source] Archive error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to create archive' });

@@ -163,14 +163,18 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
-    if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
+    // Account not approved — correct credentials but not activated.
+    // Rejected users are soft-deleted; do not clear deleted_at on login.
+    if (user.approval_status === 'pending' || user.approval_status === 'rejected') {
+      return res.status(403).json({
+        error: user.approval_status === 'pending' ? 'pending_approval' : 'account_rejected',
+        message: user.approval_status === 'pending'
+          ? 'Your account is pending approval by an administrator.'
+          : 'This account request was rejected. Please contact an administrator.',
+      });
     }
-    // Account pending approval — correct credentials but not yet activated
-    if (user.approval_status === 'pending') {
-      return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    if (user.deleted_at) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role },
@@ -253,7 +257,10 @@ router.post('/reset-password', async (req, res) => {
       `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
-       WHERE prt.token_hash = $1 AND prt.used_at IS NULL`,
+       WHERE prt.token_hash = $1
+         AND prt.used_at IS NULL
+         AND u.deleted_at IS NULL
+         AND u.approval_status = 'approved'`,
       [tokenHash]
     );
     if (result.rows.length === 0) {
@@ -264,9 +271,9 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
     }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, deleted_at = NULL, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
-    console.log(`[auth] Password reset + account reactivation for user_id=${row.user_id} (${row.email})`);
+    console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[reset-password] error:', err.message);
@@ -324,28 +331,46 @@ router.get('/me', authenticateToken, async (req, res) => {
 });
 
 router.post('/claim-owner', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  let inTx = false;
   try {
-    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner'");
+    await client.query('BEGIN');
+    inTx = true;
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('flightslate_claim_owner'))");
+    const ownerCheck = await client.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
     if (ownerCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      inTx = false;
       return res.status(409).json({ error: 'An owner already exists' });
     }
-    const currentRole = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
+    const currentRole = await client.query('SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [req.user.id]);
     if (['student', 'renter'].includes(currentRole.rows[0]?.role)) {
+      await client.query('ROLLBACK');
+      inTx = false;
       return res.status(403).json({ error: 'Students and renters cannot claim owner role' });
     }
-    const result = await pool.query(
+    const result = await client.query(
       "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
       [req.user.id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      inTx = false;
+      return res.status(404).json({ error: 'User not found' });
+    }
     const user = result.rows[0];
     const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true };
     const newToken = jwt.sign({ id: user.id, email: user.email, name: user.name, role: 'owner' }, JWT_SECRET, { expiresIn: '7d' });
+    await client.query('COMMIT');
+    inTx = false;
     res.cookie('token', newToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ user: { ...user, permissions }, token: newToken });
   } catch (err) {
+    if (inTx) await client.query('ROLLBACK').catch(() => {});
     console.error('Claim owner error:', err);
     res.status(500).json({ error: 'Failed to claim owner role' });
+  } finally {
+    client.release();
   }
 });
 
