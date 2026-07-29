@@ -49,6 +49,16 @@ router.get('/count', ...canApprove, async (req, res) => {
 router.post('/:id/approve', ...canApprove, async (req, res) => {
   try {
     const { id } = req.params;
+    const pending = await pool.query(
+      `SELECT id, role FROM users WHERE id = $1 AND approval_status = 'pending'`,
+      [id]
+    );
+    if (pending.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found or already approved' });
+    }
+    if (pending.rows[0].role === 'instructor' && !['owner', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only owners and admins can approve instructor accounts' });
+    }
     const result = await pool.query(
       `UPDATE users
        SET approval_status = 'approved',
