@@ -28,6 +28,12 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const {
+  BOOKING_STATUSES,
+  bookingBlocksSchedule,
+  statusActivatesSchedule,
+  shouldCheckBookingConflicts,
+} = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -854,6 +860,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status !== undefined && !BOOKING_STATUSES.has(status)) {
+      return res.status(400).json({ error: 'Invalid booking status' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -873,8 +882,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
       skipPastTimeCheck: isStaffHistoricalEdit,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
+    const nextStatus = status !== undefined ? status : b.status;
+    const activatingScheduleBlock = statusActivatesSchedule(b.status, nextStatus);
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isStaffHistoricalEdit) {
+    if (acId && (!isStaffHistoricalEdit || activatingScheduleBlock)) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
@@ -886,7 +897,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
     const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const needsConflictCheck = shouldCheckBookingConflicts({
+      scheduleChanged,
+      currentStatus: b.status,
+      nextStatus,
+      skipConflictCheck,
+    });
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
@@ -994,3 +1010,6 @@ module.exports.lockBookingResources = lockBookingResources;
 module.exports.ACTIVE_BOOKING_SQL = ACTIVE_BOOKING_SQL;
 module.exports.isInstructorAvailable = isInstructorAvailable;
 module.exports.findNextAvailableSlots = findNextAvailableSlots;
+module.exports.bookingBlocksSchedule = bookingBlocksSchedule;
+module.exports.statusActivatesSchedule = statusActivatesSchedule;
+module.exports.shouldCheckBookingConflicts = shouldCheckBookingConflicts;
