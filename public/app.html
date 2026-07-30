@@ -14642,6 +14642,53 @@ function showProgressList() {
   document.getElementById('progress-detail-view').classList.add('hidden');
 }
 
+function parseStudentHoursInput(value, label) {
+  const trimmed = String(value == null ? '' : value).trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error(label + ' must be a non-negative number');
+  }
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num < 0 || num > 99999) {
+    throw new Error(label + ' must be between 0 and 99999');
+  }
+  return Math.round(num * 10) / 10;
+}
+
+async function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  try {
+    const hobbsInput = prompt('Set total Hobbs hours for ' + studentName + ':', Number(currentHobbs || 0).toFixed(1));
+    if (hobbsInput === null) return;
+    const tachInput = prompt('Set total Tach hours for ' + studentName + ':', Number(currentTach || 0).toFixed(1));
+    if (tachInput === null) return;
+    const total_hobbs_hours = parseStudentHoursInput(hobbsInput, 'Hobbs hours');
+    const total_tach_hours = parseStudentHoursInput(tachInput, 'Tach hours');
+    await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify({ total_hobbs_hours, total_tach_hours })
+    });
+    alert('Student hours updated.');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    alert(err.error || err.message || 'Failed to update student hours');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, meter) {
+  const label = meter === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm('Reset ' + label + ' hours for ' + studentName + ' to 0.0?')) return;
+  const payload = meter === 'tach' ? { total_tach_hours: 0 } : { total_hobbs_hours: 0 };
+  try {
+    await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    alert(label + ' hours reset.');
+    await openProgressDetail(studentId);
+  } catch (err) {
+    alert(err.error || 'Failed to reset student hours');
+  }
+}
+
 async function toggleEnrollForm() {
   const container = document.getElementById('enroll-form-container');
   const wasHidden = container.classList.contains('hidden');
@@ -17018,6 +17065,8 @@ function populateEditorFields() {
   populateFleetFields();
   renderInstructorEditorItems();
   populateInstructorFields();
+  renderFreeformEditorItems();
+  populateFreeformFields();
   buildDynamicMaps();
 }
 
@@ -17059,6 +17108,16 @@ function collectEditorFields() {
     });
     out['instructor_'+ii+'_image'] = editorContent['instructor_'+ii+'_image'] || '';
     out['instructor_'+ii+'_image_scale'] = editorContent['instructor_'+ii+'_image_scale'] || '100';
+  }
+
+  // Collect dynamic freeform text boxes
+  var freeformCount = getFreeformCount();
+  out.freeform_count = String(freeformCount);
+  for (var ff = 1; ff <= freeformCount; ff++) {
+    ['label','text','section'].forEach(function(f) {
+      var el = document.getElementById('ef-freeform_'+ff+'_'+f);
+      out['freeform_'+ff+'_'+f] = el ? (el.value || '') : (editorContent['freeform_'+ff+'_'+f] || '');
+    });
   }
 
   // Banner show/hide
@@ -17835,6 +17894,10 @@ function getInstructorCount() {
   return Math.max(1, parseInt(editorContent.instructors_count || '3', 10) || 3);
 }
 
+function getFreeformCount() {
+  return Math.max(0, parseInt(editorContent.freeform_count || '0', 10) || 0);
+}
+
 // Build dynamic entries in CMS_DOM_MAP, CMS_DOM_REVERSE, CMS_SECTION_MAP
 function buildDynamicMaps() {
   var fc = getFleetCount();
@@ -17996,6 +18059,39 @@ function populateInstructorFields() {
   }
 }
 
+function renderFreeformEditorItems() {
+  var count = getFreeformCount();
+  var container = document.getElementById('freeform-items-list');
+  if (!container) return;
+  if (count === 0) {
+    container.innerHTML = '<div class="freeform-hint">No custom text boxes yet.</div>';
+    return;
+  }
+  var html = '';
+  for (var n = 1; n <= count; n++) {
+    html += '<div class="freeform-item">' +
+      '<div class="freeform-item-hdr">' +
+        '<span class="freeform-item-label">Text Box '+n+'</span>' +
+        '<div class="freeform-item-actions"><button class="btn-freeform-del" onclick="removeFreeformItem('+n+')" title="Remove text box">&times;</button></div>' +
+      '</div>' +
+      '<div class="ef-row"><label>Admin Label</label><input type="text" id="ef-freeform_'+n+'_label" placeholder="Announcement" oninput="markEditorDirty()"></div>' +
+      '<div class="ef-row"><label>Text</label><textarea id="ef-freeform_'+n+'_text" rows="3" placeholder="Custom message..." oninput="markEditorDirty()"></textarea></div>' +
+      '<div class="ef-row"><label>Target Section</label><input type="text" id="ef-freeform_'+n+'_section" placeholder="hero, about, programs, fleet, contact" oninput="markEditorDirty()"></div>' +
+      '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function populateFreeformFields() {
+  var count = getFreeformCount();
+  for (var n = 1; n <= count; n++) {
+    ['label','text','section'].forEach(function(f) {
+      var el = document.getElementById('ef-freeform_'+n+'_'+f);
+      if (el) el.value = editorContent['freeform_'+n+'_'+f] || '';
+    });
+  }
+}
+
 function addFleetItem() {
   var count = getFleetCount();
   if (count >= 10) { alert('Maximum 10 aircraft allowed.'); return; }
@@ -18073,6 +18169,44 @@ function removeInstructorItem(n) {
   renderInstructorEditorItems();
   populateInstructorFields();
   buildDynamicMaps();
+  markEditorDirty();
+}
+
+function addFreeformItem() {
+  var count = getFreeformCount();
+  if (count >= 20) { alert('Maximum 20 text boxes allowed.'); return; }
+  editorContent = Object.assign(editorContent, collectEditorFields());
+  editorContent.freeform_count = String(count + 1);
+  editorContent['freeform_'+(count + 1)+'_label'] = 'Text Box ' + (count + 1);
+  editorContent['freeform_'+(count + 1)+'_text'] = '';
+  editorContent['freeform_'+(count + 1)+'_section'] = 'hero';
+  renderFreeformEditorItems();
+  populateFreeformFields();
+  markEditorDirty();
+  setTimeout(function() {
+    var container = document.getElementById('freeform-items-list');
+    if (container && container.lastElementChild) {
+      container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, 60);
+}
+
+function removeFreeformItem(n) {
+  var count = getFreeformCount();
+  if (count <= 0) return;
+  if (!confirm('Remove Text Box '+n+'? This cannot be undone.')) return;
+  editorContent = Object.assign(editorContent, collectEditorFields());
+  for (var i = n; i < count; i++) {
+    ['label','text','section'].forEach(function(f) {
+      editorContent['freeform_'+i+'_'+f] = editorContent['freeform_'+(i+1)+'_'+f] || '';
+    });
+  }
+  ['label','text','section'].forEach(function(f) {
+    delete editorContent['freeform_'+count+'_'+f];
+  });
+  editorContent.freeform_count = String(count - 1);
+  renderFreeformEditorItems();
+  populateFreeformFields();
   markEditorDirty();
 }
 

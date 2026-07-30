@@ -85,6 +85,69 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical beta hardening regressions
+console.log('\n=== Critical beta hardening ===');
+const authMwSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+const authRouteSrc = fs.readFileSync(path.join(root, 'routes/auth.js'), 'utf8');
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+const trainingDbSrc = fs.readFileSync(path.join(root, 'db/training.js'), 'utf8');
+const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+const bookingsSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
+const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8');
+const flightLogsSrc = fs.readFileSync(path.join(root, 'routes/flight-logs.js'), 'utf8');
+const historySrc = fs.readFileSync(path.join(root, 'routes/booking-history.js'), 'utf8');
+const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
+
+if (!/approval_status\s*!==\s*'approved'/.test(authMwSrc) || !authMwSrc.includes('deleted_at')) {
+  fail('authenticateToken must reject deleted/non-approved accounts');
+} else ok('DB-backed auth state revalidation present');
+
+const loginSection = authRouteSrc.slice(authRouteSrc.indexOf("router.post('/login'"), authRouteSrc.indexOf("router.post('/logout'"));
+const resetSection = authRouteSrc.slice(authRouteSrc.indexOf("router.post('/reset-password'"), authRouteSrc.indexOf("router.get('/me'"));
+if (loginSection.includes('deleted_at = NULL') || resetSection.includes('deleted_at = NULL') || !loginSection.includes("approval_status !== 'approved'")) {
+  fail('login/reset must not reactivate deleted or rejected accounts');
+} else ok('login/reset approved-only guard present');
+
+if (authMwSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('maintenance must not bypass all requirePermission checks');
+} else ok('maintenance permission bypass blocked');
+
+if (!trainingSrc.includes('function isTrainingStaff') || !trainingSrc.includes('canViewTrainingStudent')) {
+  fail('training routes missing staff/self authorization helpers');
+} else ok('training staff/self authorization helpers present');
+
+if (/router\.(post|put|delete)\('\/admin\/[^']+', requireRole/.test(trainingSrc)) {
+  fail('training admin routes missing authenticateToken before requireRole');
+} else ok('training admin routes require authentication');
+
+if (!trainingDbSrc.includes('FOR UPDATE') || !trainingDbSrc.includes('Only the current stage can be signed off')) {
+  fail('milestone sign-off must lock enrollment and require current stage');
+} else ok('milestone current-stage guard present');
+
+if (!completionSrc.includes('SELECT * FROM bookings WHERE id = $1 FOR UPDATE') || !completionSrc.includes("WHERE id = $6 AND status = 'confirmed'")) {
+  fail('booking completion must lock row and update only confirmed bookings');
+} else ok('booking completion row-lock/status guard present');
+
+if (!bookingsSrc.includes("Completed bookings cannot be changed back") || !bookingsSrc.includes("WHERE id = $2 AND status = 'confirmed' RETURNING id")) {
+  fail('booking update/cancel status guards missing');
+} else ok('booking update/cancel status guards present');
+
+if (billingSrc.includes('current_hobbs = current_hobbs -') || !billingSrc.includes('Voiding removes the charge from billing views only')) {
+  fail('billing void must not subtract aircraft meters or pilot hours');
+} else ok('billing void is non-destructive');
+
+if (!flightLogsSrc.includes('Linked flight logs must be edited') || !historySrc.includes('Completed flight records cannot be deleted')) {
+  fail('completed/linked flight delete guards missing');
+} else ok('completed/linked flight delete guards present');
+
+if (!usersSrc.includes('parseStrictHours') || !appHtml.includes('function openEditStudentHoursModal') || !appHtml.includes('function confirmResetStudentHours')) {
+  fail('student hours edit/reset validation or handlers missing');
+} else ok('student hours edit/reset handlers present');
+
+if (!appHtml.includes('function addFreeformItem') || !appHtml.includes('function renderFreeformEditorItems')) {
+  fail('website editor freeform handlers missing');
+} else ok('website editor freeform handlers present');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');

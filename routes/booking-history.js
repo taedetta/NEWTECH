@@ -310,6 +310,9 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
     const bookingId = parseInt(req.params.id);
     const existing = await pool.query('SELECT id, status FROM bookings WHERE id = $1', [bookingId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (existing.rows[0].status === 'completed') {
+      return res.status(400).json({ error: 'Completed flight records cannot be deleted because they affect pilot hours and aircraft meters' });
+    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
