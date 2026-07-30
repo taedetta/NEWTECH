@@ -854,6 +854,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status && b.status === 'completed' && status !== 'completed') {
+      return res.status(400).json({ error: 'Completed bookings cannot be changed back to another status' });
+    }
+    if (status && b.status === 'cancelled' && status !== 'cancelled') {
+      return res.status(400).json({ error: 'Cancelled bookings cannot be changed back to another status' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -957,6 +963,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
 router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
+  let inTransaction = false;
+  async function abort(status, payload) {
+    if (inTransaction) {
+      await client.query('ROLLBACK').catch(() => {});
+      inTransaction = false;
+    }
+    return res.status(status).json(payload);
+  }
   try {
     const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
@@ -969,17 +983,26 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
     const reason = req.body?.reason || null;
     await client.query('BEGIN');
-    await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
+    inTransaction = true;
+    const locked = await client.query('SELECT status FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (locked.rows.length === 0) return abort(404, { error: 'Booking not found' });
+    if (locked.rows[0].status !== 'confirmed') {
+      return abort(400, { error: 'Only confirmed bookings can be cancelled' });
+    }
+    const cancelled = await client.query(
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW()
+       WHERE id = $2 AND status = 'confirmed' RETURNING id`,
       [reason, req.params.id]
     );
+    if (cancelled.rows.length === 0) return abort(409, { error: 'Booking status changed; refresh and try again' });
     await client.query('COMMIT');
+    inTransaction = false;
     res.json({ ok: true });
 
     // Send cancellation email to student + instructor (fire-and-forget)
     sendBookingCancellationEmails(req.params.id, req.user.id, req.user.role, reason).catch((err) => console.error('[bookings] cancellation email error:', err.message));
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (inTransaction) await client.query('ROLLBACK').catch(() => {});
     const ts = new Date().toISOString();
     console.error(`[bookings] [${ts}] DELETE /:id — user=${req.user?.id} error: ${err.message}`);
     res.status(500).json({ code: 'CANCEL_ERROR', message: 'Booking temporarily unavailable, please try again.' });

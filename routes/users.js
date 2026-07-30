@@ -479,8 +479,24 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    const parseStrictHours = (value, label) => {
+      if (typeof value === 'string' && !/^\d+(\.\d+)?$/.test(value.trim())) {
+        throw new Error(`${label} must be a valid non-negative number`);
+      }
+      const num = Number(value);
+      if (!Number.isFinite(num) || num < 0 || num > 99999) {
+        throw new Error(`${label} must be a valid non-negative number`);
+      }
+      return Math.round(num * 10) / 10;
+    };
+    if (total_hobbs_hours !== undefined) {
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(parseStrictHours(total_hobbs_hours, 'total_hobbs_hours'));
+    }
+    if (total_tach_hours !== undefined) {
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(parseStrictHours(total_tach_hours, 'total_tach_hours'));
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
@@ -490,6 +506,7 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('User hours update error:', err);
+    if (/must be a valid/.test(err.message)) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: 'Failed to update user hours' });
   }
 });
