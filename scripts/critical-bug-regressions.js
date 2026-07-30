@@ -91,10 +91,18 @@ async function testRequiredEmailTypesBypassPreferences() {
 }
 
 async function testRequiredEmailTypesCannotBeMutated() {
+  const dbIndexPath = path.resolve(__dirname, '../db/index.js');
   const dbPrefsPath = path.resolve(__dirname, '../db/notification-prefs.js');
   const notificationPrefsPath = path.resolve(__dirname, '../lib/notification-prefs.js');
   delete require.cache[notificationPrefsPath];
   delete require.cache[dbPrefsPath];
+  delete require.cache[dbIndexPath];
+  require.cache[dbIndexPath] = {
+    id: dbIndexPath,
+    filename: dbIndexPath,
+    loaded: true,
+    exports: { query: async () => ({ rows: [] }) },
+  };
 
   const { updatePrefs, rowToPrefs } = require('../db/notification-prefs');
   const updateStatements = [];
