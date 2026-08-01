@@ -7,6 +7,7 @@ const archiver = require('archiver');
 const pool = require('../db/index');
 const { saveFileOverride, removeOverride, getUnsyncedOverrides, getAllOverrides, markSynced, clearAllOverrides, countUnsynced } = require('../db/file-overrides');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
+const { uploadBuffer } = require('../lib/r2-storage');
 
 const router = express.Router();
 
@@ -75,6 +76,30 @@ router.get('/site-content/image/:key', async (req, res) => {
   } catch (err) {
     console.error('Site content image error:', err);
     res.status(500).json({ error: 'Failed to fetch image' });
+  }
+});
+
+router.post('/site-content/upload-image', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
+  try {
+    const { filename, base64, mimeType } = req.body || {};
+    if (!filename || !base64) return res.status(400).json({ error: 'filename and base64 are required' });
+    const contentType = mimeType || (String(base64).match(/^data:([^;]+);base64,/) || [])[1] || 'application/octet-stream';
+    if (!/^image\/(jpeg|png|webp|gif)$/i.test(contentType)) {
+      return res.status(400).json({ error: 'Only JPEG, PNG, WebP, and GIF images are supported' });
+    }
+    const rawBase64 = String(base64).replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(rawBase64, 'base64');
+    if (!buffer.length) return res.status(400).json({ error: 'Image data is empty' });
+    if (buffer.length > 15 * 1024 * 1024) return res.status(400).json({ error: 'Image too large (max 15MB)' });
+
+    const safeName = path.basename(String(filename)).replace(/[^a-zA-Z0-9._-]/g, '-');
+    const uniqueName = `${Date.now()}-${safeName || 'image'}`;
+    const url = await uploadBuffer(buffer, uniqueName, { folder: 'images', contentType });
+    if (!url) return res.status(500).json({ error: 'Upload failed' });
+    res.status(201).json({ url });
+  } catch (err) {
+    console.error('CMS image upload error:', err.message);
+    res.status(500).json({ error: 'Failed to upload image' });
   }
 });
 
