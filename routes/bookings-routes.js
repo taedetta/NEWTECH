@@ -37,6 +37,10 @@ const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (
 const ACTIVE_BOOKING_SQL = "b.status NOT IN ('cancelled', 'completed')";
 const ACTIVE_BOOKING_SQL_NO_ALIAS = "status NOT IN ('cancelled', 'completed')";
 
+function bookingStatusBlocksSchedule(status) {
+  return status !== 'cancelled' && status !== 'completed';
+}
+
 /** Serialize concurrent bookings for the same aircraft/instructor/student. */
 async function lockBookingResources(client, { aircraft_id, instructor_id, student_id }) {
   const acId = aircraft_id != null ? parseInt(aircraft_id, 10) : null;
@@ -854,6 +858,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    const effectiveStatus = status !== undefined && status !== null && status !== '' ? status : b.status;
+    const reactivatingHistoricalBooking = !bookingStatusBlocksSchedule(b.status)
+      && bookingStatusBlocksSchedule(effectiveStatus);
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -874,7 +881,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isStaffHistoricalEdit) {
+    if (acId && (!isStaffHistoricalEdit || reactivatingHistoricalBooking)) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
@@ -885,8 +892,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const skipConflictCheck = isStaffHistoricalEdit && !reactivatingHistoricalBooking;
+    const needsConflictCheck = (scheduleChanged || reactivatingHistoricalBooking) && !skipConflictCheck;
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
@@ -992,5 +999,6 @@ module.exports = router;
 module.exports.checkConflicts = checkConflicts;
 module.exports.lockBookingResources = lockBookingResources;
 module.exports.ACTIVE_BOOKING_SQL = ACTIVE_BOOKING_SQL;
+module.exports.bookingStatusBlocksSchedule = bookingStatusBlocksSchedule;
 module.exports.isInstructorAvailable = isInstructorAvailable;
 module.exports.findNextAvailableSlots = findNextAvailableSlots;

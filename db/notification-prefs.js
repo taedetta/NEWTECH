@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { REQUIRED_EMAIL_TYPES } = require('../lib/email-types');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -97,6 +98,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const vals = [];
   let i = 1;
   for (const col of PREF_COLUMNS) {
+    if (REQUIRED_EMAIL_TYPES.has(col)) continue;
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
