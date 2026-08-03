@@ -186,31 +186,22 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can void billing entries' });
     const bookingId = parseInt(req.params.bookingId);
-    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
-    if (bookingResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    const b = bookingResult.rows[0];
-    if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
     await client.query('BEGIN');
-    const hobbsDelta = (b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0;
-    const tachDelta = (b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0;
-    if (hobbsDelta !== 0 || tachDelta !== 0) {
-      if (b.student_id) await client.query(
-        `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.student_id]
-      );
-      if (b.instructor_id) await client.query(
-        `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.instructor_id]
-      );
-      if (b.aircraft_id) await client.query(
-        `UPDATE aircraft SET
-           total_hobbs_hours = total_hobbs_hours - $1, current_hobbs = current_hobbs - $1,
-           total_tach_hours = total_tach_hours - $2, current_tach = current_tach - $2,
-           updated_at = NOW()
-         WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.aircraft_id]
-      );
+    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    if (bookingResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
     }
+    const b = bookingResult.rows[0];
+    if (b.status !== 'completed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only completed flights can be voided from billing' });
+    }
+    if (b.billing_voided) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Already voided' });
+    }
+    // Billing void hides charges only; it must not rewrite real flight history or aircraft meters.
     await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);
     await client.query('COMMIT');
     res.json({ ok: true });
