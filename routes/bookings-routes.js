@@ -72,6 +72,11 @@ function canAccessBooking(user, booking) {
   return user.id === booking.instructor_id || user.id === booking.student_id;
 }
 
+async function rollbackAndSend(client, res, status, body) {
+  await client.query('ROLLBACK').catch(() => {});
+  return res.status(status).json(body);
+}
+
 async function deriveBookingType(client, studentId, instructorId) {
   if (studentId && instructorId) return 'dual';
   if (studentId && !instructorId) {
@@ -854,6 +859,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status && status !== b.status) {
+      return res.status(400).json({ error: 'Use the complete or cancel action to change booking status' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -958,19 +966,21 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (existing.rows.length === 0) return rollbackAndSend(client, res, 404, { error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
-    if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    if (!canAccessBooking(req.user, b)) return rollbackAndSend(client, res, 403, { error: 'Access denied' });
+    if (b.status === 'completed') return rollbackAndSend(client, res, 400, { error: 'Cannot cancel a completed booking' });
+    if (b.status === 'cancelled') return rollbackAndSend(client, res, 400, { error: 'Booking is already cancelled' });
     const policy = await getPolicySettings();
     const cancelCheck = validateCancellation({ bookingStart: b.start_time, userRole: req.user.role, isAdmin, policy });
-    if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
+    if (!cancelCheck.allowed) return rollbackAndSend(client, res, 403, { error: cancelCheck.error });
     const reason = req.body?.reason || null;
-    await client.query('BEGIN');
     await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW()
+       WHERE id = $2 AND status = 'confirmed'`,
       [reason, req.params.id]
     );
     await client.query('COMMIT');
