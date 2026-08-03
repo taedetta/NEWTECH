@@ -314,8 +314,10 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
     try {
       await client.query('BEGIN');
       // Clean up all related records before deleting the booking.
-      // flight_hobbs_readings & flight_discrepancies have ON DELETE CASCADE,
-      // but admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
+      // admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
+      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM flight_discrepancies WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM flight_hobbs_readings WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
