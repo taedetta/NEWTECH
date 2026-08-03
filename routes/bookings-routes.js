@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { bookingStatusBlocksSchedule } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -36,10 +37,6 @@ const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (
 // Any non-cancelled, non-completed booking blocks the schedule (matches calendar visibility).
 const ACTIVE_BOOKING_SQL = "b.status NOT IN ('cancelled', 'completed')";
 const ACTIVE_BOOKING_SQL_NO_ALIAS = "status NOT IN ('cancelled', 'completed')";
-
-function bookingStatusBlocksSchedule(status) {
-  return status !== 'cancelled' && status !== 'completed';
-}
 
 /** Serialize concurrent bookings for the same aircraft/instructor/student. */
 async function lockBookingResources(client, { aircraft_id, instructor_id, student_id }) {

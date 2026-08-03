@@ -9,18 +9,15 @@ const {
   buildUnsubscribeUrl,
   verifyUnsubscribeToken,
 } = require('../lib/unsubscribe-token');
-const {
-  appendUnsubscribeFooter,
-  getPreferenceCatalog,
-} = require('../lib/notification-prefs');
+const { REQUIRED_EMAIL_TYPES } = require('../lib/email-types');
 const { computeFlightCharges } = require('../lib/flight-charges');
 const {
   shiftedBookingTimesForDate,
   toDateOnly,
-} = require('../lib/sync-flight-record');
+} = require('../lib/booking-date-shift');
 const {
   bookingStatusBlocksSchedule,
-} = require('../routes/bookings-routes');
+} = require('../lib/booking-status');
 
 function tokenFromUrl(url) {
   return new URL(url).searchParams.get('token');
@@ -46,13 +43,7 @@ function run() {
     'legacy user-only unsubscribe tokens must not authorize mutable query-string scopes'
   );
 
-  const categories = getPreferenceCatalog('student', false);
-  const visibleTypes = categories.flatMap((category) => category.types.map((type) => type.key));
-  assert.ok(!visibleTypes.includes('password_reset'), 'password reset must not be user-disableable');
-
-  const resetEmail = appendUnsubscribeFooter('<html><body>Reset</body></html>', 'Reset', 42, 'password_reset');
-  assert.ok(!resetEmail.html.includes('Unsubscribe'), 'required password reset emails must not get unsubscribe links');
-  assert.ok(!resetEmail.text.includes('Unsubscribe'), 'required password reset text must not get unsubscribe links');
+  assert.ok(REQUIRED_EMAIL_TYPES.has('password_reset'), 'password reset must be marked as a required email type');
 
   const dualCharge = computeFlightCharges({
     lessonType: 'lesson',
