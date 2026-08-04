@@ -129,6 +129,11 @@ async function run() {
   assert.match(tamperedRes.body, /only valid for its original email type/);
 
   delete require.cache[dbPrefsPath];
+  mockModule('../db/index', {
+    query: async () => {
+      throw new Error('rowToPrefs regression check must not query the database');
+    },
+  });
   const realDbPrefs = require('../db/notification-prefs');
   assert.strictEqual(
     realDbPrefs.rowToPrefs({ password_reset: false, email_all_off: true }).password_reset,
