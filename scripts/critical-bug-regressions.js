@@ -33,6 +33,33 @@ async function run() {
     'password reset must not appear in the user-facing opt-out catalog'
   );
 
+  const { shouldCheckUpdateConflicts } = require('../lib/booking-status');
+  assert.strictEqual(
+    shouldCheckUpdateConflicts({ scheduleChanged: true, previousStatus: 'confirmed' }),
+    true,
+    'active booking reschedules must run conflict checks even for staff/admin edits'
+  );
+  assert.strictEqual(
+    shouldCheckUpdateConflicts({ scheduleChanged: false, previousStatus: 'completed', nextStatus: 'confirmed' }),
+    true,
+    'reactivating a completed booking must run conflict checks even without schedule field changes'
+  );
+  assert.strictEqual(
+    shouldCheckUpdateConflicts({ scheduleChanged: true, previousStatus: 'cancelled', nextStatus: 'confirmed' }),
+    true,
+    'reactivating a cancelled booking with schedule changes must run conflict checks'
+  );
+  assert.strictEqual(
+    shouldCheckUpdateConflicts({ scheduleChanged: true, previousStatus: 'completed', nextStatus: 'completed' }),
+    false,
+    'historical edits that remain non-blocking should not run schedule conflict checks'
+  );
+  assert.strictEqual(
+    shouldCheckUpdateConflicts({ scheduleChanged: true, previousStatus: 'confirmed', nextStatus: 'cancelled' }),
+    false,
+    'updates that make a booking non-blocking do not need conflict checks'
+  );
+
   const dbPrefsPath = mockModule('../db/notification-prefs', {
     getPrefs: async () => {
       throw new Error('password_reset delivery must not query opt-out preferences');
