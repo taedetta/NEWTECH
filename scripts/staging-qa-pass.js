@@ -17,7 +17,7 @@ const ROLES = [
   {
     name: 'admin',
     email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com',
-    password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
+    password: process.env.ADMIN_PASSWORD || PASSWORD,
     fallbackEmail: 'qa-admin@test.local',
     fallbackPassword: PASSWORD,
     pages: [

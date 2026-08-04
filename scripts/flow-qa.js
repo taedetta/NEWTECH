@@ -40,7 +40,8 @@ function ok(name, cond, detail = '') {
 async function main() {
   console.log('Flow tests:', BASE);
 
-  const admin = await login('evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD || 'NewTech2026!');
+  if (!process.env.ADMIN_PASSWORD) throw new Error('ADMIN_PASSWORD is required');
+  const admin = await login(process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD);
   ok('admin login', admin.user.role === 'admin');
 
   const aircraft = await api(admin.token, '/api/aircraft');

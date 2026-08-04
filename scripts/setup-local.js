@@ -31,7 +31,7 @@ const ENV_FILE = path.join(__dirname, '..', '.env');
 const OWNER = {
   email: process.env.LOCAL_OWNER_EMAIL || 'evaughntaemw@gmail.com',
   name: process.env.LOCAL_OWNER_NAME || 'Evaughntae White',
-  password: process.env.LOCAL_OWNER_PASSWORD || 'NewTech2026!',
+  password: process.env.LOCAL_OWNER_PASSWORD || 'LocalDevPass123!',
   role: 'admin',
 };
 

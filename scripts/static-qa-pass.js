@@ -85,6 +85,64 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical auth/permission guardrails from beta regressions
+console.log('\n=== Critical auth/permission guardrails ===');
+const authMwSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+if (!authMwSrc.includes('FROM users') || !authMwSrc.includes('approval_status') || !authMwSrc.includes('deleted_at')) {
+  fail('authenticateToken must revalidate user state from DB');
+} else ok('authenticateToken DB revalidation present');
+if (authMwSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('maintenance must not bypass every requirePermission check');
+} else ok('maintenance permission bypass absent');
+
+const authRouteSrc = fs.readFileSync(path.join(root, 'routes/auth.js'), 'utf8');
+if (authRouteSrc.includes('Password reset + account reactivation') || authRouteSrc.includes('UPDATE users SET password_hash = $1, deleted_at = NULL')) {
+  fail('password reset must not reactivate deleted users');
+} else ok('password reset does not reactivate deleted users');
+
+const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8');
+if (aircraftSrc.includes("requireRole('owner', 'admin', 'maintenance')")) {
+  fail('maintenance must not delete aircraft');
+} else ok('aircraft delete excludes maintenance role');
+if (!aircraftSrc.includes('parseStrictNumber')) {
+  fail('aircraft numeric writes need strict validation');
+} else ok('aircraft strict numeric validation present');
+
+const approvalsSrc = fs.readFileSync(path.join(root, 'routes/approvals.js'), 'utf8');
+if (approvalsSrc.includes("requireRole('owner', 'admin', 'instructor')")) {
+  fail('instructors must not approve/reject accounts');
+} else ok('approvals owner/admin only');
+
+const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!completionSrc.includes('FOR UPDATE')) fail('booking completion/end-early must row-lock');
+else ok('booking completion row locks present');
+if (!completionSrc.includes('Access denied') || !completionSrc.includes("router.get('/:id'")) {
+  fail('single booking detail must enforce participant/staff access');
+} else ok('single booking detail access guard present');
+
+const bookingsSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
+if (!bookingsSrc.includes('Use the dedicated complete or cancel endpoint')) {
+  fail('generic booking update must block final status rewrites');
+} else ok('generic status rewrite guard present');
+
+const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8');
+if (billingSrc.includes('current_hobbs = current_hobbs -')) {
+  fail('billing void must not rewind aircraft meters');
+} else ok('billing void leaves aircraft meters intact');
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+if (!trainingSrc.includes('adminTrainingAuth') || !trainingSrc.includes("'/programs'")) {
+  fail('training admin routes need authenticated /api/admin/training aliases');
+} else ok('training admin route aliases/auth present');
+if (!trainingSrc.includes('canAccessStudentTraining')) {
+  fail('training student detail/write routes need self/assigned-instructor checks');
+} else ok('training student access helper present');
+
+const fullBetaSrc = fs.readFileSync(path.join(root, 'scripts/full-beta-qa.js'), 'utf8');
+if (!fullBetaSrc.includes('DATABASE_URL is required') || /shortline\.proxy|Frbaga|NewTech2026/.test(fullBetaSrc)) {
+  fail('full beta QA must not contain live credential fallbacks');
+} else ok('full beta QA requires explicit credentials');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');

@@ -1,8 +1,11 @@
 'use strict';
 const { Pool } = require('pg');
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required');
+  process.exit(1);
+}
 const p = new Pool({
-  connectionString: process.env.DATABASE_URL
-    || 'postgresql://postgres:cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij@shortline.proxy.rlwy.net:26871/railway',
+  connectionString: process.env.DATABASE_URL,
   ssl: false,
 });
 p.query(`

@@ -854,6 +854,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status) {
+      if (['completed', 'cancelled'].includes(status)) {
+        return res.status(400).json({ error: 'Use the dedicated complete or cancel endpoint for final booking statuses' });
+      }
+      if (['completed', 'cancelled'].includes(b.status) && status !== b.status) {
+        return res.status(400).json({ error: 'Completed or cancelled bookings cannot be reopened from this endpoint' });
+      }
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -969,10 +977,16 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
     const reason = req.body?.reason || null;
     await client.query('BEGIN');
-    await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
+    const cancelled = await client.query(
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW()
+       WHERE id = $2 AND status NOT IN ('cancelled', 'completed')
+       RETURNING id`,
       [reason, req.params.id]
     );
+    if (cancelled.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Booking is no longer cancellable' });
+    }
     await client.query('COMMIT');
     res.json({ ok: true });
 
