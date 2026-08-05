@@ -119,6 +119,21 @@ if (!failures.some((f) => f.includes('Postgres password') || f.includes('privile
   ok('QA scripts do not embed DB credentials or privileged password fallbacks');
 }
 
+console.log('\n=== package.json test scripts ===');
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+for (const [name, cmd] of Object.entries(pkg.scripts || {})) {
+  if (!name.startsWith('test')) continue;
+  for (const match of cmd.matchAll(/node\s+(scripts\/[^\s&|;]+\.js)/g)) {
+    const scriptPath = path.join(root, match[1]);
+    if (!fs.existsSync(scriptPath)) {
+      fail(`package script ${name} references missing ${match[1]}`);
+    }
+  }
+}
+if (!failures.some((f) => f.includes('package script'))) {
+  ok('All package test script targets exist');
+}
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
