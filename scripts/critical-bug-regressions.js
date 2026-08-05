@@ -5,6 +5,15 @@ process.env.APP_URL = process.env.APP_URL || 'https://example.test';
 
 const assert = require('assert');
 const jwt = require('jsonwebtoken');
+const Module = require('module');
+
+const originalLoad = Module._load;
+Module._load = function loadWithDbStub(request, parent, isMain) {
+  if (request === './index' && parent?.filename?.endsWith('/db/notification-prefs.js')) {
+    return { query: async () => { throw new Error('unexpected database query in regression test'); } };
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
 
 const { EMAIL_TYPES } = require('../lib/email-types');
 const {
