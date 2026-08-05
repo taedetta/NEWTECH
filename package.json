@@ -9,11 +9,9 @@
     "migrate": "node migrate.js",
     "setup": "node scripts/fetch-live-cms.js && node scripts/setup-local.js",
     "sync-cms": "node scripts/fetch-live-cms.js",
+    "test:static": "node scripts/static-qa-pass.js",
     "test:qa": "node scripts/seed-test-users.js && node scripts/comprehensive-qa.js",
-    "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
-    "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
-    "test:schema": "node scripts/verify-schema.js --fix",
-    "test:pipeline": "node scripts/test-complete-pipeline.js"
+    "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",
@@ -25,7 +23,7 @@
     "form-data": "^4.0.5",
     "jsonwebtoken": "^9.0.3",
     "node-fetch": "^2.7.0",
-    "nodemailer": "^8.0.8",
+    "nodemailer": "^9.0.4",
     "openai": "^4.77.0",
     "pdfkit": "^0.15.0",
     "pg": "^8.11.3",

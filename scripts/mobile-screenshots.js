@@ -5,16 +5,19 @@
  * Usage:
  *   node scripts/mobile-screenshots.js [baseUrl]
  * Env:
- *   QA_EMAIL, QA_PASSWORD — login credentials (defaults: local dev owner)
+ *   QA_EMAIL, QA_PASSWORD — login credentials
  */
 
 const { chromium, devices } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { loadDotEnv, requireEnv } = require('./qa-safety');
+
+loadDotEnv();
 
 const BASE = process.argv[2] || process.env.QA_BASE || 'http://localhost:3000';
-const EMAIL = process.env.QA_EMAIL || 'evaughntaemw@gmail.com';
-const PASSWORD = process.env.QA_PASSWORD || process.env.TEST_USER_PASSWORD || 'NewTech2026!';
+const EMAIL = requireEnv('QA_EMAIL', 'mobile screenshots login');
+const PASSWORD = requireEnv('QA_PASSWORD', 'mobile screenshots login');
 const OUT_DIR = path.join(__dirname, '..', 'screenshots', 'mobile-' + new Date().toISOString().slice(0, 10));
 
 const VIEWPORTS = [

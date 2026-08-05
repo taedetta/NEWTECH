@@ -5,20 +5,52 @@ const pool = require('../db/index');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const result = await pool.query(
+      `SELECT id, email, name, role, deleted_at, approval_status, is_instructor
+       FROM users
+       WHERE id = $1`,
+      [decoded.id]
+    );
+    if (result.rows.length === 0) {
+      res.clearCookie?.('token');
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    const user = result.rows[0];
+    if (user.deleted_at) {
+      res.clearCookie?.('token');
+      return res.status(401).json({ error: 'Account has been deleted' });
+    }
+    if ((user.approval_status || 'approved') !== 'approved') {
+      res.clearCookie?.('token');
+      return res.status(403).json({ error: 'Account is not approved' });
+    }
+    req.user = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      is_instructor: !!user.is_instructor,
+    };
     next();
-  } catch {
+  } catch (err) {
+    if (err.name !== 'JsonWebTokenError' && err.name !== 'TokenExpiredError') {
+      console.error('Auth token revalidation error:', err);
+    }
+    res.clearCookie?.('token');
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
 function requireRole(...roles) {
   return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
@@ -69,7 +101,15 @@ async function getUserPermissions(userId, role) {
 function requirePermission(permKey) {
   return async (req, res, next) => {
     try {
-      if (['owner', 'admin', 'maintenance'].includes(req.user.role)) return next();
+      if (!req.user) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+      if (['owner', 'admin'].includes(req.user.role)) return next();
+      if (req.user.role === 'maintenance') {
+        return permKey === 'can_manage_aircraft'
+          ? next()
+          : res.status(403).json({ error: 'Insufficient permissions' });
+      }
       if (req.user.role !== 'instructor') {
         return res.status(403).json({ error: 'Insufficient permissions' });
       }

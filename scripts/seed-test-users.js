@@ -1,24 +1,14 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
+const { loadDotEnv, requireEnv } = require('./qa-safety');
 
-try {
-  const envPath = path.join(__dirname, '..', '.env');
-  if (fs.existsSync(envPath)) {
-    fs.readFileSync(envPath, 'utf8').split(/\r?\n/).forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) return;
-      const key = trimmed.slice(0, eq).trim();
-      const val = trimmed.slice(eq + 1).trim();
-      if (key && process.env[key] === undefined) process.env[key] = val;
-    });
-  }
-} catch { /* ignore */ }
+loadDotEnv();
+
+if (process.env.ALLOW_QA_MUTATIONS !== 'true') {
+  throw new Error('seed-test-users: set ALLOW_QA_MUTATIONS=true before mutating QA users');
+}
 
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 
@@ -92,7 +82,7 @@ async function ensureUserSequence(pool) {
 
 async function main() {
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: requireEnv('DATABASE_URL', 'seed-test-users'),
     ssl: /\.rlwy\.net|railway\.internal/i.test(process.env.DATABASE_URL || '') ? false : undefined,
   });
   const hash = await bcrypt.hash(PASSWORD, 12);

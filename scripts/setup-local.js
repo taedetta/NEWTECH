@@ -12,6 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
@@ -29,9 +30,9 @@ const SCHEMA_FILE = path.join(__dirname, 'bootstrap-schema.sql');
 const ENV_FILE = path.join(__dirname, '..', '.env');
 
 const OWNER = {
-  email: process.env.LOCAL_OWNER_EMAIL || 'evaughntaemw@gmail.com',
-  name: process.env.LOCAL_OWNER_NAME || 'Evaughntae White',
-  password: process.env.LOCAL_OWNER_PASSWORD || 'NewTech2026!',
+  email: process.env.LOCAL_OWNER_EMAIL || 'local-owner@test.local',
+  name: process.env.LOCAL_OWNER_NAME || 'Local Owner',
+  password: process.env.LOCAL_OWNER_PASSWORD || `Local-${crypto.randomBytes(9).toString('base64url')}1!`,
   role: 'admin',
 };
 

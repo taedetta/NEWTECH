@@ -8,20 +8,29 @@
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
+const { loadDotEnv, resolveBaseUrl } = require('./qa-safety');
 
-const BASE = process.argv.includes('--base')
-  ? process.argv[process.argv.indexOf('--base') + 1]
-  : 'https://www.newtechaviation.com';
+loadDotEnv();
+
+const BASE = resolveBaseUrl('https://www.newtechaviation.com');
 
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
+const ADMIN_ROLE = process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD
+  ? {
+    email: process.env.ADMIN_EMAIL,
+    password: process.env.ADMIN_PASSWORD,
+    fallbackEmail: 'qa-admin@test.local',
+    fallbackPassword: PASSWORD,
+  }
+  : {
+    email: 'qa-admin@test.local',
+    password: PASSWORD,
+  };
 
 const ROLES = [
   {
     name: 'admin',
-    email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com',
-    password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
-    fallbackEmail: 'qa-admin@test.local',
-    fallbackPassword: PASSWORD,
+    ...ADMIN_ROLE,
     pages: [
       'dashboard', 'schedule', 'history', 'fleet', 'tracking', 'maintenance',
       'people', 'progress', 'at-risk', 'leads', 'billing', 'instructor-hours',
@@ -107,9 +116,11 @@ async function loginApi(email, password) {
 
 async function getAdminToken() {
   const attempts = [
-    { email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com', password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!' },
     { email: 'qa-admin@test.local', password: PASSWORD },
   ];
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    attempts.unshift({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD });
+  }
   for (const a of attempts) {
     try {
       return await loginApi(a.email, a.password);

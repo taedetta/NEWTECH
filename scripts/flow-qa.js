@@ -3,8 +3,18 @@
 /**
  * Critical user-flow smoke tests (API-level).
  */
-const BASE = process.env.QA_BASE || 'http://localhost:3000';
+const {
+  loadDotEnv,
+  optionalAdminCredentials,
+  requireApiMutationSafety,
+  resolveBaseUrl,
+} = require('./qa-safety');
+
+loadDotEnv();
+
+const BASE = resolveBaseUrl('http://localhost:3000');
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
+requireApiMutationSafety({ baseUrl: BASE, scriptName: 'flow-qa' });
 
 const failures = [];
 
@@ -40,7 +50,21 @@ function ok(name, cond, detail = '') {
 async function main() {
   console.log('Flow tests:', BASE);
 
-  const admin = await login('evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD || 'NewTech2026!');
+  let admin;
+  let lastLoginError;
+  const adminAttempts = [
+    ...optionalAdminCredentials(),
+    { email: 'qa-admin@test.local', password: PASSWORD },
+  ];
+  for (const credentials of adminAttempts) {
+    try {
+      admin = await login(credentials.email, credentials.password);
+      break;
+    } catch (e) {
+      lastLoginError = e;
+    }
+  }
+  if (!admin) throw lastLoginError || new Error('Admin login credentials are required');
   ok('admin login', admin.user.role === 'admin');
 
   const aircraft = await api(admin.token, '/api/aircraft');
