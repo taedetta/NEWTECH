@@ -134,6 +134,30 @@ if (!failures.some((f) => f.includes('package script'))) {
   ok('All package test script targets exist');
 }
 
+console.log('\n=== Auth guardrails ===');
+const authSrc = fs.readFileSync(path.join(root, 'middleware', 'auth.js'), 'utf8');
+if (!/SELECT[\s\S]*FROM users[\s\S]*WHERE id = \$1/.test(authSrc)
+  || !authSrc.includes('deleted_at')
+  || !authSrc.includes('approval_status')) {
+  fail('authenticateToken does not revalidate user account state from DB');
+}
+if (/owner', 'admin', 'maintenance'\]\.includes\(req\.user\.role\)/.test(authSrc)) {
+  fail('requirePermission grants maintenance every permission');
+}
+if (!authSrc.includes("permKey === 'can_manage_aircraft'")) {
+  fail('requirePermission missing maintenance aircraft-only permission scope');
+}
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes', 'training.js'), 'utf8');
+const unauthedTrainingAdminRoutes = trainingSrc.split(/\r?\n/)
+  .filter((line) => /router\.(post|put|delete)\('\/admin\//.test(line) && !line.includes('authenticateToken'));
+if (unauthedTrainingAdminRoutes.length) {
+  fail(`Training admin routes missing authenticateToken: ${unauthedTrainingAdminRoutes.length}`);
+}
+if (!failures.some((f) => f.includes('authenticateToken') || f.includes('requirePermission') || f.includes('Training admin'))) {
+  ok('Auth middleware and training admin routes include critical guards');
+}
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
