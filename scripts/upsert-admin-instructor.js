@@ -1,34 +1,22 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const { upsertFullUserPermissions } = require('../lib/user-permissions-db');
+const { loadDotEnv, requireEnv } = require('./qa-safety');
 
-// Load .env for local development (same as server.js)
-try {
-  const envPath = path.join(__dirname, '..', '.env');
-  if (fs.existsSync(envPath)) {
-    fs.readFileSync(envPath, 'utf8').split(/\r?\n/).forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) return;
-      const key = trimmed.slice(0, eq).trim();
-      const val = trimmed.slice(eq + 1).trim();
-      if (key && process.env[key] === undefined) process.env[key] = val;
-    });
-  }
-} catch { /* ignore */ }
+loadDotEnv();
 
-const EMAIL = process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com';
-const NAME = process.env.ADMIN_NAME || 'Evaughntae White';
-const PASSWORD = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
+const EMAIL = requireEnv('ADMIN_EMAIL', 'admin upsert');
+const NAME = process.env.ADMIN_NAME || 'FlightSlate Admin';
+const PASSWORD = requireEnv('ADMIN_PASSWORD', 'admin upsert');
 const ROLE = process.env.ADMIN_ROLE || 'admin';
 
 async function main() {
-  const poolConfig = { connectionString: process.env.DATABASE_URL };
+  if (process.env.ALLOW_ADMIN_UPSERT !== 'true') {
+    throw new Error('Set ALLOW_ADMIN_UPSERT=true before creating or updating an admin account');
+  }
+  const poolConfig = { connectionString: requireEnv('DATABASE_URL', 'admin upsert') };
   if (process.env.DATABASE_URL && /render\.com|neon\.tech|dpg-/.test(process.env.DATABASE_URL)) {
     poolConfig.ssl = { rejectUnauthorized: false };
   }
@@ -69,7 +57,7 @@ async function main() {
       [userId]
     );
     console.log(JSON.stringify(row.rows[0], null, 2));
-    console.log(`Password: ${PASSWORD}`);
+    console.log('Password updated from ADMIN_PASSWORD.');
   } finally {
     await pool.end();
   }

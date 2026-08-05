@@ -5,22 +5,26 @@
  * terms acceptance on signup.
  *
  * Usage:
- *   DATABASE_URL=... node scripts/full-beta-qa.js [--base http://localhost:3000]
+ *   ALLOW_QA_MUTATIONS=true DATABASE_URL=... ADMIN_EMAIL=... ADMIN_PASSWORD=... node scripts/full-beta-qa.js [--base http://localhost:3000]
  */
-const fs = require('fs');
 const { Pool } = require('pg');
 const { TERMS_VERSION } = require('../lib/terms');
+const {
+  loadDotEnv,
+  requireAdminCredentials,
+  requireQaMutationSafety,
+  resolveBaseUrl,
+} = require('./qa-safety');
 
-const BASE = process.argv.includes('--base')
-  ? process.argv[process.argv.indexOf('--base') + 1]
-  : (process.env.QA_BASE || 'https://www.newtechaviation.com');
+loadDotEnv();
+
+const BASE = resolveBaseUrl('http://localhost:3000');
+const DATABASE_URL = process.env.DATABASE_URL;
+const ADMIN = requireAdminCredentials();
+requireQaMutationSafety({ baseUrl: BASE, databaseUrl: DATABASE_URL, scriptName: 'full-beta-qa' });
 
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
-
-process.env.DATABASE_URL = process.env.DATABASE_URL
-  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null)
-  || 'postgresql://postgres:cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij@shortline.proxy.rlwy.net:26871/railway';
+const QA_SOURCE = process.env.QA_SOURCE || process.env.APP_ENV || 'staging';
 
 const failures = [];
 const ok = (name, cond, detail = '') => {
@@ -95,7 +99,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
   const slot = pastSlot(hoursAgo, 90);
   const r = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, $8)
     RETURNING id
   `, [
     studentId || null,
@@ -105,6 +109,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
     slot.end_time,
     type,
     instructorId || studentId,
+    QA_SOURCE,
   ]);
   return r.rows[0].id;
 }
@@ -292,9 +297,9 @@ async function testEndEarlyFlow(pool, tokens, users, ac) {
 
   const ins = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time]);
+  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time, QA_SOURCE]);
   const bid = ins.rows[0].id;
 
   const early = await api(adminTok, `/api/bookings/${bid}/end-early`, {
@@ -430,12 +435,12 @@ async function testStudentDualBooking(tokens, users, ac) {
 
 async function main() {
   console.log('Full beta QA —', BASE);
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
+  const pool = new Pool({ connectionString: DATABASE_URL, ssl: false });
 
   await testLegalPages();
   await testTermsSignup(pool);
 
-  const adminTok = await login('evaughntaemw@gmail.com', ADMIN_PASS);
+  const adminTok = await login(ADMIN.email, ADMIN.password);
   const studentTok = await login('qa-student@test.local', PASS);
   const instructorTok = await login('qa-instructor@test.local', PASS);
   const renterTok = await login('qa-renter@test.local', PASS);
@@ -444,7 +449,7 @@ async function main() {
   const users = (await api(adminTok, '/api/users')).data;
   const student = users.find((u) => u.email === 'qa-student@test.local');
   const instructor = users.find((u) => u.email === 'qa-instructor@test.local')
-    || users.find((u) => u.email === 'evaughntaemw@gmail.com');
+    || users.find((u) => u.email === ADMIN.email);
   const renter = users.find((u) => u.email === 'qa-renter@test.local');
   const acList = (await api(adminTok, '/api/aircraft')).data;
   await ensureFleetBookable(adminTok, acList);

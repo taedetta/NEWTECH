@@ -1,8 +1,11 @@
 'use strict';
 const { Pool } = require('pg');
+const { loadDotEnv, requireEnv } = require('./qa-safety');
+
+loadDotEnv();
+
 const p = new Pool({
-  connectionString: process.env.DATABASE_URL
-    || 'postgresql://postgres:cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij@shortline.proxy.rlwy.net:26871/railway',
+  connectionString: requireEnv('DATABASE_URL', 'apply-terms-columns'),
   ssl: false,
 });
 p.query(`

@@ -1,19 +1,25 @@
 'use strict';
 /**
  * Full user-flow E2E — book, complete, cancel, squawk, billing/history per role.
- * Usage: node scripts/user-flow-e2e.js [--base http://localhost:3000]
+ * Usage: ALLOW_QA_MUTATIONS=true DATABASE_URL=... ADMIN_EMAIL=... ADMIN_PASSWORD=... node scripts/user-flow-e2e.js [--base http://localhost:3000]
  */
-const fs = require('fs');
 const { Pool } = require('pg');
+const {
+  loadDotEnv,
+  requireAdminCredentials,
+  requireQaMutationSafety,
+  resolveBaseUrl,
+} = require('./qa-safety');
 
-const BASE = process.argv.includes('--base')
-  ? process.argv[process.argv.indexOf('--base') + 1]
-  : (process.env.QA_BASE || 'https://www.newtechaviation.com');
+loadDotEnv();
+
+const BASE = resolveBaseUrl('http://localhost:3000');
+const DATABASE_URL = process.env.DATABASE_URL;
+const ADMIN = requireAdminCredentials();
+requireQaMutationSafety({ baseUrl: BASE, databaseUrl: DATABASE_URL, scriptName: 'user-flow-e2e' });
+
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
-
-process.env.DATABASE_URL = process.env.DATABASE_URL
-  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);
+const QA_SOURCE = process.env.QA_SOURCE || process.env.APP_ENV || 'staging';
 
 async function login(email, password) {
   const r = await fetch(`${BASE}/api/auth/login`, {
@@ -90,8 +96,8 @@ async function main() {
     else { failures.push(name); console.log('  FAIL', name, detail); }
   };
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  const adminTok = await login('evaughntaemw@gmail.com', ADMIN_PASS);
+  const pool = new Pool({ connectionString: DATABASE_URL });
+  const adminTok = await login(ADMIN.email, ADMIN.password);
   const studentTok = await login('qa-student@test.local', PASS);
   const renterTok = await login('qa-renter@test.local', PASS);
   let instructorTok;
@@ -105,7 +111,7 @@ async function main() {
   const student = users.find((u) => u.email === 'qa-student@test.local');
   const renter = users.find((u) => u.email === 'qa-renter@test.local');
   const instructor = users.find((u) => u.email === 'qa-instructor@test.local')
-    || users.find((u) => u.email === 'evaughntaemw@gmail.com');
+    || users.find((u) => u.email === ADMIN.email);
   const acList = (await api(adminTok, '/api/aircraft')).data;
   const ac = acList.find((a) => a.status === 'available');
   if (!ac || !student || !renter || !instructor) throw new Error('Missing test users or aircraft');
@@ -150,9 +156,9 @@ async function main() {
   const dualPast = pastSlot(3, 90);
   const dualIns = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, COALESCE((SELECT source FROM bookings LIMIT 1), 'production'))
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, dualPast.start_time, dualPast.end_time]);
+  `, [student.id, instructor.id, ac.id, dualPast.start_time, dualPast.end_time, QA_SOURCE]);
   const dualId = dualIns.rows[0].id;
   created.push(dualId);
 
@@ -180,9 +186,9 @@ async function main() {
   const soloPast = pastSlot(5, 60);
   const soloIns = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES (NULL, $1, $2, $3::timestamptz, $4::timestamptz, 'confirmed', 'instructor_solo', $1, COALESCE((SELECT source FROM bookings LIMIT 1), 'production'))
+    VALUES (NULL, $1, $2, $3::timestamptz, $4::timestamptz, 'confirmed', 'instructor_solo', $1, $5)
     RETURNING id
-  `, [instructor.id, ac.id, soloPast.start_time, soloPast.end_time]);
+  `, [instructor.id, ac.id, soloPast.start_time, soloPast.end_time, QA_SOURCE]);
   const soloId = soloIns.rows[0].id;
   created.push(soloId);
 

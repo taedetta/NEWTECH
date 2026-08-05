@@ -2,15 +2,17 @@
 
 /**
  * Run full QA suite in a test/fix loop until clean or max iterations.
- * Usage: node scripts/full-role-qa-loop.js [--base https://www.newtechaviation.com] [--max 5]
+ * Usage: ALLOW_QA_MUTATIONS=true DATABASE_URL=... node scripts/full-role-qa-loop.js [--base http://localhost:3000] [--max 5]
  */
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { loadDotEnv, requireApiMutationSafety, resolveBaseUrl } = require('./qa-safety');
 
-const BASE = process.argv.includes('--base')
-  ? process.argv[process.argv.indexOf('--base') + 1]
-  : 'https://www.newtechaviation.com';
+loadDotEnv();
+
+const BASE = resolveBaseUrl('http://localhost:3000');
+requireApiMutationSafety({ baseUrl: BASE, scriptName: 'full-role-qa-loop' });
 
 const MAX = process.argv.includes('--max')
   ? parseInt(process.argv[process.argv.indexOf('--max') + 1], 10)
@@ -19,7 +21,6 @@ const MAX = process.argv.includes('--max')
 const env = {
   ...process.env,
   QA_BASE: BASE,
-  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
   TEST_USER_PASSWORD: process.env.TEST_USER_PASSWORD || 'TestPass123!',
 };
 

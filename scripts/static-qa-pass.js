@@ -85,6 +85,40 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. QA script safety guardrails
+console.log('\n=== QA script safety ===');
+const scriptDir = path.join(root, 'scripts');
+const scriptFiles = fs.readdirSync(scriptDir)
+  .filter((f) => f.endsWith('.js'))
+  .map((f) => path.join(scriptDir, f));
+for (const f of scriptFiles) {
+  const rel = path.relative(root, f);
+  const src = fs.readFileSync(f, 'utf8');
+  if (/postgresql:\/\/postgres:(?!\$\{)[^@\s]+@/i.test(src)) {
+    fail(`${rel} embeds a Postgres password in a connection URL`);
+  }
+  if (/process\.env\.(ADMIN_PASSWORD|OWNER_PASSWORD|QA_PASSWORD)\s*\|\|/.test(src)) {
+    fail(`${rel} falls back to a committed privileged password`);
+  }
+}
+
+const mutatingQaScripts = [
+  ['scripts/full-beta-qa.js', 'requireQaMutationSafety'],
+  ['scripts/user-flow-e2e.js', 'requireQaMutationSafety'],
+  ['scripts/flow-qa.js', 'requireApiMutationSafety'],
+  ['scripts/full-role-qa-loop.js', 'requireApiMutationSafety'],
+];
+for (const [rel, guard] of mutatingQaScripts) {
+  const src = fs.readFileSync(path.join(root, rel), 'utf8');
+  if (!src.includes(guard)) fail(`${rel} missing ${guard}`);
+  if (src.includes('https://www.newtechaviation.com')) {
+    fail(`${rel} defaults mutating QA to production`);
+  }
+}
+if (!failures.some((f) => f.includes('Postgres password') || f.includes('privileged password') || f.includes('mutating QA'))) {
+  ok('QA scripts do not embed DB credentials or privileged password fallbacks');
+}
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
