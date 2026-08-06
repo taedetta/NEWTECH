@@ -144,6 +144,27 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+console.log('\n=== Frontend action handlers ===');
+for (const fn of [
+  'addFreeformItem',
+  'renderFreeformItems',
+  'execRichCmd',
+  'execRichFontSize',
+  'execRichColor',
+  'clearRichFormat',
+  'closeFlogEditModal',
+  'closeAircraftHoursEditModal',
+  'closeCompleteFlightModal',
+]) {
+  if (!appHtml.includes(`function ${fn}(`)) fail(`Missing frontend handler: ${fn}`);
+}
+if (!appHtml.includes('out.freeform_items = editorContent.freeform_items')) {
+  fail('Website editor must collect freeform_items on save');
+}
+if (!failures.some((f) => f.includes('frontend handler')) && !failures.some((f) => f.includes('freeform_items'))) {
+  ok('Website editor and legacy modal handlers present');
+}
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
