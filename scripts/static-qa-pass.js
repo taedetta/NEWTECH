@@ -80,9 +80,28 @@ const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8
 if (!trainingSrc.includes("['/admin/programs', '/programs']") || !trainingSrc.includes('adminTrainingOnly')) {
   fail('Training admin program routes must expose authenticated /api/admin/training aliases');
 } else ok('Training admin aliases are authenticated');
+if (!trainingSrc.includes('canWriteTrainingForStudent') ||
+    !trainingSrc.includes("router.post('/student-progress', authenticateToken, requireRole('") ||
+    !trainingSrc.includes("router.put('/enrollment/:id/stage', authenticateToken, requireRole('") ||
+    !trainingSrc.includes("router.post('/milestones', authenticateToken, requireRole('")) {
+  fail('Training write routes must require staff role and assigned-instructor checks');
+} else ok('Training write routes require staff/assigned-instructor checks');
 if (aircraftSrc.includes("requireRole('owner', 'admin', 'maintenance')")) {
   fail('Maintenance role must not be allowed to delete aircraft');
 } else ok('Aircraft delete is not maintenance-accessible');
+if (!aircraftSrc.includes('cannot be before current reading')) {
+  fail('Manual aircraft meter edits must reject backward readings');
+} else ok('Manual aircraft meter edits reject backward readings');
+
+const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!completionSrc.includes('FOR UPDATE') || !completionSrc.includes("Only confirmed bookings can be completed")) {
+  fail('Booking completion must re-check confirmed status under row lock');
+} else ok('Booking completion re-checks status under row lock');
+
+const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8');
+if (billingSrc.includes('current_hobbs = current_hobbs -') || billingSrc.includes('total_hobbs_hours = total_hobbs_hours -')) {
+  fail('Billing void must not rewind historical user or aircraft hours');
+} else ok('Billing void is non-destructive for historical hours');
 
 // 3d. Numeric persistence guards
 console.log('\n=== Numeric persistence guards ===');

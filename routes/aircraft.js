@@ -185,6 +185,18 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     );
     if (current.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     const acRow = current.rows[0];
+    const currentHobbs = getMeterHobbs(acRow);
+    if (parsedHobbs.value != null && currentHobbs != null && parsedHobbs.value < currentHobbs - 0.1) {
+      return res.status(400).json({
+        error: `Hobbs (${parsedHobbs.value.toFixed(1)}) cannot be before current reading (${currentHobbs.toFixed(1)})`,
+      });
+    }
+    const currentTach = getMeterTach(acRow);
+    if (parsedTach.value != null && currentTach != null && parsedTach.value < currentTach - 0.1) {
+      return res.status(400).json({
+        error: `Tach (${parsedTach.value.toFixed(1)}) cannot be before current reading (${currentTach.toFixed(1)})`,
+      });
+    }
     await client.query('BEGIN');
     const sets = [];
     const vals = [];
