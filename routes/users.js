@@ -14,6 +14,18 @@ const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
 const router = express.Router();
 
+function parseOptionalNonNegativeNumber(value, fieldName, max = 99999) {
+  if (value === undefined || value === null || value === '') return { value: null };
+  const raw = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(raw)) {
+    return { error: `${fieldName} must be a valid non-negative number` };
+  }
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return { error: `${fieldName} must be a valid non-negative number` };
+  if (num > max) return { error: `${fieldName} exceeds maximum allowed value` };
+  return { value: num };
+}
+
 // GET /api/users
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -185,9 +197,11 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
     const targetId = parseInt(req.params.id);
     const { instructor_rate } = req.body;
     if (instructor_rate === undefined) return res.status(400).json({ error: 'instructor_rate is required' });
+    const parsedRate = parseOptionalNonNegativeNumber(instructor_rate, 'instructor_rate', 9999);
+    if (parsedRate.error) return res.status(400).json({ error: parsedRate.error });
     const result = await pool.query(
       `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, instructor_rate`,
-      [parseFloat(instructor_rate), targetId]
+      [parsedRate.value, targetId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
@@ -479,8 +493,18 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    if (total_hobbs_hours !== undefined) {
+      const parsedHobbs = parseOptionalNonNegativeNumber(total_hobbs_hours, 'total_hobbs_hours');
+      if (parsedHobbs.error) return res.status(400).json({ error: parsedHobbs.error });
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(parsedHobbs.value);
+    }
+    if (total_tach_hours !== undefined) {
+      const parsedTach = parseOptionalNonNegativeNumber(total_tach_hours, 'total_tach_hours');
+      if (parsedTach.error) return res.status(400).json({ error: parsedTach.error });
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(parsedTach.value);
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,

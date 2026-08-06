@@ -59,6 +59,65 @@ const adminSrc = fs.readFileSync(path.join(root, 'routes/admin.js'), 'utf8');
 if (adminSrc.includes('child.spawn')) fail('child.spawn still present in admin.js');
 else ok('spawn used correctly');
 
+// 3b. Critical auth/account-state guards
+console.log('\n=== Auth hardening ===');
+const authMiddlewareSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+const authRoutesSrc = fs.readFileSync(path.join(root, 'routes/auth.js'), 'utf8');
+if (!authMiddlewareSrc.includes('approval_status') || !authMiddlewareSrc.includes('deleted_at') || !authMiddlewareSrc.includes('pool.query')) {
+  fail('authenticateToken must revalidate deleted/approval account state from DB');
+} else ok('Token auth revalidates account state from DB');
+if (!authMiddlewareSrc.includes('if (!req.user) return res.status(401)')) {
+  fail('requireRole/requirePermission must reject missing req.user without throwing');
+} else ok('Role/permission guards handle missing req.user');
+if (authRoutesSrc.includes('Reactivated soft-deleted account') || /UPDATE users SET password_hash = \$1,\s*deleted_at = NULL/.test(authRoutesSrc)) {
+  fail('Login/reset must not reactivate deleted accounts');
+} else ok('Login/reset do not reactivate deleted accounts');
+
+// 3c. Critical route coverage/permissions
+console.log('\n=== Critical route permissions ===');
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8');
+if (!trainingSrc.includes("['/admin/programs', '/programs']") || !trainingSrc.includes('adminTrainingOnly')) {
+  fail('Training admin program routes must expose authenticated /api/admin/training aliases');
+} else ok('Training admin aliases are authenticated');
+if (!trainingSrc.includes('canWriteTrainingForStudent') ||
+    !trainingSrc.includes("router.post('/student-progress', authenticateToken, requireRole('") ||
+    !trainingSrc.includes("router.put('/enrollment/:id/stage', authenticateToken, requireRole('") ||
+    !trainingSrc.includes("router.post('/milestones', authenticateToken, requireRole('")) {
+  fail('Training write routes must require staff role and assigned-instructor checks');
+} else ok('Training write routes require staff/assigned-instructor checks');
+if (aircraftSrc.includes("requireRole('owner', 'admin', 'maintenance')")) {
+  fail('Maintenance role must not be allowed to delete aircraft');
+} else ok('Aircraft delete is not maintenance-accessible');
+if (!aircraftSrc.includes('cannot be before current reading')) {
+  fail('Manual aircraft meter edits must reject backward readings');
+} else ok('Manual aircraft meter edits reject backward readings');
+
+const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!completionSrc.includes('FOR UPDATE') || !completionSrc.includes("Only confirmed bookings can be completed")) {
+  fail('Booking completion must re-check confirmed status under row lock');
+} else ok('Booking completion re-checks status under row lock');
+
+const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8');
+if (billingSrc.includes('current_hobbs = current_hobbs -') || billingSrc.includes('total_hobbs_hours = total_hobbs_hours -')) {
+  fail('Billing void must not rewind historical user or aircraft hours');
+} else ok('Billing void is non-destructive for historical hours');
+
+// 3d. Numeric persistence guards
+console.log('\n=== Numeric persistence guards ===');
+const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
+const instructorHoursSrc = fs.readFileSync(path.join(root, 'routes/instructor-hours.js'), 'utf8');
+const groundSrc = fs.readFileSync(path.join(root, 'routes/ground.js'), 'utf8');
+for (const [label, src, fn] of [
+  ['aircraft', aircraftSrc, 'parseOptionalNonNegativeNumber'],
+  ['users', usersSrc, 'parseOptionalNonNegativeNumber'],
+  ['instructor-hours', instructorHoursSrc, 'parseOptionalNonNegativeNumber'],
+  ['ground', groundSrc, 'parsePositiveNumber'],
+]) {
+  if (!src.includes(fn)) fail(`${label} routes missing strict numeric parser`);
+}
+if (!failures.some((f) => f.includes('strict numeric parser'))) ok('Strict numeric parsers present on critical write routes');
+
 // 4. Page div coverage for nav items in app.html
 console.log('\n=== Page div coverage ===');
 const appHtml = fs.readFileSync(path.join(root, 'public/app.html'), 'utf8');
@@ -84,6 +143,27 @@ if (!failures.some((f) => f.includes('navigate handler'))) ok('Critical page han
 if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
+
+console.log('\n=== Frontend action handlers ===');
+for (const fn of [
+  'addFreeformItem',
+  'renderFreeformItems',
+  'execRichCmd',
+  'execRichFontSize',
+  'execRichColor',
+  'clearRichFormat',
+  'closeFlogEditModal',
+  'closeAircraftHoursEditModal',
+  'closeCompleteFlightModal',
+]) {
+  if (!appHtml.includes(`function ${fn}(`)) fail(`Missing frontend handler: ${fn}`);
+}
+if (!appHtml.includes('out.freeform_items = editorContent.freeform_items')) {
+  fail('Website editor must collect freeform_items on save');
+}
+if (!failures.some((f) => f.includes('frontend handler')) && !failures.some((f) => f.includes('freeform_items'))) {
+  ok('Website editor and legacy modal handlers present');
+}
 
 console.log('\n=== Summary ===');
 if (failures.length === 0) {

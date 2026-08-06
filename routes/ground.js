@@ -6,13 +6,24 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
+function parsePositiveNumber(value, fieldName, max = 99999) {
+  if (value === undefined || value === null || value === '') return { error: `${fieldName} is required` };
+  const raw = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(raw)) return { error: `${fieldName} must be a valid positive number` };
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num <= 0) return { error: `${fieldName} must be greater than 0` };
+  if (num > max) return { error: `${fieldName} exceeds maximum allowed value` };
+  return { value: num };
+}
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
     if (role === 'student') return res.status(403).json({ error: 'Students cannot submit ground sessions' });
     const { student_id, session_date, ground_hours, notes } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id is required' });
-    if (!ground_hours || parseFloat(ground_hours) <= 0) return res.status(400).json({ error: 'ground_hours must be greater than 0' });
+    const parsedGroundHours = parsePositiveNumber(ground_hours, 'ground_hours');
+    if (parsedGroundHours.error) return res.status(400).json({ error: parsedGroundHours.error });
     let instructorId = userId;
     if ((role === 'owner' || role === 'admin') && req.body.instructor_id) instructorId = parseInt(req.body.instructor_id);
     const instructorCheck = await pool.query('SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL', [instructorId]);
@@ -21,7 +32,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const studentCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL", [parseInt(student_id)]);
     if (studentCheck.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
     const instrRate = instructorCheck.rows[0].instructor_rate;
-    const hrs = parseFloat(ground_hours);
+    const hrs = parsedGroundHours.value;
     const chargeAmount = instrRate != null ? Math.round(hrs * parseFloat(instrRate) * 100) / 100 : 0;
     const result = await pool.query(`
       INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes)
@@ -106,8 +117,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1', [sessionId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     const { session_date, ground_hours, notes } = req.body;
-    if (!ground_hours || parseFloat(ground_hours) <= 0) return res.status(400).json({ error: 'ground_hours must be greater than 0' });
-    const hrs = parseFloat(ground_hours);
+    const parsedGroundHours = parsePositiveNumber(ground_hours, 'ground_hours');
+    if (parsedGroundHours.error) return res.status(400).json({ error: parsedGroundHours.error });
+    const hrs = parsedGroundHours.value;
     const instrRate = existing.rows[0].instructor_rate;
     const chargeAmount = instrRate != null ? Math.round(hrs * parseFloat(instrRate) * 100) / 100 : 0;
     const result = await pool.query(`
