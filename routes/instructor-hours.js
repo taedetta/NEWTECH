@@ -15,23 +15,39 @@ const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
 
+function parseStrictNumber(value, fieldName, { required = false, min = 0, max = 99999 } = {}) {
+  if (value === undefined || value === null || value === '') {
+    if (required) {
+      const err = new Error(`${fieldName} is required`);
+      err.status = 400;
+      throw err;
+    }
+    return null;
+  }
+  const str = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(str)) {
+    const err = new Error(`${fieldName} must be a valid number`);
+    err.status = 400;
+    throw err;
+  }
+  const num = Number(str);
+  if (!Number.isFinite(num) || num < min || num > max) {
+    const err = new Error(`${fieldName} must be between ${min} and ${max}`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
     if (role === 'student') return res.status(403).json({ error: 'Students cannot submit instructor hours' });
     const { aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name, booking_id, hobbs_start, hobbs_end } = req.body;
-    if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
-    // Input sanitization: reject NaN, negative, impossibly large hour values
-    const parsedInstrHours = parseFloat(instruction_hours);
-    if (isNaN(parsedInstrHours) || parsedInstrHours < 0 || parsedInstrHours > 99999) {
-      return res.status(400).json({ error: 'instruction_hours must be a valid non-negative number' });
-    }
-    if (aircraft_hours != null) {
-      const parsedAcHours = parseFloat(aircraft_hours);
-      if (isNaN(parsedAcHours) || parsedAcHours < 0 || parsedAcHours > 99999) {
-        return res.status(400).json({ error: 'aircraft_hours must be a valid non-negative number' });
-      }
-    }
+    const parsedInstrHours = parseStrictNumber(instruction_hours, 'instruction_hours', { required: true });
+    const parsedAcHours = parseStrictNumber(aircraft_hours, 'aircraft_hours');
+    const parsedAircraftRate = parseStrictNumber(aircraft_rate, 'aircraft_rate', { max: 10000 });
+    const parsedInstructorRate = parseStrictNumber(instructor_rate, 'instructor_rate', { max: 10000 });
     // Re-verify role from DB — don't trust JWT alone for write operations
     const dbUserCheck = await pool.query('SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL', [userId]);
     if (dbUserCheck.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
@@ -74,8 +90,8 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
     }
     const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
-    const acHrsVal = parseFloat(aircraft_hours) || 0;
-    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const acHrsVal = parsedAcHours || 0;
+    const instrHrsVal = parsedInstrHours || 0;
     const audit = await auditInstructorHoursEntry({
       instructorId,
       entryDate,
@@ -91,8 +107,8 @@ router.post('/', authenticateToken, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
        entryDate, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraft_rate !== undefined ? parsedAircraftRate : null,
+       instructor_rate !== undefined ? parsedInstructorRate : null,
        notes || null, student_name || null,
        parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
        audit.status, audit.message]
@@ -114,6 +130,7 @@ router.post('/', authenticateToken, async (req, res) => {
       console.warn(`[instructor-hours] Flagged entry id=${entry.id}: ${audit.message}`);
     }
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('Instructor hours create error:', err);
     res.status(500).json({ error: 'Failed to create instructor hours entry' });
   }
@@ -206,10 +223,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
-    if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
     const row = existing.rows[0];
-    const acHrsVal = parseFloat(aircraft_hours) || 0;
-    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const acHrsVal = parseStrictNumber(aircraft_hours, 'aircraft_hours') || 0;
+    const instrHrsVal = parseStrictNumber(instruction_hours, 'instruction_hours', { required: true }) || 0;
+    const aircraftRateVal = parseStrictNumber(aircraft_rate, 'aircraft_rate', { max: 10000 });
+    const instructorRateVal = parseStrictNumber(instructor_rate, 'instructor_rate', { max: 10000 });
     const newDate = entry_date || row.entry_date;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
@@ -228,8 +246,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraft_rate !== undefined ? aircraftRateVal : null,
+       instructor_rate !== undefined ? instructorRateVal : null,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
@@ -242,6 +260,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     res.json({ ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('Instructor hours update error:', err);
     res.status(500).json({ error: err.message || 'Failed to update entry' });
   } finally {
