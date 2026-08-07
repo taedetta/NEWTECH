@@ -126,17 +126,20 @@ if (!bookingsSrc.includes('Use the dedicated complete or cancel endpoint')) {
 } else ok('generic status rewrite guard present');
 
 const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8');
-if (billingSrc.includes('current_hobbs = current_hobbs -')) {
-  fail('billing void must not rewind aircraft meters');
-} else ok('billing void leaves aircraft meters intact');
+if (billingSrc.includes('current_hobbs = current_hobbs -') || billingSrc.includes('total_hobbs_hours = total_hobbs_hours -')) {
+  fail('billing void must not rewind aircraft meters or user totals');
+} else ok('billing void leaves operational totals intact');
 
 const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
 if (!trainingSrc.includes('adminTrainingAuth') || !trainingSrc.includes("'/programs'")) {
   fail('training admin routes need authenticated /api/admin/training aliases');
 } else ok('training admin route aliases/auth present');
-if (!trainingSrc.includes('canAccessStudentTraining')) {
+if (!trainingSrc.includes('canAccessStudentTraining') || !trainingSrc.includes('{ write: true }')) {
   fail('training student detail/write routes need self/assigned-instructor checks');
 } else ok('training student access helper present');
+if (!trainingSrc.includes('enrollments.filter((e) => e.instructor_id === req.user.id)')) {
+  fail('training instructor enrollment summaries must be assignment-scoped');
+} else ok('training instructor enrollment summaries scoped');
 
 const fullBetaSrc = fs.readFileSync(path.join(root, 'scripts/full-beta-qa.js'), 'utf8');
 if (!fullBetaSrc.includes('DATABASE_URL is required') || /shortline\.proxy|Frbaga|NewTech2026/.test(fullBetaSrc)) {

@@ -15,9 +15,9 @@ function isInstructorUser(user) {
   return user.role === 'instructor' || (user.is_instructor && user.role !== 'student');
 }
 
-async function canAccessStudentTraining(user, studentId) {
+async function canAccessStudentTraining(user, studentId, { write = false } = {}) {
   if (isTrainingAdmin(user)) return true;
-  if (user.role === 'student') return user.id === studentId;
+  if (user.role === 'student') return !write && user.id === studentId;
   if (!isInstructorUser(user)) return false;
   const result = await pool.query(
     `SELECT 1 FROM student_training
@@ -66,14 +66,16 @@ router.get('/programs', authenticateToken, async (req, res) => {
 // GET /program-enrollments — programs with student enrollment and progress data (instructor+)
 router.get('/program-enrollments', authenticateToken, async (req, res) => {
   try {
-    // Instructors can view all enrollments; students can't access this endpoint
-    if (req.user.role === 'student') {
+    if (!isTrainingAdmin(req.user) && !isInstructorUser(req.user)) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
     const result = [];
     for (const prog of programs.rows) {
-      const enrollments = await trainingDb.getProgramEnrollments(prog.id);
+      let enrollments = await trainingDb.getProgramEnrollments(prog.id);
+      if (!isTrainingAdmin(req.user)) {
+        enrollments = enrollments.filter((e) => e.instructor_id === req.user.id);
+      }
       result.push({
         id: prog.id,
         code: prog.code,
@@ -129,7 +131,7 @@ router.post('/student-progress', authenticateToken, async (req, res) => {
     const { student_id, maneuver_id, status, notes } = req.body;
     if (!student_id || !maneuver_id) return res.status(400).json({ error: 'student_id and maneuver_id are required' });
     const studentId = parseInt(student_id, 10);
-    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId))) {
+    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId, { write: true }))) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const validStatuses = ['not_started', 'in_progress', 'needs_review', 'proficient', 'completed'];
@@ -557,7 +559,7 @@ router.put('/maneuver-progress', authenticateToken, async (req, res) => {
       || (req.user.is_instructor && req.user.role !== 'student');
     if (!canUpdate) return res.status(403).json({ error: 'Only instructors can update maneuver progress' });
     const studentId = parseInt(student_id, 10);
-    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId))) {
+    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId, { write: true }))) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const result = await trainingDb.upsertManeuverProgress(student_id, maneuver_id, status);
@@ -762,7 +764,7 @@ router.post('/debriefs', authenticateToken, async (req, res) => {
     const { student_id, booking_id, stage_id, notes, recommendations, overall_performance, flight_date, grades } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id is required' });
     const studentId = parseInt(student_id, 10);
-    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId))) {
+    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId, { write: true }))) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const debrief = await trainingDb.createDebrief({
@@ -792,7 +794,7 @@ router.post('/milestones', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'student_id, stage_id, and enrollment_id are required' });
     }
     const studentId = parseInt(student_id, 10);
-    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId))) {
+    if (!Number.isFinite(studentId) || !(await canAccessStudentTraining(req.user, studentId, { write: true }))) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const result = await trainingDb.completeStageMilestone({
