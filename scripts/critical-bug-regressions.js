@@ -16,6 +16,7 @@ const {
   REQUIRED_EMAIL_TYPES,
   TYPE_CATEGORIES,
 } = require('../lib/email-types');
+const { shouldRunBookingConflictCheck } = require('../lib/booking-status');
 
 function tokenFrom(url) {
   return new URL(url).searchParams.get('token');
@@ -80,8 +81,51 @@ function testPasswordResetIsRequired() {
   );
 }
 
+function testBookingConflictChecksForBlockingUpdates() {
+  assert.strictEqual(
+    shouldRunBookingConflictCheck({
+      currentStatus: 'confirmed',
+      nextStatus: 'confirmed',
+      scheduleChanged: true,
+    }),
+    true,
+    'rescheduling an active booking must check conflicts, including admin edits'
+  );
+
+  assert.strictEqual(
+    shouldRunBookingConflictCheck({
+      currentStatus: 'cancelled',
+      nextStatus: 'confirmed',
+      scheduleChanged: false,
+    }),
+    true,
+    'reactivating a cancelled booking must check conflicts even if times did not change'
+  );
+
+  assert.strictEqual(
+    shouldRunBookingConflictCheck({
+      currentStatus: 'completed',
+      nextStatus: 'completed',
+      scheduleChanged: true,
+    }),
+    false,
+    'historical completed edits should not block schedule maintenance'
+  );
+
+  assert.strictEqual(
+    shouldRunBookingConflictCheck({
+      currentStatus: 'confirmed',
+      nextStatus: 'cancelled',
+      scheduleChanged: true,
+    }),
+    false,
+    'moving a booking while cancelling it does not create a schedule blocker'
+  );
+}
+
 testUnsubscribeTokensBindType();
 testUserOnlyLegacyTokensAreRejected();
 testPasswordResetIsRequired();
+testBookingConflictChecksForBlockingUpdates();
 
 console.log('critical bug regressions passed');
