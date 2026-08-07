@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { shouldRunBookingConflictCheck } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -885,9 +886,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const nextStatus = status !== undefined ? status : b.status;
+    const needsConflictCheck = shouldRunBookingConflictCheck({
+      currentStatus: b.status,
+      nextStatus,
+      scheduleChanged,
+    });
+    if (needsConflictCheck || scheduleChanged) {
       await client.query('BEGIN');
       try {
         if (needsConflictCheck) {
