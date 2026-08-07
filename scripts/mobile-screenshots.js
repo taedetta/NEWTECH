@@ -14,7 +14,10 @@ const path = require('path');
 
 const BASE = process.argv[2] || process.env.QA_BASE || 'http://localhost:3000';
 const EMAIL = process.env.QA_EMAIL || 'evaughntaemw@gmail.com';
-const PASSWORD = process.env.QA_PASSWORD || process.env.TEST_USER_PASSWORD || 'NewTech2026!';
+const PASSWORD = process.env.QA_PASSWORD || process.env.TEST_USER_PASSWORD;
+if (!PASSWORD) {
+  throw new Error('QA_PASSWORD or TEST_USER_PASSWORD is required');
+}
 const OUT_DIR = path.join(__dirname, '..', 'screenshots', 'mobile-' + new Date().toISOString().slice(0, 10));
 
 const VIEWPORTS = [

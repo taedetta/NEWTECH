@@ -19,7 +19,7 @@ const MAX = process.argv.includes('--max')
 const env = {
   ...process.env,
   QA_BASE: BASE,
-  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
   TEST_USER_PASSWORD: process.env.TEST_USER_PASSWORD || 'TestPass123!',
 };
 

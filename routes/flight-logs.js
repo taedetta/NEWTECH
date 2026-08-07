@@ -96,6 +96,18 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can delete flight log entries' });
     const logId = parseInt(req.params.id);
+    const existing = await pool.query(
+      `SELECT fl.id, fl.booking_id, b.status AS booking_status
+       FROM flight_logs fl
+       LEFT JOIN bookings b ON b.id = fl.booking_id
+       WHERE fl.id = $1`,
+      [logId]
+    );
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
+    const row = existing.rows[0];
+    if (row.booking_id && row.booking_status === 'completed') {
+      return res.status(400).json({ error: 'Cannot delete the flight log for a completed booking. Edit or void billing instead.' });
+    }
     const result = await pool.query('DELETE FROM flight_logs WHERE id = $1 RETURNING id', [logId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
     res.json({ ok: true });

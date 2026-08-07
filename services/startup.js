@@ -61,7 +61,11 @@ async function ensureDatabaseSchema(pool) {
     const users = await pool.query('SELECT COUNT(*) AS cnt FROM users');
     if (parseInt(users.rows[0].cnt, 10) === 0) {
       const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
-      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
+      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD;
+      if (!pass) {
+        console.warn('[bootstrap] No admin password configured; skipping default admin creation');
+        return;
+      }
       const hash = await bcrypt.hash(pass, 12);
       const inserted = await pool.query(
         `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor)

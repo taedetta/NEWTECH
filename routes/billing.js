@@ -183,42 +183,31 @@ router.get('/:studentId', authenticateToken, async (req, res) => {
 
 router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
   const client = await pool.connect();
+  let inTxn = false;
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can void billing entries' });
     const bookingId = parseInt(req.params.bookingId);
-    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
+    await client.query('BEGIN');
+    inTxn = true;
+    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
     if (bookingResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = bookingResult.rows[0];
     if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
-    await client.query('BEGIN');
-    const hobbsDelta = (b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0;
-    const tachDelta = (b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0;
-    if (hobbsDelta !== 0 || tachDelta !== 0) {
-      if (b.student_id) await client.query(
-        `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.student_id]
-      );
-      if (b.instructor_id) await client.query(
-        `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.instructor_id]
-      );
-      if (b.aircraft_id) await client.query(
-        `UPDATE aircraft SET
-           total_hobbs_hours = total_hobbs_hours - $1, current_hobbs = current_hobbs - $1,
-           total_tach_hours = total_tach_hours - $2, current_tach = current_tach - $2,
-           updated_at = NOW()
-         WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.aircraft_id]
-      );
-    }
+    // Billing voids hide charges only. Flight logs, user totals, and aircraft
+    // meters remain operational history and are corrected through flight edits.
     await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);
     await client.query('COMMIT');
+    inTxn = false;
     res.json({ ok: true });
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (inTxn) {
+      await client.query('ROLLBACK').catch(() => {});
+      inTxn = false;
+    }
     console.error('Billing void error:', err);
     res.status(500).json({ error: 'Failed to void billing entry' });
   } finally {
+    if (inTxn) await client.query('ROLLBACK').catch(() => {});
     client.release();
   }
 });

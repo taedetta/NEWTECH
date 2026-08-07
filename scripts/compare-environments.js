@@ -2,6 +2,9 @@
 
 const RENDER_URL = 'https://newtech-zek5.onrender.com';
 const RAILWAY_URL = 'https://flightslate-web-production.up.railway.app';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const DATABASE_URL = process.env.DATABASE_URL;
 
 async function getRenderCounts(token) {
   const endpoints = [
@@ -36,8 +39,11 @@ async function login(url, email, pass) {
 }
 
 (async () => {
-  const renderAuth = await login(RENDER_URL, 'evaughntaemw@gmail.com', 'NewTech2026!');
-  const railwayAuth = await login(RAILWAY_URL, 'evaughntaemw@gmail.com', 'NewTech2026!');
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD are required');
+  }
+  const renderAuth = await login(RENDER_URL, ADMIN_EMAIL, ADMIN_PASSWORD);
+  const railwayAuth = await login(RAILWAY_URL, ADMIN_EMAIL, ADMIN_PASSWORD);
 
   const renderCounts = {};
   const railwayCounts = {};
@@ -79,12 +85,11 @@ async function login(url, email, pass) {
   const list = Array.isArray(userList) ? userList : userList.users || [];
 
   // We can only test owner password; verify others have password_hash on Railway
+  if (!DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for password-hash comparison');
+  }
   const { Pool } = require('pg');
-  const p = new Pool({
-    host: 'shortline.proxy.rlwy.net', port: 26871,
-    user: 'postgres', password: 'cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij',
-    database: 'railway', ssl: false,
-  });
+  const p = new Pool({ connectionString: DATABASE_URL, ssl: false });
   const pwCheck = await p.query(`
     SELECT email, password_hash IS NOT NULL AND length(password_hash) > 20 AS has_password, approval_status
     FROM users WHERE email NOT LIKE '%@test.local' ORDER BY id
