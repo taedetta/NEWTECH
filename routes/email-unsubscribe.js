@@ -3,7 +3,6 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -41,7 +40,6 @@ function renderPage({ title, message, ok }) {
 router.get('/unsubscribe', async (req, res) => {
   try {
     const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -59,28 +57,30 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
+    const queryType = req.query.type !== undefined ? String(req.query.type).trim() : '';
+    if (queryType && queryType !== verified.type) {
       return res.status(400).send(renderPage({
         ok: false,
         title: 'Invalid preference type',
-        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+        message: 'This unsubscribe link does not match the email type it was issued for. Sign in and open My Account to manage your email preferences.',
       }));
     }
 
+    const type = verified.type;
     await ensureDefaultPrefs(verified.userId);
 
-    if (rawType === 'all') {
+    if (type === 'all') {
       await updatePrefs(verified.userId, { email_all_off: true });
     } else {
-      await updatePrefs(verified.userId, { [rawType]: false });
+      await updatePrefs(verified.userId, { [type]: false });
     }
 
-    const label = typeLabel(rawType);
+    const label = typeLabel(type);
     return res.send(renderPage({
       ok: true,
       title: 'Unsubscribed',
-      message: rawType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+      message: type === 'all'
+        ? 'You will no longer receive optional email notifications from New Tech Aviation. Required account messages such as password reset links will still be delivered.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
