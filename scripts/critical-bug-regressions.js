@@ -4,6 +4,8 @@ const assert = require('assert');
 const express = require('express');
 const http = require('http');
 
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test:test@localhost:5432/test';
+
 const profileRoutes = require('../routes/profile');
 const { EMAIL_TYPES, isRequiredEmailType } = require('../lib/email-types');
 const {
