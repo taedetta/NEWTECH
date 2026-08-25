@@ -16,6 +16,28 @@ function canEditBookingHistoryFlight(role, userId, booking) {
   return role === 'instructor' && booking.instructor_id === userId;
 }
 
+function canManageBillingFields(role) {
+  return ['owner', 'admin'].includes(role);
+}
+
+function flightBillingPatchForRole(role, body = {}) {
+  if (!canManageBillingFields(role)) return {};
+  const patch = {};
+  if (body.lesson_type !== undefined) patch.lesson_type = body.lesson_type;
+  if (body.aircraft_charge_amount !== undefined) patch.aircraft_charge_amount = body.aircraft_charge_amount;
+  if (body.instruction_charge_amount !== undefined) patch.instruction_charge_amount = body.instruction_charge_amount;
+  return patch;
+}
+
+function resolveGroundInstructionCharge(role, requestedCharge, session, groundHours) {
+  if (canManageBillingFields(role) && requestedCharge != null) {
+    return parseFloat(requestedCharge);
+  }
+  return session.instructor_rate != null
+    ? Math.round(groundHours * parseFloat(session.instructor_rate) * 100) / 100
+    : session.instruction_charge_amount;
+}
+
 function canEditGroundSessionHistory(role, userId, session) {
   if (['owner', 'admin'].includes(role)) return true;
   return role === 'instructor' && session.instructor_id === userId;
@@ -221,8 +243,15 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     const dateVal = flight_date
       || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
       || new Date().toISOString().slice(0, 10);
+    const billingPatch = flightBillingPatchForRole(role, {
+      lesson_type,
+      aircraft_charge_amount,
+      instruction_charge_amount,
+    });
     const effectiveLessonType = inferLessonType(
-      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+      billingPatch.lesson_type !== undefined && billingPatch.lesson_type !== '' && billingPatch.lesson_type !== null
+        ? billingPatch.lesson_type
+        : b.lesson_type,
       b
     );
 
@@ -240,8 +269,8 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
+        aircraft_charge_amount: billingPatch.aircraft_charge_amount,
+        instruction_charge_amount: billingPatch.instruction_charge_amount,
         submitted_by: userId,
       });
 
@@ -285,11 +314,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
-      ? parseFloat(instruction_charge_amount)
-      : (gs.instructor_rate != null
-        ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
-        : gs.instruction_charge_amount);
+    const instrCharge = resolveGroundInstructionCharge(role, instruction_charge_amount, gs, groundHours);
 
     await pool.query(
       `UPDATE ground_sessions SET session_date = $1, ground_hours = $2, instruction_charge_amount = $3 WHERE id = $4`,
@@ -427,3 +452,8 @@ router.post('/manual', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports._test = {
+  canManageBillingFields,
+  flightBillingPatchForRole,
+  resolveGroundInstructionCharge,
+};

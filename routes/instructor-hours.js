@@ -15,6 +15,16 @@ const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
 
+function canManageBillingFields(role) {
+  return ['owner', 'admin'].includes(role);
+}
+
+function resolveEditableRate(role, requestedRate, existingRate) {
+  return canManageBillingFields(role) && requestedRate !== undefined
+    ? parseFloat(requestedRate)
+    : existingRate;
+}
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
@@ -210,6 +220,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const row = existing.rows[0];
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const aircraftRateVal = resolveEditableRate(role, aircraft_rate, row.aircraft_rate);
+    const instructorRateVal = resolveEditableRate(role, instructor_rate, row.instructor_rate);
     const newDate = entry_date || row.entry_date;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
@@ -228,8 +240,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraftRateVal,
+       instructorRateVal,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
@@ -347,3 +359,7 @@ router.get('/prefill', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports._test = {
+  canManageBillingFields,
+  resolveEditableRate,
+};
