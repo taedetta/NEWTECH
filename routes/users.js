@@ -19,8 +19,8 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role } = req.query;
     const requesterRole = req.user.role;
-    if (['student', 'renter'].includes(requesterRole)) {
-      // Renters and students only see instructors/admins/owners in their user list
+    if (['student', 'renter', 'maintenance'].includes(requesterRole)) {
+      // Non-staff roster users only see the bookable instructor directory, without PII.
       const result = await pool.query(
         `SELECT u.id, u.name, u.role, u.is_instructor,
           EXISTS (SELECT 1 FROM instructor_availability WHERE instructor_id = u.id) as has_instructor_availability

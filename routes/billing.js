@@ -125,10 +125,10 @@ router.get('/audit-flags', authenticateToken, async (req, res) => {
 router.get('/:studentId', authenticateToken, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
-    if (req.user.role === 'student' && req.user.id !== studentId) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-    if (req.user.role === 'renter' && req.user.id !== studentId) {
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (['student', 'renter'].includes(req.user.role)) {
+      if (req.user.id !== studentId) return res.status(403).json({ error: 'Access denied' });
+    } else if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
     let extra = '';
@@ -217,14 +217,6 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
       if (b.instructor_id) await client.query(
         `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
         [hobbsDelta, tachDelta, b.instructor_id]
-      );
-      if (b.aircraft_id) await client.query(
-        `UPDATE aircraft SET
-           total_hobbs_hours = total_hobbs_hours - $1, current_hobbs = current_hobbs - $1,
-           total_tach_hours = total_tach_hours - $2, current_tach = current_tach - $2,
-           updated_at = NOW()
-         WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.aircraft_id]
       );
     }
     await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);

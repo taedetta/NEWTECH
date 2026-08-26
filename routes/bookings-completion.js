@@ -261,6 +261,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
               error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
             });
           }
+          if (hEnd < currentHobbs) {
+            recordHobbsFail(req.user.id);
+            return res.status(400).json({
+              error: `Hobbs end (${hEnd.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
+            });
+          }
           if (hStart > currentHobbs + 5) {
             recordHobbsFail(req.user.id);
             return res.status(400).json({
@@ -273,6 +279,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
           if (tStart < currentTach - 0.1) {
             return res.status(400).json({
               error: `Tach start (${tStart.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
+            });
+          }
+          if (tEnd < currentTach) {
+            return res.status(400).json({
+              error: `Tach end (${tEnd.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
             });
           }
           if (tStart > currentTach + 5) {

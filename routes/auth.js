@@ -338,8 +338,8 @@ router.post('/claim-owner', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'An owner already exists' });
     }
     const currentRole = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
-    if (['student', 'renter'].includes(currentRole.rows[0]?.role)) {
-      return res.status(403).json({ error: 'Students and renters cannot claim owner role' });
+    if (currentRole.rows[0]?.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an existing admin can claim owner role' });
     }
     const result = await pool.query(
       "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
