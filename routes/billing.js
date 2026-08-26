@@ -125,10 +125,10 @@ router.get('/audit-flags', authenticateToken, async (req, res) => {
 router.get('/:studentId', authenticateToken, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
-    if (req.user.role === 'student' && req.user.id !== studentId) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-    if (req.user.role === 'renter' && req.user.id !== studentId) {
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (['student', 'renter'].includes(req.user.role)) {
+      if (req.user.id !== studentId) return res.status(403).json({ error: 'Access denied' });
+    } else if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
     let extra = '';
@@ -188,11 +188,27 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
     const bookingId = parseInt(req.params.bookingId);
     const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
     if (bookingResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    const b = bookingResult.rows[0];
+    let b = bookingResult.rows[0];
     if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
     await client.query('BEGIN');
-    const hobbsDelta = (b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0;
-    const tachDelta = (b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0;
+    const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    if (locked.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    b = locked.rows[0];
+    if (b.billing_voided) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Already voided' });
+    }
+    const logResult = await client.query('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [bookingId]);
+    const log = logResult.rows[0] || null;
+    const hobbsDelta = log?.hobbs_delta != null
+      ? parseFloat(log.hobbs_delta)
+      : ((b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0);
+    const tachDelta = log?.tach_delta != null
+      ? parseFloat(log.tach_delta)
+      : ((b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0);
     if (hobbsDelta !== 0 || tachDelta !== 0) {
       if (b.student_id) await client.query(
         `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
@@ -202,15 +218,9 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
         `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
         [hobbsDelta, tachDelta, b.instructor_id]
       );
-      if (b.aircraft_id) await client.query(
-        `UPDATE aircraft SET
-           total_hobbs_hours = total_hobbs_hours - $1, current_hobbs = current_hobbs - $1,
-           total_tach_hours = total_tach_hours - $2, current_tach = current_tach - $2,
-           updated_at = NOW()
-         WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.aircraft_id]
-      );
     }
+    await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
+    await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
     await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);
     await client.query('COMMIT');
     res.json({ ok: true });

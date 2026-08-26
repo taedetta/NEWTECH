@@ -14,8 +14,9 @@ const { TERMS_VERSION } = require('../lib/terms');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { enforceCaptcha } = require('../lib/captcha');
+const { getJwtSecret } = require('../lib/jwt-secret');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
+const JWT_SECRET = getJwtSecret();
 
 const router = express.Router();
 
@@ -159,18 +160,22 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     const user = result.rows[0];
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
-    if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
-    }
     // Account pending approval — correct credentials but not yet activated
     if (user.approval_status === 'pending') {
       return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    }
+    if (user.deleted_at || user.approval_status === 'rejected') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active.' });
+    }
+    if (user.approval_status && user.approval_status !== 'approved') {
+      return res.status(403).json({ error: 'account_not_approved', message: 'This account is not approved.' });
     }
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role },
@@ -250,7 +255,7 @@ router.post('/reset-password', async (req, res) => {
     }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const result = await pool.query(
-      `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name
+      `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name, u.deleted_at, u.approval_status
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
        WHERE prt.token_hash = $1 AND prt.used_at IS NULL`,
@@ -263,10 +268,13 @@ router.post('/reset-password', async (req, res) => {
     if (new Date(row.expires_at) < new Date()) {
       return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
     }
+    if (row.deleted_at || (row.approval_status && row.approval_status !== 'approved')) {
+      return res.status(403).json({ error: 'This account is not active.' });
+    }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, deleted_at = NULL, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
-    console.log(`[auth] Password reset + account reactivation for user_id=${row.user_id} (${row.email})`);
+    console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[reset-password] error:', err.message);
@@ -330,8 +338,8 @@ router.post('/claim-owner', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'An owner already exists' });
     }
     const currentRole = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
-    if (['student', 'renter'].includes(currentRole.rows[0]?.role)) {
-      return res.status(403).json({ error: 'Students and renters cannot claim owner role' });
+    if (currentRole.rows[0]?.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an existing admin can claim owner role' });
     }
     const result = await pool.query(
       "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
