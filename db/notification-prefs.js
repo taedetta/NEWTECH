@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { REQUIRED_EMAIL_TYPES } = require('../lib/email-types');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -21,6 +22,7 @@ const DEFAULT_PREFS = {
 };
 
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
+const REQUIRED_PREF_COLUMNS = new Set(REQUIRED_EMAIL_TYPES);
 
 const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
 
@@ -67,6 +69,10 @@ function rowToPrefs(row) {
   if (!row) return { ...DEFAULT_PREFS };
   const out = {};
   for (const col of PREF_COLUMNS) {
+    if (REQUIRED_PREF_COLUMNS.has(col)) {
+      out[col] = true;
+      continue;
+    }
     out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
   }
   return out;
@@ -97,6 +103,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const vals = [];
   let i = 1;
   for (const col of PREF_COLUMNS) {
+    if (REQUIRED_PREF_COLUMNS.has(col)) continue;
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
@@ -115,6 +122,7 @@ async function updatePrefs(userId, patch, db = pool) {
 module.exports = {
   DEFAULT_PREFS,
   PREF_COLUMNS,
+  REQUIRED_PREF_COLUMNS,
   ensureEmailPrefsSchema,
   ensureDefaultPrefs,
   getPrefs,

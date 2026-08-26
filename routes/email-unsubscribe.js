@@ -1,9 +1,8 @@
 'use strict';
 
 const express = require('express');
-const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
+const { verifyUnsubscribeRequest, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -41,7 +40,7 @@ function renderPage({ title, message, ok }) {
 router.get('/unsubscribe', async (req, res) => {
   try {
     const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
+    const requestedType = req.query.type ? String(req.query.type).trim() : null;
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -50,7 +49,7 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    const verified = verifyUnsubscribeToken(token);
+    const verified = verifyUnsubscribeRequest(token, requestedType);
     if (!verified) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -59,27 +58,19 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
-      return res.status(400).send(renderPage({
-        ok: false,
-        title: 'Invalid preference type',
-        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
-
     await ensureDefaultPrefs(verified.userId);
 
-    if (rawType === 'all') {
+    if (verified.type === 'all') {
       await updatePrefs(verified.userId, { email_all_off: true });
     } else {
-      await updatePrefs(verified.userId, { [rawType]: false });
+      await updatePrefs(verified.userId, { [verified.type]: false });
     }
 
-    const label = typeLabel(rawType);
+    const label = typeLabel(verified.type);
     return res.send(renderPage({
       ok: true,
       title: 'Unsubscribed',
-      message: rawType === 'all'
+      message: verified.type === 'all'
         ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
