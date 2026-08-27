@@ -179,6 +179,26 @@ if (/total_hobbs_hours\s*=\s*total_hobbs_hours\s*-|current_hobbs\s*=\s*current_h
   fail('Billing void still mutates operational hour totals');
 } else ok('Billing void is non-destructive');
 
+const sourceWrapperSrc = fs.readFileSync(path.join(root, 'db/source-wrapper.js'), 'utf8');
+if (sourceWrapperSrc.includes("return 'production'") || sourceWrapperSrc.includes('Filters are no-ops')) {
+  fail('Source isolation wrapper is disabled');
+} else if (!sourceWrapperSrc.includes("require('../lib/app-env')") || !sourceWrapperSrc.includes('source =')) {
+  fail('Source isolation wrapper does not filter by APP_ENV source');
+} else ok('Source isolation wrapper filters by APP_ENV');
+
+const leadsDbSrc = fs.readFileSync(path.join(root, 'db/leads.js'), 'utf8');
+const leadsRoutesSrc = fs.readFileSync(path.join(root, 'routes/leads.js'), 'utf8');
+if (!leadsDbSrc.includes('async function deleteLead') || !leadsRoutesSrc.includes('deleteLead(id)')) {
+  fail('Lead deletion bypasses source filter');
+} else ok('Lead deletion is source-scoped');
+
+const cmsSrc = fs.readFileSync(path.join(root, 'routes/cms.js'), 'utf8');
+if (/DB persist failed[\s\S]*res\.json\(\{ success: true, path: filePath, persisted: true \}\)/.test(cmsSrc)) {
+  fail('Website Editor save still reports success when DB persistence fails');
+} else if (cmsSrc.indexOf('await saveFileOverride(filePath, content, req.user?.id);') > cmsSrc.indexOf("fs.writeFileSync(fullPath, content, 'utf8');")) {
+  fail('Website Editor writes filesystem before persistent override');
+} else ok('Website Editor saves require persistent override first');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
