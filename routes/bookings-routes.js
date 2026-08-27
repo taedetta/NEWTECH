@@ -875,14 +875,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       skipPastTimeCheck: canBypassTimePolicy,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
-    // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
     const finalStatus = status !== undefined ? status : b.status;
-    if (acId && bookingStatusBlocksSchedule(finalStatus) && !isStaffHistoricalEdit) {
-      const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
-      if (downtimeHit) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
-      }
-    }
     const scheduleChanged = acId !== b.aircraft_id
       || sid !== b.student_id
       || iid !== b.instructor_id
@@ -893,6 +886,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
       currentStatus: b.status,
       nextStatus: finalStatus,
     });
+    // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
+    if (acId && needsConflictCheck && !isStaffHistoricalEdit) {
+      const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
+      if (downtimeHit) {
+        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
+      }
+    }
     if (needsConflictCheck || scheduleChanged) {
       await client.query('BEGIN');
       try {
