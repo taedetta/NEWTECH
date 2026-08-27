@@ -72,6 +72,16 @@ function canAccessBooking(user, booking) {
   return user.id === booking.instructor_id || user.id === booking.student_id;
 }
 
+function bookingStatusBlocksSchedule(status) {
+  return !['cancelled', 'completed'].includes(String(status || '').toLowerCase());
+}
+
+function shouldCheckUpdateConflicts({ scheduleChanged, currentStatus, nextStatus }) {
+  const wasBlocking = bookingStatusBlocksSchedule(currentStatus);
+  const willBlock = bookingStatusBlocksSchedule(nextStatus);
+  return willBlock && (scheduleChanged || !wasBlocking);
+}
+
 async function deriveBookingType(client, studentId, instructorId) {
   if (studentId && instructorId) return 'dual';
   if (studentId && !instructorId) {
@@ -840,7 +850,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
+    const canBypassTimePolicy = isAdmin || isStaffHistoricalEdit;
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -869,12 +880,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
       start: stTime, end: enTime, policy, userRole: req.user.role, isAdmin, lesson_type: effectiveLessonType,
-      skipDiscoveryDurationCheck: !isDiscovery && isStaffHistoricalEdit,
-      skipPastTimeCheck: isStaffHistoricalEdit,
+      skipDiscoveryDurationCheck: !isDiscovery && canBypassTimePolicy,
+      skipPastTimeCheck: canBypassTimePolicy,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
-    if (acId && !isStaffHistoricalEdit) {
+    const finalStatus = status !== undefined ? status : b.status;
+    if (acId && bookingStatusBlocksSchedule(finalStatus) && !isStaffHistoricalEdit) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
         return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
@@ -885,9 +897,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const needsConflictCheck = shouldCheckUpdateConflicts({
+      scheduleChanged,
+      currentStatus: b.status,
+      nextStatus: finalStatus,
+    });
+    if (needsConflictCheck || scheduleChanged) {
       await client.query('BEGIN');
       try {
         if (needsConflictCheck) {
@@ -994,3 +1009,5 @@ module.exports.lockBookingResources = lockBookingResources;
 module.exports.ACTIVE_BOOKING_SQL = ACTIVE_BOOKING_SQL;
 module.exports.isInstructorAvailable = isInstructorAvailable;
 module.exports.findNextAvailableSlots = findNextAvailableSlots;
+module.exports.bookingStatusBlocksSchedule = bookingStatusBlocksSchedule;
+module.exports.shouldCheckUpdateConflicts = shouldCheckUpdateConflicts;
