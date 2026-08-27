@@ -4,7 +4,7 @@ const assert = require('assert');
 const {
   bookingStatusBlocksSchedule,
   shouldCheckUpdateConflicts,
-} = require('../routes/bookings-routes');
+} = require('../lib/booking-status');
 
 assert.strictEqual(bookingStatusBlocksSchedule('confirmed'), true);
 assert.strictEqual(bookingStatusBlocksSchedule('completed'), false);

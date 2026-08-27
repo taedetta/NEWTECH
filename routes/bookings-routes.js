@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { bookingStatusBlocksSchedule, shouldCheckUpdateConflicts } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -70,16 +71,6 @@ function normBookingUserId(v) {
 function canAccessBooking(user, booking) {
   if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
   return user.id === booking.instructor_id || user.id === booking.student_id;
-}
-
-function bookingStatusBlocksSchedule(status) {
-  return !['cancelled', 'completed'].includes(String(status || '').toLowerCase());
-}
-
-function shouldCheckUpdateConflicts({ scheduleChanged, currentStatus, nextStatus }) {
-  const wasBlocking = bookingStatusBlocksSchedule(currentStatus);
-  const willBlock = bookingStatusBlocksSchedule(nextStatus);
-  return willBlock && (scheduleChanged || !wasBlocking);
 }
 
 async function deriveBookingType(client, studentId, instructorId) {
@@ -1009,5 +1000,3 @@ module.exports.lockBookingResources = lockBookingResources;
 module.exports.ACTIVE_BOOKING_SQL = ACTIVE_BOOKING_SQL;
 module.exports.isInstructorAvailable = isInstructorAvailable;
 module.exports.findNextAvailableSlots = findNextAvailableSlots;
-module.exports.bookingStatusBlocksSchedule = bookingStatusBlocksSchedule;
-module.exports.shouldCheckUpdateConflicts = shouldCheckUpdateConflicts;
