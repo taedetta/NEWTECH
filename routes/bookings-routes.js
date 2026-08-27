@@ -646,6 +646,8 @@ async function createBookingInternal(client, req) {
   if (end <= start) return { error: 'End time must be after start time' };
   const policy = await getPolicySettings();
   const isAdmin = ['owner', 'admin'].includes(req.user.role);
+  const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+  if (forceBooking && !isAdmin) return { error: 'Only owners and admins can force bookings' };
   const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
   if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
 
@@ -675,6 +677,14 @@ async function createBookingInternal(client, req) {
     if (conflicts.length) {
       await client.query('ROLLBACK');
       return { error: 'Scheduling conflict', conflicts };
+    }
+    if (iid && !forceBooking) {
+      const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
+      const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
+      if (!availCheck.available) {
+        await client.query('ROLLBACK');
+        return { error: 'Instructor not available' };
+      }
     }
     const result = await client.query(
       `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
@@ -713,6 +723,10 @@ router.post('/', authenticateToken, async (req, res) => {
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+    if (forceBooking && !isAdmin) {
+      return res.status(403).json({ error: 'Only owners and admins can force bookings' });
+    }
     const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
@@ -766,8 +780,7 @@ router.post('/', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
-    const selfService = ['student', 'renter', 'instructor'].includes(req.user.role);
-    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+    if (iid && !forceBooking) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
       if (!availCheck.available) {

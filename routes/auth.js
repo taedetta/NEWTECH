@@ -15,6 +15,7 @@ const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { enforceCaptcha } = require('../lib/captcha');
 const { getJwtSecret } = require('../lib/jwt-secret');
+const { isPlatformAdminEmail } = require('../lib/platform-admin');
 
 const JWT_SECRET = getJwtSecret();
 
@@ -333,13 +334,20 @@ router.get('/me', authenticateToken, async (req, res) => {
 
 router.post('/claim-owner', authenticateToken, async (req, res) => {
   try {
+    if (!isPlatformAdminEmail(req.user.email)) {
+      return res.status(403).json({ error: 'Only the platform administrator can claim owner role' });
+    }
     const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner'");
     if (ownerCheck.rows.length > 0) {
       return res.status(409).json({ error: 'An owner already exists' });
     }
-    const currentRole = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
-    if (currentRole.rows[0]?.role !== 'admin') {
-      return res.status(403).json({ error: 'Only an existing admin can claim owner role' });
+    const currentRole = await pool.query(
+      'SELECT role, approval_status, deleted_at FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const currentUser = currentRole.rows[0];
+    if (!currentUser || currentUser.deleted_at || currentUser.approval_status !== 'approved' || currentUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an approved platform admin can claim owner role' });
     }
     const result = await pool.query(
       "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
@@ -347,7 +355,7 @@ router.post('/claim-owner', authenticateToken, async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = result.rows[0];
-    const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true };
+    const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true, can_edit_website: true };
     const newToken = jwt.sign({ id: user.id, email: user.email, name: user.name, role: 'owner' }, JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', newToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ user: { ...user, permissions }, token: newToken });

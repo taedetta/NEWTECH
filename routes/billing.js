@@ -185,42 +185,18 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can void billing entries' });
-    const bookingId = parseInt(req.params.bookingId);
-    const bookingResult = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
-    if (bookingResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
-    let b = bookingResult.rows[0];
-    if (b.billing_voided) return res.status(400).json({ error: 'Already voided' });
+    const bookingId = parseInt(req.params.bookingId, 10);
+    if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
     await client.query('BEGIN');
-    const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    const locked = await client.query('SELECT id, billing_voided FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
     if (locked.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Booking not found' });
     }
-    b = locked.rows[0];
-    if (b.billing_voided) {
+    if (locked.rows[0].billing_voided) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Already voided' });
     }
-    const logResult = await client.query('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [bookingId]);
-    const log = logResult.rows[0] || null;
-    const hobbsDelta = log?.hobbs_delta != null
-      ? parseFloat(log.hobbs_delta)
-      : ((b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0);
-    const tachDelta = log?.tach_delta != null
-      ? parseFloat(log.tach_delta)
-      : ((b.tach_end != null && b.tach_start != null) ? parseFloat(b.tach_end) - parseFloat(b.tach_start) : 0);
-    if (hobbsDelta !== 0 || tachDelta !== 0) {
-      if (b.student_id) await client.query(
-        `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.student_id]
-      );
-      if (b.instructor_id) await client.query(
-        `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
-        [hobbsDelta, tachDelta, b.instructor_id]
-      );
-    }
-    await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
-    await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
     await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);
     await client.query('COMMIT');
     res.json({ ok: true });
