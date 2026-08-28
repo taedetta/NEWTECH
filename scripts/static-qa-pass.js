@@ -165,6 +165,9 @@ const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completio
 if (!completionSrc.includes('FOR UPDATE') || !completionSrc.includes('canAccessBooking(req.user, result.rows[0])')) {
   fail('Booking completion/detail guards incomplete');
 } else ok('Booking completion/detail guards present');
+if (!completionSrc.includes('already has flight log data') || !/SELECT id FROM flight_logs WHERE booking_id = \$1 FOR UPDATE/.test(completionSrc)) {
+  fail('Booking completion can double-count when a confirmed booking already has a flight log');
+} else ok('Booking completion rejects pre-existing flight logs');
 
 const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8');
 if (aircraftSrc.includes("requireRole('owner', 'admin', 'maintenance')")) {
@@ -178,6 +181,12 @@ const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8')
 if (/total_hobbs_hours\s*=\s*total_hobbs_hours\s*-|current_hobbs\s*=\s*current_hobbs\s*-/.test(billingSrc)) {
   fail('Billing void still mutates operational hour totals');
 } else ok('Billing void is non-destructive');
+
+const aircraftMeterSrc = fs.readFileSync(path.join(root, 'lib/aircraft-meter.js'), 'utf8');
+const bookingHistorySrc = fs.readFileSync(path.join(root, 'routes/booking-history.js'), 'utf8');
+if (!aircraftMeterSrc.includes('async function recalculateAircraftMeters') || !bookingHistorySrc.includes('recalculateAircraftMeters(client, b.aircraft_id)')) {
+  fail('Booking history delete does not recalculate aircraft meters');
+} else ok('Booking history delete recalculates aircraft meters');
 
 const sourceWrapperSrc = fs.readFileSync(path.join(root, 'db/source-wrapper.js'), 'utf8');
 if (sourceWrapperSrc.includes("return 'production'") || sourceWrapperSrc.includes('Filters are no-ops')) {

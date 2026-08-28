@@ -5,7 +5,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
-const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
+const { applyAircraftMeterReadings, recalculateAircraftMeters } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
 
@@ -350,6 +350,9 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('DELETE FROM billing_entries WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
+      if (b.aircraft_id && b.status === 'completed') {
+        await recalculateAircraftMeters(client, b.aircraft_id);
+      }
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
       await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
       await client.query('UPDATE training_progress SET booking_id = NULL WHERE booking_id = $1', [bookingId]);

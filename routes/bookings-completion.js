@@ -218,6 +218,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
       }
+      const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [req.params.id]);
+      if (existingLog.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'This booking already has flight log data. Edit the existing history record instead of completing it again.',
+        });
+      }
       await client.query(
         `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
         [finishedEnd, req.params.id]
@@ -342,6 +349,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
     }
+    const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [req.params.id]);
+    if (existingLog.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'This booking already has flight log data. Edit the existing history record instead of completing it again.',
+      });
+    }
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
@@ -356,41 +370,23 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       hourlyRate: acRate?.hourly_rate,
       instructorRate: instrRate?.instructor_rate,
     });
-    // Upsert flight_log — aircraft_id, student_id, instructor_id, booking_type are required
-    const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [req.params.id]);
-    let logId;
-    if (existingLog.rows.length > 0) {
-      await client.query(
-        `UPDATE flight_logs SET
-          flight_date = $1, hobbs_start = $2, hobbs_end = $3, hobbs_delta = $4,
-          tach_start = $5, tach_end = $6, tach_delta = $7,
-          dual_instruction_hours = $8, notes = $9,
-          is_night = $10, is_xc = $11, is_instrument = $12, is_solo = $13,
-          aircraft_charge_amount = $14, instruction_charge_amount = $15,
-          updated_at = NOW()
-         WHERE booking_id = $16`,
-        [flight_date, hStart, hEnd, hobbsFlown, tStart, tEnd, tachFlown, dualHrs, notes || null,
-         nightFlag, xcFlag, instrumentFlag, soloFlag, aircraftChargeAmt, instrChargeAmt, req.params.id]
-      );
-      logId = existingLog.rows[0].id;
-    } else {
-      const logResult = await client.query(
-        `INSERT INTO flight_logs
-           (booking_id, aircraft_id, student_id, instructor_id, booking_type,
-            flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
-            dual_instruction_hours, notes, submitted_by,
-            is_night, is_xc, is_instrument, is_solo,
-            aircraft_charge_amount, instruction_charge_amount)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-         RETURNING id`,
-        [req.params.id, b.aircraft_id, b.student_id, b.instructor_id, b.booking_type || 'dual',
-         flight_date, hStart, hEnd, hobbsFlown, tStart, tEnd, tachFlown,
-         dualHrs, notes || null, req.user.id,
-         nightFlag, xcFlag, instrumentFlag, soloFlag,
-         aircraftChargeAmt, instrChargeAmt]
-      );
-      logId = logResult.rows[0].id;
-    }
+    // Create flight_log — a confirmed booking with an existing log is rejected above.
+    const logResult = await client.query(
+      `INSERT INTO flight_logs
+         (booking_id, aircraft_id, student_id, instructor_id, booking_type,
+          flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
+          dual_instruction_hours, notes, submitted_by,
+          is_night, is_xc, is_instrument, is_solo,
+          aircraft_charge_amount, instruction_charge_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       RETURNING id`,
+      [req.params.id, b.aircraft_id, b.student_id, b.instructor_id, b.booking_type || 'dual',
+       flight_date, hStart, hEnd, hobbsFlown, tStart, tEnd, tachFlown,
+       dualHrs, notes || null, req.user.id,
+       nightFlag, xcFlag, instrumentFlag, soloFlag,
+       aircraftChargeAmt, instrChargeAmt]
+    );
+    const logId = logResult.rows[0].id;
     // Aircraft meter readings — end values entered by pilot (all aircraft use same logic)
     if (b.aircraft_id) {
       await applyAircraftMeterReadings(client, b.aircraft_id, {
