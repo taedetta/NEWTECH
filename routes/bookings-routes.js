@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { bookingUpdateNeedsConflictCheck } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -898,18 +899,20 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const nextStatus = status !== undefined ? status : b.status;
+    const needsConflictCheck = bookingUpdateNeedsConflictCheck({
+      currentStatus: b.status,
+      nextStatus,
+      scheduleChanged,
+    });
+    if (needsConflictCheck) {
       await client.query('BEGIN');
       try {
-        if (needsConflictCheck) {
-          await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-          const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-          if (conflicts.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Scheduling conflict', conflicts });
-          }
+        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+        if (conflicts.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
         }
         const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
         let booking_type = await deriveBookingType(client, sid, iid);
