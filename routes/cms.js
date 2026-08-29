@@ -158,19 +158,9 @@ router.put('/project-files', authenticateToken, requirePermission('can_edit_webs
     const blockedPatterns = ['node_modules', '.git', '.env', 'package-lock.json', 'session-env', 'shell-snapshots', 'migrate.js', 'render.yaml'];
     if (blockedPatterns.some(p => fullPath.includes(p))) return res.status(403).json({ error: 'Access denied: protected file' });
 
-    // Write to filesystem (immediate effect on live app)
+    // Persist first so a successful response always survives the next deploy.
+    await saveFileOverride(filePath, content, req.user?.id);
     fs.writeFileSync(fullPath, content, 'utf8');
-
-    // Persist to database so the change survives Railway redeploys.
-    // Railway's filesystem is ephemeral — without this, editor changes
-    // are lost every time the app rebuilds from GitHub.
-    try {
-      await saveFileOverride(filePath, content, req.user?.id);
-    } catch (dbErr) {
-      // Non-fatal: filesystem write succeeded, the live app is updated.
-      // DB persistence failing means the change won't survive next deploy.
-      console.error('[file-overrides] DB persist failed (file was still saved to disk):', dbErr.message);
-    }
 
     res.json({ success: true, path: filePath, persisted: true });
   } catch (err) {
