@@ -199,6 +199,50 @@ if (/DB persist failed[\s\S]*res\.json\(\{ success: true, path: filePath, persis
   fail('Website Editor writes filesystem before persistent override');
 } else ok('Website Editor saves require persistent override first');
 
+if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
+  fail('Website Editor image upload endpoint is missing');
+} else ok('Website Editor image upload endpoint present');
+
+const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
+if (!usersSrc.includes('function parseUserHours') || /parseFloat\(total_hobbs_hours\)|parseFloat\(total_tach_hours\)/.test(usersSrc)) {
+  fail('User hour updates are not strictly validated');
+} else ok('User hour updates are strictly validated');
+
+const appFeaturesSrc = fs.readFileSync(path.join(root, 'public/js/app-features.js'), 'utf8');
+if (!/async function sendMessageReply[\s\S]+catch \(err\)[\s\S]+Failed to send reply/.test(appFeaturesSrc)
+  || !/async function startNewMessageThread[\s\S]+catch \(err\)[\s\S]+Failed to send message/.test(appFeaturesSrc)) {
+  fail('Messages send/reply errors are not surfaced to users');
+} else ok('Messages send/reply errors are surfaced');
+
+if (appHtml.includes('/api/admin/training/programs')
+  || appHtml.includes('/api/admin/training/stages')
+  || appHtml.includes('/api/admin/training/maneuvers')) {
+  fail('Programs admin frontend still calls non-existent admin training aliases');
+} else ok('Programs admin frontend uses mounted training admin routes');
+
+if (/fetch\('\/api\/project-files/.test(appHtml)) {
+  fail('Website Editor Code tab reads project files without auth helper');
+} else ok('Website Editor Code tab uses authenticated project-file reads');
+
+if (appHtml.includes("fetch('/api/admin/download-source'")) {
+  fail('Website Editor source download uses admin-only endpoint');
+} else ok('Website Editor source download uses editor-authorized endpoint');
+
+if (!appHtml.includes('function addFreeformItem')
+  || !appHtml.includes('function renderFreeformItems')
+  || !appHtml.includes('out.freeform_items = JSON.stringify(getFreeformItems())')) {
+  fail('Website Editor freeform text boxes are not wired to save');
+} else ok('Website Editor freeform text boxes are wired');
+
+if (!appHtml.includes('function openEditStudentHoursModal') || !appHtml.includes('function confirmResetStudentHours')) {
+  fail('Progress student hour edit/reset handlers are missing');
+} else ok('Progress student hour edit/reset handlers present');
+
+if (/onclick='openDiscrepancyResolve\([^']+JSON\.stringify\(d\)/.test(appHtml)
+  || !appHtml.includes('discrepancyRowsById')) {
+  fail('Discrepancy resolve button embeds unsafe row JSON');
+} else ok('Discrepancy resolve uses cached row data');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');

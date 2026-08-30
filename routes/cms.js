@@ -78,6 +78,34 @@ router.get('/site-content/image/:key', async (req, res) => {
   }
 });
 
+router.post('/site-content/upload-image', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
+  try {
+    const { base64, mimeType } = req.body || {};
+    const cleanMime = String(mimeType || '').toLowerCase();
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+    if (!allowed.has(cleanMime)) {
+      return res.status(400).json({ error: 'Only JPEG, PNG, GIF, or WebP images are supported' });
+    }
+    if (typeof base64 !== 'string' || !base64.trim()) {
+      return res.status(400).json({ error: 'Image data is required' });
+    }
+    const raw = base64.includes(',') ? base64.slice(base64.indexOf(',') + 1) : base64;
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(raw)) {
+      return res.status(400).json({ error: 'Invalid image data' });
+    }
+    const compact = raw.replace(/\s/g, '');
+    const buffer = Buffer.from(compact, 'base64');
+    if (!buffer.length) return res.status(400).json({ error: 'Invalid image data' });
+    if (buffer.length > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Image too large (max 5MB)' });
+    }
+    res.json({ url: `data:${cleanMime};base64,${compact}`, size: buffer.length });
+  } catch (err) {
+    console.error('Site content image upload error:', err.message);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
 router.put('/site-content', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {
     const updates = req.body;
