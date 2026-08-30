@@ -6,7 +6,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
-const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { syncFlightRecord, dateOnly } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
@@ -19,6 +19,10 @@ function canEditBookingHistoryFlight(role, userId, booking) {
 function canEditGroundSessionHistory(role, userId, session) {
   if (['owner', 'admin'].includes(role)) return true;
   return role === 'instructor' && session.instructor_id === userId;
+}
+
+function canEditBillingFields(role) {
+  return ['owner', 'admin'].includes(role);
 }
 
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
@@ -177,9 +181,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
 
     const bkResult = await pool.query(
-      `SELECT b.*, a.hourly_rate
+      `SELECT b.*, a.hourly_rate, fl.flight_date AS existing_flight_date
        FROM bookings b
        JOIN aircraft a ON b.aircraft_id = a.id
+       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
        WHERE b.id = $1`,
       [bookingId]
     );
@@ -218,11 +223,13 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+    const requestedDate = flight_date !== undefined && flight_date !== null && flight_date !== ''
+      ? dateOnly(flight_date)
+      : null;
+    const existingDate = dateOnly(b.existing_flight_date) || dateOnly(b.start_time);
+    const allowBillingEdit = canEditBillingFields(role);
     const effectiveLessonType = inferLessonType(
-      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+      allowBillingEdit && lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
     );
 
@@ -232,18 +239,24 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const patch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
         submitted_by: userId,
-      });
+      };
+      if (requestedDate && requestedDate !== existingDate) {
+        patch.flight_date = requestedDate;
+      }
+      if (allowBillingEdit) {
+        patch.aircraft_charge_amount = aircraft_charge_amount;
+        patch.instruction_charge_amount = instruction_charge_amount;
+      }
+
+      const synced = await syncFlightRecord(client, bookingId, patch);
 
       await client.query('COMMIT');
       inTxn = false;
@@ -285,7 +298,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
+    const instrCharge = canEditBillingFields(role) && instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
       : (gs.instructor_rate != null
         ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
@@ -343,13 +356,13 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
           }
         }
       }
-      // Clean up all related records before deleting the booking.
-      // flight_hobbs_readings & flight_discrepancies have ON DELETE CASCADE,
-      // but admin_audit_log.booking_id has no cascade — NULL it to preserve the audit trail.
-      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
-      await client.query('DELETE FROM billing_entries WHERE booking_id = $1', [bookingId]);
+      // Clean up related rows first; several booking_id FKs are RESTRICT by default.
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM flight_discrepancies WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM flight_hobbs_readings WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM billing_entries WHERE booking_id = $1', [bookingId]);
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
       await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
       await client.query('UPDATE training_progress SET booking_id = NULL WHERE booking_id = $1', [bookingId]);

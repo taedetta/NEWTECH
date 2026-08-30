@@ -15,6 +15,30 @@ const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
 
+function canEditBillingRates(role) {
+  return ['owner', 'admin'].includes(role);
+}
+
+function parseNullableRate(value, fallback) {
+  if (value === undefined) return fallback;
+  if (value === null || value === '') return null;
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function instructorHourRatesForUpdate(role, existingRow, body = {}) {
+  if (!canEditBillingRates(role)) {
+    return {
+      aircraftRate: existingRow.aircraft_rate,
+      instructorRate: existingRow.instructor_rate,
+    };
+  }
+  return {
+    aircraftRate: parseNullableRate(body.aircraft_rate, existingRow.aircraft_rate),
+    instructorRate: parseNullableRate(body.instructor_rate, existingRow.instructor_rate),
+  };
+}
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
@@ -211,6 +235,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
     const newDate = entry_date || row.entry_date;
+    const nextRates = instructorHourRatesForUpdate(role, row, req.body);
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
       entryDate: newDate,
@@ -228,8 +253,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       nextRates.aircraftRate,
+       nextRates.instructorRate,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
@@ -347,3 +372,5 @@ router.get('/prefill', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.canEditBillingRates = canEditBillingRates;
+module.exports.instructorHourRatesForUpdate = instructorHourRatesForUpdate;
