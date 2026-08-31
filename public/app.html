@@ -2748,6 +2748,39 @@
             <h1>Flight Log</h1>
           </div>
 
+          <!-- Flights awaiting Hobbs/Tach entry -->
+          <div id="missing-hours-section" class="table-card" style="overflow-x:auto;margin-bottom:1rem">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1rem 0.25rem">
+              <div>
+                <h3 style="margin:0;font-size:0.95rem">Flights Needing Hours</h3>
+                <p style="margin:0.25rem 0 0;color:var(--gray-500);font-size:0.82rem">Complete past flights by logging Hobbs and Tach readings.</p>
+              </div>
+              <span id="missing-hours-count" class="tag" style="background:rgba(245,158,11,0.12);color:var(--amber)">0 pending</span>
+            </div>
+            <div id="missing-hours-table-wrap" class="hidden">
+              <table class="data-table" style="margin-top:0.75rem">
+                <thead>
+                  <tr>
+                    <th>Booking</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Aircraft</th>
+                    <th>Student</th>
+                    <th>Instructor</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="missing-hours-table-body"></tbody>
+              </table>
+            </div>
+            <div id="missing-hours-empty" class="hidden" style="padding:1.25rem;text-align:center;color:var(--gray-500);font-size:0.9rem">
+              No flights currently need hours logged.
+            </div>
+            <div id="missing-hours-cards" class="mob-cards-wrap"></div>
+          </div>
+
           <!-- Aircraft Current Hours Panel (admin/owner only) -->
           <div id="flog-aircraft-hours-wrap" class="hidden" style="margin-bottom:1rem">
             <div class="flog-hours-panel table-card" style="padding:0.85rem 1rem">
@@ -3422,54 +3455,54 @@
           <div class="editor-tab-panel" id="editor-tab-code">
             <div class="editor-code-panel">
               <!-- Mode switcher -->
-              <div class=&quot;code-mode-switcher&quot;>
-                <button class=&quot;code-mode-btn active&quot; id=&quot;code-mode-json-btn&quot; onclick=&quot;switchCodeMode('json')&quot;>&#123; JSON Content</button>
-                <button class=&quot;code-mode-btn&quot; id=&quot;code-mode-files-btn&quot; onclick=&quot;switchCodeMode('files')&quot;>&#128196; Project Files</button>
-                <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;download-source-btn&quot; onclick=&quot;downloadSourceCode()&quot; style=&quot;margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;&quot;>&#11015; Download ZIP</button>
+              <div class="code-mode-switcher">
+                <button class="code-mode-btn active" id="code-mode-json-btn" onclick="switchCodeMode('json')">&#123; JSON Content</button>
+                <button class="code-mode-btn" id="code-mode-files-btn" onclick="switchCodeMode('files')">&#128196; Project Files</button>
+                <button class="btn btn-primary btn-sm" id="download-source-btn" onclick="downloadSourceCode()" style="margin-left:auto;display:flex;align-items:center;gap:0.3rem;font-size:0.78rem;padding:0.35rem 0.8rem;">&#11015; Download ZIP</button>
               </div>
               <!-- JSON Content Mode -->
-              <div class=&quot;code-json-panel&quot; id=&quot;code-json-panel&quot;>
-                <div class=&quot;editor-code-toolbar&quot;>
-                  <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;formatCodeTab()&quot;>✎ Format JSON</button>
-                  <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;validateCodeTab()&quot;>&#10003; Validate</button>
-                  <button class=&quot;btn btn-primary btn-sm&quot; onclick=&quot;saveFromCodeTab()&quot;>&#10003; Save &amp; Publish</button>
-                  <span class=&quot;ec-hint&quot;>Edit raw site content as JSON. Save writes directly to the database.</span>
+              <div class="code-json-panel" id="code-json-panel">
+                <div class="editor-code-toolbar">
+                  <button class="btn btn-secondary btn-sm" onclick="formatCodeTab()">✎ Format JSON</button>
+                  <button class="btn btn-secondary btn-sm" onclick="validateCodeTab()">&#10003; Validate</button>
+                  <button class="btn btn-primary btn-sm" onclick="saveFromCodeTab()">&#10003; Save &amp; Publish</button>
+                  <span class="ec-hint">Edit raw site content as JSON. Save writes directly to the database.</span>
                 </div>
-                <div class=&quot;editor-code-error&quot; id=&quot;editor-code-error&quot;></div>
-                <textarea class=&quot;editor-code-textarea&quot; id=&quot;editor-code-textarea&quot; spellcheck=&quot;false&quot; placeholder=&quot;Loading JSON...&quot;></textarea>
+                <div class="editor-code-error" id="editor-code-error"></div>
+                <textarea class="editor-code-textarea" id="editor-code-textarea" spellcheck="false" placeholder="Loading JSON..."></textarea>
               </div>
               <!-- Project Files Mode -->
-              <div class=&quot;code-files-panel&quot; id=&quot;code-files-panel&quot;>
-                <div id=&quot;code-file-tree&quot; class=&quot;file-tree&quot;>
-                  <div class=&quot;code-empty-state&quot;>
-                    <div class=&quot;ces-icon&quot;>&#128196;</div>
+              <div class="code-files-panel" id="code-files-panel">
+                <div id="code-file-tree" class="file-tree">
+                  <div class="code-empty-state">
+                    <div class="ces-icon">&#128196;</div>
                     <p>Loading project files…</p>
                   </div>
                 </div>
-                <div id=&quot;code-file-editor&quot; class=&quot;code-editor-panel&quot; style=&quot;display:none&quot;>
-                  <div class=&quot;code-editor-header&quot;>
-                    <div style=&quot;display:flex;align-items:center;gap:0.6rem&quot;>
-                      <span class=&quot;code-editor-filename&quot; id=&quot;code-filename&quot;></span>
-                      <span class=&quot;code-editor-lang&quot; id=&quot;code-lang&quot;></span>
+                <div id="code-file-editor" class="code-editor-panel" style="display:none">
+                  <div class="code-editor-header">
+                    <div style="display:flex;align-items:center;gap:0.6rem">
+                      <span class="code-editor-filename" id="code-filename"></span>
+                      <span class="code-editor-lang" id="code-lang"></span>
                     </div>
-                    <span id=&quot;code-file-size&quot; style=&quot;font-size:0.7rem;color:#858585&quot;></span>
+                    <span id="code-file-size" style="font-size:0.7rem;color:#858585"></span>
                   </div>
-                  <div class=&quot;code-editor-body&quot; id=&quot;code-editor-body&quot;>
-                    <div class=&quot;code-empty-state&quot;>
-                      <div class=&quot;ces-icon&quot;>&#128269;</div>
+                  <div class="code-editor-body" id="code-editor-body">
+                    <div class="code-empty-state">
+                      <div class="ces-icon">&#128269;</div>
                       <p>Select a file to view and edit its code</p>
                     </div>
                   </div>
-                  <div class=&quot;code-editor-status&quot;>
-                    <span class=&quot;code-status-msg&quot; id=&quot;code-status-msg&quot;></span>
-                    <div class=&quot;code-editor-actions&quot;>
-                      <button class=&quot;btn btn-secondary btn-sm&quot; onclick=&quot;copyCodeContent()&quot;>&#10002; Copy</button>
-                      <button class=&quot;btn btn-primary btn-sm&quot; id=&quot;code-save-btn&quot; onclick=&quot;saveProjectFile()&quot;>&#10003; Save File</button>
+                  <div class="code-editor-status">
+                    <span class="code-status-msg" id="code-status-msg"></span>
+                    <div class="code-editor-actions">
+                      <button class="btn btn-secondary btn-sm" onclick="copyCodeContent()">&#10002; Copy</button>
+                      <button class="btn btn-primary btn-sm" id="code-save-btn" onclick="saveProjectFile()">&#10003; Save File</button>
                     </div>
                   </div>
                 </div>
-                <div id=&quot;code-file-empty&quot; class=&quot;code-empty-state&quot; style=&quot;display:none&quot;>
-                  <div class=&quot;ces-icon&quot;>&#128269;</div>
+                <div id="code-file-empty" class="code-empty-state" style="display:none">
+                  <div class="ces-icon">&#128269;</div>
                   <p>Select a file from the tree to view and edit it</p>
                 </div>
               </div>
@@ -15844,6 +15877,7 @@ async function loadFlightLog() {
   // Populate filter dropdowns
   const aircraftSel = document.getElementById('flog-aircraft-filter');
   const personSel = document.getElementById('flog-person-filter');
+  await loadMissingHours();
 
   if (aircraftSel.options.length <= 1) {
     allAircraft.forEach(a => {
@@ -15988,12 +16022,41 @@ function toggleFlogCard(card) {
   card.classList.toggle('expanded');
 }
 
+function refreshMissingHoursBadge() {
+  const count = Array.isArray(completableBookings) ? completableBookings.length : 0;
+  const badge = document.getElementById('missing-hours-count');
+  if (badge) badge.textContent = `${count} pending`;
+}
+
+function canRemoveMissingHoursBooking() {
+  return currentUser && ['owner', 'admin'].includes(currentUser.role);
+}
+
+function missingHoursDeleteBtn(id, compact) {
+  if (!canRemoveMissingHoursBooking()) return '';
+  const style = compact
+    ? 'font-size:0.72rem;padding:2px 10px;margin-left:4px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)'
+    : 'background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)';
+  return `<button class="btn btn-sm" style="${style}" onclick="deleteMissingHoursBooking(${id})">Delete</button>`;
+}
+
+async function deleteMissingHoursBooking(id) {
+  if (!confirm('Delete this booking record? This cannot be undone.')) return;
+  try {
+    await api(`/api/booking-history/flights/${id}`, { method: 'DELETE' });
+    showToast('Booking record deleted', 'success');
+    await loadMissingHours();
+  } catch (err) {
+    showToast(err.error || 'Failed to delete booking record', 'error');
+  }
+}
+
 async function loadMissingHours() {
   const emptyEl = document.getElementById('missing-hours-empty');
   const tableWrap = document.getElementById('missing-hours-table-wrap');
   const tbody = document.getElementById('missing-hours-table-body');
   const cardsEl = document.getElementById('missing-hours-cards');
-  if (!tbody) return;
+  if (!tbody || !emptyEl || !tableWrap) return;
 
   try {
     const pending = await api('/api/bookings/completable');
@@ -16010,10 +16073,10 @@ async function loadMissingHours() {
 
     emptyEl.classList.add('hidden');
     tableWrap.classList.remove('hidden');
-    const canComplete = currentUser && ['owner', 'admin', 'instructor'].includes(currentUser.role);
     const canMgmtEdit = currentUser && (['owner', 'admin'].includes(currentUser.role) || currentUser.role === 'instructor');
 
     tbody.innerHTML = pending.map(b => {
+      const canComplete = canUserCompleteBooking(b);
       const d = new Date(b.start_time);
       const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = SchoolTime.formatTime(d);
@@ -16038,6 +16101,7 @@ async function loadMissingHours() {
 
     if (cardsEl) {
       cardsEl.innerHTML = pending.map(b => {
+        const canComplete = canUserCompleteBooking(b);
         const d = new Date(b.start_time);
         const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
         const timeStr = SchoolTime.formatTime(d);

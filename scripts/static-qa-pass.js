@@ -224,6 +224,13 @@ if (/fetch\('\/api\/project-files/.test(appHtml)) {
   fail('Website Editor Code tab reads project files without auth helper');
 } else ok('Website Editor Code tab uses authenticated project-file reads');
 
+const codeTabStart = appHtml.indexOf('<!-- CODE TAB -->');
+const codeTabEnd = appHtml.indexOf('<!-- SECTION PICKER MODAL -->');
+const codeTabHtml = codeTabStart >= 0 && codeTabEnd > codeTabStart ? appHtml.slice(codeTabStart, codeTabEnd) : '';
+if (!codeTabHtml || codeTabHtml.includes('&quot;') || !codeTabHtml.includes('id="editor-code-textarea"')) {
+  fail('Website Editor Code tab has malformed escaped attributes');
+} else ok('Website Editor Code tab attributes are valid HTML');
+
 if (appHtml.includes("fetch('/api/admin/download-source'")) {
   fail('Website Editor source download uses admin-only endpoint');
 } else ok('Website Editor source download uses editor-authorized endpoint');
@@ -237,6 +244,19 @@ if (!appHtml.includes('function addFreeformItem')
 if (!appHtml.includes('function openEditStudentHoursModal') || !appHtml.includes('function confirmResetStudentHours')) {
   fail('Progress student hour edit/reset handlers are missing');
 } else ok('Progress student hour edit/reset handlers present');
+
+if (!appHtml.includes('id="missing-hours-table-body"')
+  || !appHtml.includes('function missingHoursDeleteBtn')
+  || !appHtml.includes('function refreshMissingHoursBadge')
+  || !/async function loadFlightLog\(\)[\s\S]{0,300}await loadMissingHours\(\);/.test(appHtml)
+  || !appHtml.includes('const canComplete = canUserCompleteBooking(b);')) {
+  fail('Flight Log missing-hours completion flow is not wired');
+} else ok('Flight Log missing-hours completion flow is wired');
+
+const stagingQaSrc = fs.readFileSync(path.join(root, 'scripts/staging-qa-pass.js'), 'utf8');
+if (!stagingQaSrc.includes("localStorage.setItem('fs_token', t)")) {
+  fail('Staging QA role-page bootstrap uses the wrong token storage key');
+} else ok('Staging QA uses app token storage key');
 
 if (/onclick='openDiscrepancyResolve\([^']+JSON\.stringify\(d\)/.test(appHtml)
   || !appHtml.includes('discrepancyRowsById')) {
