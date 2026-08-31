@@ -19,11 +19,39 @@ const fakeDb = {
     }
     return { rows: [] };
   },
+  connect() {
+    return {
+      query: this.query.bind(this),
+      release() {},
+    };
+  },
 };
 
 let prefsLookupCount = 0;
+const fakeRouter = {};
+for (const method of ['get', 'post', 'put', 'patch', 'delete', 'use']) {
+  fakeRouter[method] = () => fakeRouter;
+}
 const originalLoad = Module._load;
 Module._load = function patchedLoad(request, parent, isMain) {
+  if (request === 'express') {
+    return { Router: () => fakeRouter };
+  }
+  if (request === '../middleware/auth') {
+    return {
+      authenticateToken: (_req, _res, next) => (typeof next === 'function' ? next() : undefined),
+      requireRole: () => (_req, _res, next) => (typeof next === 'function' ? next() : undefined),
+    };
+  }
+  if (parent?.filename.endsWith('/routes/bookings-routes.js') && request === '../lib/booking-notifications') {
+    return {
+      sendBookingConfirmationEmails: async () => true,
+      sendBookingCancellationEmails: async () => true,
+    };
+  }
+  if (request === '../db/index') {
+    return fakeDb;
+  }
   if (parent?.filename.endsWith('/lib/unsubscribe-token.js') && request === 'jsonwebtoken') {
     return {
       sign: (payload) => Buffer.from(JSON.stringify(payload)).toString('base64url'),
@@ -67,6 +95,8 @@ async function main() {
     verifyUnsubscribeToken,
     buildUnsubscribeUrl,
   } = require('../lib/unsubscribe-token');
+  const { shiftBookingTimesToFlightDate } = require('../lib/sync-flight-record');
+  const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 
   assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
   const catalogKeys = notificationPrefs.getPreferenceCatalog('student', false)
@@ -130,6 +160,35 @@ async function main() {
   assert(!/password_reset\s*=/.test(update.sql), 'password_reset must not be persisted as mutable');
   assert(/booking_confirmation\s*=/.test(update.sql), 'mutable keys should still be persisted');
   assert.strictEqual(dbPrefs.rowToPrefs({ password_reset: false }).password_reset, true, 'required prefs normalize to true');
+
+  const booking = {
+    start_time: '2026-08-01T18:30:00.000Z',
+    end_time: '2026-08-01T20:00:00.000Z',
+  };
+  assert.strictEqual(
+    shiftBookingTimesToFlightDate(booking, '2026-08-01'),
+    null,
+    'same-date history edits must not rewrite booking times'
+  );
+  const shifted = shiftBookingTimesToFlightDate(booking, '2026-08-03');
+  assert.strictEqual(shifted.startTime.toISOString(), '2026-08-03T18:30:00.000Z');
+  assert.strictEqual(shifted.endTime.toISOString(), '2026-08-03T20:00:00.000Z');
+
+  assert.strictEqual(shouldRunUpdateConflictCheck({
+    scheduleChanged: true,
+    statusChanged: false,
+    nextStatus: 'confirmed',
+  }), true, 'schedule-blocking reschedules must run conflict checks');
+  assert.strictEqual(shouldRunUpdateConflictCheck({
+    scheduleChanged: false,
+    statusChanged: true,
+    nextStatus: 'confirmed',
+  }), true, 'reactivating a booking must run conflict checks');
+  assert.strictEqual(shouldRunUpdateConflictCheck({
+    scheduleChanged: true,
+    statusChanged: false,
+    nextStatus: 'completed',
+  }), false, 'non-blocking history edits should not run live conflict checks');
 
   console.log('critical bug regressions passed');
 }

@@ -6,7 +6,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
-const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { syncFlightRecord, dateOnly } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
@@ -177,9 +177,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
 
     const bkResult = await pool.query(
-      `SELECT b.*, a.hourly_rate
+      `SELECT b.*, a.hourly_rate, fl.flight_date AS existing_flight_date
        FROM bookings b
        JOIN aircraft a ON b.aircraft_id = a.id
+       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
        WHERE b.id = $1`,
       [bookingId]
     );
@@ -218,9 +219,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+    const requestedDate = flight_date !== undefined && flight_date !== null && flight_date !== ''
+      ? dateOnly(flight_date)
+      : null;
+    const existingDate = dateOnly(b.existing_flight_date) || dateOnly(b.start_time);
     const effectiveLessonType = inferLessonType(
       lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
@@ -232,8 +234,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const patch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
@@ -243,7 +244,12 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         aircraft_charge_amount,
         instruction_charge_amount,
         submitted_by: userId,
-      });
+      };
+      if (requestedDate && requestedDate !== existingDate) {
+        patch.flight_date = requestedDate;
+      }
+
+      const synced = await syncFlightRecord(client, bookingId, patch);
 
       await client.query('COMMIT');
       inTxn = false;
