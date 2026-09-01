@@ -1,9 +1,8 @@
 'use strict';
 
 const express = require('express');
-const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
+const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl, normalizeUnsubscribeType } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -50,7 +49,16 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    const verified = verifyUnsubscribeToken(token);
+    const safeType = normalizeUnsubscribeType(rawType);
+    if (!safeType) {
+      return res.status(400).send(renderPage({
+        ok: false,
+        title: 'Invalid preference type',
+        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+      }));
+    }
+
+    const verified = verifyUnsubscribeToken(token, safeType);
     if (!verified) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -59,27 +67,19 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
-      return res.status(400).send(renderPage({
-        ok: false,
-        title: 'Invalid preference type',
-        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
-
     await ensureDefaultPrefs(verified.userId);
 
-    if (rawType === 'all') {
+    if (safeType === 'all') {
       await updatePrefs(verified.userId, { email_all_off: true });
     } else {
-      await updatePrefs(verified.userId, { [rawType]: false });
+      await updatePrefs(verified.userId, { [safeType]: false });
     }
 
-    const label = typeLabel(rawType);
+    const label = typeLabel(safeType);
     return res.send(renderPage({
       ok: true,
       title: 'Unsubscribed',
-      message: rawType === 'all'
+      message: safeType === 'all'
         ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
