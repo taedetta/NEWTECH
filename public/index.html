@@ -2594,6 +2594,32 @@ __CMS_INJECT__
             }
           }
 
+          // ── Freeform Text Boxes ─────────────────────────────────────────────
+          if (c.freeform_items) {
+            try {
+              var freeformItems = JSON.parse(c.freeform_items);
+              if (Array.isArray(freeformItems)) {
+                freeformItems.forEach(function(item) {
+                  if (!item || !item.text) return;
+                  var sectionId = item.section || 'hero';
+                  var target = document.getElementById(SECTION_EL_MAP[sectionId] || sectionId);
+                  if (!target) return;
+                  if (window.getComputedStyle(target).position === 'static') {
+                    target.style.position = 'relative';
+                  }
+                  var top = Math.max(0, Math.min(100, parseFloat(item.top || 18)));
+                  var left = Math.max(0, Math.min(100, parseFloat(item.left || 8)));
+                  var width = Math.max(120, Math.min(900, parseFloat(item.width || 320)));
+                  var box = document.createElement('div');
+                  box.className = 'cms-freeform-box';
+                  box.style.cssText = 'position:absolute;z-index:20;top:' + top + '%;left:' + left + '%;max-width:min(' + width + 'px,90vw);background:rgba(15,29,47,0.88);border:1px solid rgba(56,189,248,0.35);box-shadow:0 12px 30px rgba(0,0,0,0.28);border-radius:14px;padding:0.85rem 1rem;color:#fff;line-height:1.5;font-size:0.95rem;backdrop-filter:blur(8px);';
+                  box.innerHTML = cmsEsc(item.text).replace(/\n/g, '<br>');
+                  target.appendChild(box);
+                });
+              }
+            } catch(e) {}
+          }
+
           // ── Orphan Text Edits (inline edits on non-CMS elements) ────────────
           // These are saved by the editor as orphan_text_N keys using the same
           // DOM tree-walker ordinal as tagAllElements() in the editor.

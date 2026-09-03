@@ -2,10 +2,43 @@
 
 const express = require('express');
 const pool = require('../db/index');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const trainingDb = require('../db/training');
 
 const router = express.Router();
+
+function isTrainingStaff(user) {
+  return ['owner', 'admin', 'instructor'].includes(user.role) || (user.is_instructor && user.role !== 'student');
+}
+
+async function canManageAllTraining(user) {
+  if (['owner', 'admin'].includes(user.role)) return true;
+  if (!isTrainingStaff(user)) return false;
+  const perms = await getUserPermissions(user.id, user.role);
+  return !!(perms.can_manage_students || perms.can_manage_instructors);
+}
+
+async function isAssignedTrainingInstructor(user, studentId) {
+  if (!isTrainingStaff(user)) return false;
+  const result = await pool.query(
+    `SELECT 1 FROM student_training
+     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'
+     LIMIT 1`,
+    [studentId, user.id]
+  );
+  return result.rows.length > 0;
+}
+
+async function canAccessStudentTraining(user, studentId) {
+  if (await canManageAllTraining(user)) return true;
+  if (user.role === 'student') return user.id === studentId;
+  return isAssignedTrainingInstructor(user, studentId);
+}
+
+async function canWriteStudentTraining(user, studentId) {
+  if (await canManageAllTraining(user)) return true;
+  return isAssignedTrainingInstructor(user, studentId);
+}
 
 router.get('/programs', authenticateToken, async (req, res) => {
   try {
@@ -33,14 +66,17 @@ router.get('/programs', authenticateToken, async (req, res) => {
 // GET /program-enrollments — programs with student enrollment and progress data (instructor+)
 router.get('/program-enrollments', authenticateToken, async (req, res) => {
   try {
-    // Instructors can view all enrollments; students can't access this endpoint
-    if (req.user.role === 'student') {
+    if (!isTrainingStaff(req.user)) {
       return res.status(403).json({ error: 'Access denied' });
     }
+    const canViewAll = await canManageAllTraining(req.user);
     const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
     const result = [];
     for (const prog of programs.rows) {
-      const enrollments = await trainingDb.getProgramEnrollments(prog.id);
+      let enrollments = await trainingDb.getProgramEnrollments(prog.id);
+      if (!canViewAll) {
+        enrollments = enrollments.filter(e => e.instructor_id === req.user.id);
+      }
       result.push({
         id: prog.id,
         code: prog.code,
@@ -58,7 +94,9 @@ router.get('/program-enrollments', authenticateToken, async (req, res) => {
 
 router.get('/student-progress', authenticateToken, async (req, res) => {
   try {
-    const studentId = req.query.student_id ? parseInt(req.query.student_id) : req.user.id;
+    const studentId = req.query.student_id ? parseInt(req.query.student_id, 10) : req.user.id;
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
     const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
     const stages = await pool.query('SELECT * FROM program_stages ORDER BY program_id, order_index');
     let maneuvers = [];
@@ -92,6 +130,10 @@ router.post('/student-progress', authenticateToken, async (req, res) => {
   try {
     const { student_id, maneuver_id, status, notes } = req.body;
     if (!student_id || !maneuver_id) return res.status(400).json({ error: 'student_id and maneuver_id are required' });
+    const studentId = parseInt(student_id, 10);
+    const maneuverId = parseInt(maneuver_id, 10);
+    if (!Number.isFinite(studentId) || !Number.isFinite(maneuverId)) return res.status(400).json({ error: 'Invalid student or maneuver ID' });
+    if (!(await canWriteStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Only assigned instructors or admins can update progress' });
     const validStatuses = ['not_started', 'in_progress', 'needs_review', 'proficient', 'completed'];
     const s = validStatuses.includes(status) ? status : 'in_progress';
     const result = await pool.query(
@@ -99,7 +141,7 @@ router.post('/student-progress', authenticateToken, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (student_id, maneuver_id) DO UPDATE SET status = $3, notes = $4, proficient_date = $5
        RETURNING *`,
-      [student_id, maneuver_id, s, notes || null, s === 'proficient' || s === 'completed' ? new Date() : null]
+      [studentId, maneuverId, s, notes || null, s === 'proficient' || s === 'completed' ? new Date() : null]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -142,12 +184,25 @@ router.post('/enroll', authenticateToken, requireRole('owner', 'admin', 'instruc
 
 router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
   try {
+    const enrollmentId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(enrollmentId)) return res.status(400).json({ error: 'Invalid enrollment ID' });
     const { current_stage_id } = req.body;
+    const enrollmentResult = await pool.query(
+      'SELECT id, student_id, instructor_id, program_id FROM student_training WHERE id = $1',
+      [enrollmentId]
+    );
+    if (enrollmentResult.rows.length === 0) return res.status(404).json({ error: 'Enrollment not found' });
+    const enrollment = enrollmentResult.rows[0];
+    if (!(await canWriteStudentTraining(req.user, enrollment.student_id))) return res.status(403).json({ error: 'Only assigned instructors or admins can update enrollment stages' });
+    const stageId = current_stage_id ? parseInt(current_stage_id, 10) : null;
+    if (stageId) {
+      const stageResult = await pool.query('SELECT id FROM program_stages WHERE id = $1 AND program_id = $2', [stageId, enrollment.program_id]);
+      if (stageResult.rows.length === 0) return res.status(400).json({ error: 'Stage not found in this program' });
+    }
     const result = await pool.query(
       `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [current_stage_id || null, req.params.id]
+      [stageId, enrollmentId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Enrollment not found' });
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Enrollment stage update error:', err);
@@ -156,7 +211,7 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
 });
 
 // Admin: training programs management
-router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) => {
+router.post('/admin/programs', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, code, description } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'name and code are required' });
@@ -172,7 +227,7 @@ router.post('/admin/programs', requireRole('owner', 'admin'), async (req, res) =
   }
 });
 
-router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put('/admin/programs/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, description } = req.body;
     const result = await pool.query(
@@ -187,7 +242,7 @@ router.put('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res
   }
 });
 
-router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete('/admin/programs/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
     const id = parseInt(req.params.id);
@@ -208,7 +263,7 @@ router.delete('/admin/programs/:id', requireRole('owner', 'admin'), async (req, 
   }
 });
 
-router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => {
+router.post('/admin/stages', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { program_id, name, description, order_index } = req.body;
     if (!program_id || !name) return res.status(400).json({ error: 'program_id and name are required' });
@@ -228,7 +283,7 @@ router.post('/admin/stages', requireRole('owner', 'admin'), async (req, res) => 
   }
 });
 
-router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put('/admin/stages/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, description, order_index } = req.body;
     const result = await pool.query(
@@ -243,7 +298,7 @@ router.put('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) 
   }
 });
 
-router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete('/admin/stages/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1`, [req.params.id]);
     if (parseInt(inUse.rows[0].cnt) > 0) {
@@ -257,7 +312,7 @@ router.delete('/admin/stages/:id', requireRole('owner', 'admin'), async (req, re
   }
 });
 
-router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) => {
+router.post('/admin/maneuvers', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { stage_id, name, description, proficiency_standard, order_index } = req.body;
     if (!stage_id || !name) return res.status(400).json({ error: 'stage_id and name are required' });
@@ -277,7 +332,7 @@ router.post('/admin/maneuvers', requireRole('owner', 'admin'), async (req, res) 
   }
 });
 
-router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.put('/admin/maneuvers/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { name, description, proficiency_standard, order_index } = req.body;
     const result = await pool.query(
@@ -292,7 +347,7 @@ router.put('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, re
   }
 });
 
-router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req, res) => {
+router.delete('/admin/maneuvers/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     await pool.query('DELETE FROM stage_maneuvers WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -302,7 +357,7 @@ router.delete('/admin/maneuvers/:id', requireRole('owner', 'admin'), async (req,
   }
 });
 
-router.put('/admin/stages/reorder', requireRole('owner', 'admin'), async (req, res) => {
+router.put('/admin/stages/reorder', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const { stages } = req.body;
     if (!Array.isArray(stages)) return res.status(400).json({ error: 'stages array required' });
@@ -338,7 +393,7 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
   try {
     const studentId = parseInt(req.params.studentId);
     if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
-    if (req.user.role === 'student' && req.user.id !== studentId) return res.status(403).json({ error: 'Access denied' });
+    if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
     const enrollResult = await pool.query(`
       SELECT st.id as enrollment_id, st.program_id, st.student_id, st.instructor_id, st.status, st.started_at,
              tp.name as program_name, tp.code as program_code, u.name as instructor_name, ps.name as current_stage_name
@@ -485,8 +540,7 @@ router.get('/maneuver-progress/:studentId/:enrollmentId', authenticateToken, asy
     const studentId = parseInt(req.params.studentId, 10);
     const enrollmentId = parseInt(req.params.enrollmentId, 10);
     if (isNaN(studentId) || isNaN(enrollmentId)) return res.status(400).json({ error: 'Invalid IDs' });
-    // Students can only view their own; instructors/admin/owner can view any
-    if (req.user.role === 'student' && req.user.id !== studentId) return res.status(403).json({ error: 'Access denied' });
+    if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
     const rows = await trainingDb.getManeuverProgress(studentId, enrollmentId);
     res.json(rows);
   } catch (err) {
@@ -502,10 +556,11 @@ router.put('/maneuver-progress', authenticateToken, async (req, res) => {
     if (!student_id || !maneuver_id || !status) {
       return res.status(400).json({ error: 'student_id, maneuver_id, and status are required' });
     }
-    const canUpdate = ['owner', 'admin', 'instructor'].includes(req.user.role)
-      || (req.user.is_instructor && req.user.role !== 'student');
-    if (!canUpdate) return res.status(403).json({ error: 'Only instructors can update maneuver progress' });
-    const result = await trainingDb.upsertManeuverProgress(student_id, maneuver_id, status);
+    const studentId = parseInt(student_id, 10);
+    const maneuverId = parseInt(maneuver_id, 10);
+    if (!Number.isFinite(studentId) || !Number.isFinite(maneuverId)) return res.status(400).json({ error: 'Invalid student or maneuver ID' });
+    if (!(await canWriteStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Only assigned instructors or admins can update maneuver progress' });
+    const result = await trainingDb.upsertManeuverProgress(studentId, maneuverId, status);
     res.json(result);
   } catch (err) {
     console.error('[training] PUT /maneuver-progress error:', err.message);
@@ -516,6 +571,11 @@ router.put('/maneuver-progress', authenticateToken, async (req, res) => {
 // GET /students — list students with training enrollments (for progress page)
 router.get('/students', authenticateToken, async (req, res) => {
   try {
+    if (!isTrainingStaff(req.user)) return res.status(403).json({ error: 'Access denied' });
+    const canViewAll = await canManageAllTraining(req.user);
+    const params = [];
+    const instructorFilter = canViewAll ? '' : ' AND st.instructor_id = $1';
+    if (!canViewAll) params.push(req.user.id);
     const result = await pool.query(`
       SELECT
         u.id, u.name, u.phone_number,
@@ -537,10 +597,10 @@ router.get('/students', authenticateToken, async (req, res) => {
       LEFT JOIN training_programs tp ON tp.id = st.program_id
       LEFT JOIN users instructor ON instructor.id = st.instructor_id
       LEFT JOIN program_stages ps ON ps.id = st.current_stage_id
-      WHERE u.role = 'student' AND u.deleted_at IS NULL
+      WHERE u.role = 'student' AND u.deleted_at IS NULL${instructorFilter}
       GROUP BY u.id, u.name, u.phone_number, last_flight_date
       ORDER BY u.name
-    `);
+    `, params);
     res.json(result.rows);
   } catch (err) {
     console.error('[training] GET /students error:', err.message);
@@ -553,6 +613,7 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
     if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
 
     const studentResult = await pool.query(
       'SELECT id, name, email, phone_number FROM users WHERE id = $1 AND deleted_at IS NULL',
@@ -670,6 +731,7 @@ router.get('/students/:studentId/debriefs', authenticateToken, async (req, res) 
   try {
     const studentId = parseInt(req.params.studentId, 10);
     if (isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
 
     const result = await pool.query(`
       SELECT fd.id, fd.flight_date, fd.notes, fd.overall_performance, fd.recommendations,
@@ -693,12 +755,13 @@ router.get('/students/:studentId/debriefs', authenticateToken, async (req, res) 
 // POST /debriefs — create a flight debrief with optional per-maneuver grades
 router.post('/debriefs', authenticateToken, async (req, res) => {
   try {
-    // Only instructors/admins/owners can create debriefs
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Only instructors can create debriefs' });
     const { student_id, booking_id, stage_id, notes, recommendations, overall_performance, flight_date, grades } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id is required' });
+    const studentId = parseInt(student_id, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canWriteStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Only assigned instructors or admins can create debriefs' });
     const debrief = await trainingDb.createDebrief({
-      studentId: student_id,
+      studentId,
       instructorId: req.user.id,
       bookingId: booking_id,
       stageId: stage_id,
@@ -718,13 +781,15 @@ router.post('/debriefs', authenticateToken, async (req, res) => {
 // POST /milestones — instructor sign-off on a training stage
 router.post('/milestones', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Only instructors can sign off stages' });
     const { student_id, stage_id, enrollment_id, notes, debrief_id } = req.body;
     if (!student_id || !stage_id || !enrollment_id) {
       return res.status(400).json({ error: 'student_id, stage_id, and enrollment_id are required' });
     }
+    const studentId = parseInt(student_id, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canWriteStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Only assigned instructors or admins can sign off stages' });
     const result = await trainingDb.completeStageMilestone({
-      studentId: parseInt(student_id, 10),
+      studentId,
       stageId: parseInt(stage_id, 10),
       enrollmentId: parseInt(enrollment_id, 10),
       completedBy: req.user.id,
@@ -763,6 +828,9 @@ router.patch('/enroll/:id', authenticateToken, requireRole('owner', 'admin', 'in
   try {
     const enrollmentId = parseInt(req.params.id, 10);
     if (isNaN(enrollmentId)) return res.status(400).json({ error: 'Invalid enrollment ID' });
+    if (!(await canManageAllTraining(req.user))) {
+      return res.status(403).json({ error: 'You need training management permissions to reassign instructors' });
+    }
 
     const { instructor_id } = req.body;
     const updated = await trainingDb.reassignInstructor(

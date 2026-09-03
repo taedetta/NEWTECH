@@ -10,6 +10,16 @@ const { authenticateToken, requireRole, requirePermission } = require('../middle
 
 const router = express.Router();
 
+function parseOptionalNumber(value, fieldName, { max = 99999 } = {}) {
+  if (value == null || value === '') return { value: null };
+  const raw = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(raw)) return { error: `${fieldName} must be a valid non-negative number` };
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return { error: `${fieldName} must be a valid number` };
+  if (num > max) return { error: `${fieldName} exceeds maximum allowed value` };
+  return { value: num };
+}
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM aircraft ORDER BY tail_number');
@@ -26,10 +36,12 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     if (!tail_number || !make_model) {
       return res.status(400).json({ error: 'Tail number and make/model are required' });
     }
+    const rate = parseOptionalNumber(hourly_rate, 'hourly_rate');
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
       `INSERT INTO aircraft (tail_number, make_model, type, year, hourly_rate, notes)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, hourly_rate, notes]
+      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, rate.value, notes]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -44,12 +56,14 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { tail_number, make_model, type, year, hourly_rate, status, notes } = req.body;
+    const rate = parseOptionalNumber(hourly_rate, 'hourly_rate');
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
       `UPDATE aircraft SET tail_number = COALESCE($1, tail_number), make_model = COALESCE($2, make_model),
        type = COALESCE($3, type), year = COALESCE($4, year), hourly_rate = COALESCE($5, hourly_rate),
        status = COALESCE($6, status), notes = COALESCE($7, notes), updated_at = NOW()
        WHERE id = $8 RETURNING *`,
-      [tail_number?.toUpperCase(), make_model, type, year, hourly_rate, status, notes, req.params.id]
+      [tail_number?.toUpperCase(), make_model, type, year, rate.value, status, notes, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     res.json(result.rows[0]);
@@ -60,7 +74,7 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 });
 
 // DELETE /api/aircraft/:id — Owner/Admin only. Cancels future bookings, removes related downtime/squawks, then deletes the aircraft.
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintenance'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
     const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);
@@ -157,6 +171,10 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
+  const parsedHobbs = parseOptionalNumber(hobbs, 'hobbs');
+  if (parsedHobbs.error) return res.status(400).json({ error: parsedHobbs.error });
+  const parsedTach = parseOptionalNumber(tach, 'tach');
+  if (parsedTach.error) return res.status(400).json({ error: parsedTach.error });
   const client = await pool.connect();
   try {
     const current = await client.query(
@@ -170,12 +188,12 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
+      const hVal = parsedHobbs.value;
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
+      const tVal = parsedTach.value;
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
@@ -189,14 +207,14 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), parsedHobbs.value, note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), parsedTach.value, note || null]
       );
     }
     await client.query('COMMIT');
@@ -235,12 +253,14 @@ router.get('/:id/hours-history', authenticateToken, async (req, res) => {
 router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { next_100hr_due, next_annual_due } = req.body;
+    const due = parseOptionalNumber(next_100hr_due, 'next_100hr_due');
+    if (due.error) return res.status(400).json({ error: due.error });
     const result = await pool.query(
       `UPDATE aircraft
        SET next_100hr_due = $1, next_annual_due = $2, updated_at = NOW()
        WHERE id = $3 RETURNING *`,
       [
-        next_100hr_due != null ? parseFloat(next_100hr_due) : null,
+        due.value,
         next_annual_due || null,
         req.params.id
       ]
@@ -272,10 +292,12 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
   try {
     const { ad_number, description, due_date, due_hobbs } = req.body;
     if (!description) return res.status(400).json({ error: 'Description is required' });
+    const due = parseOptionalNumber(due_hobbs, 'due_hobbs');
+    if (due.error) return res.status(400).json({ error: due.error });
     const result = await pool.query(
       `INSERT INTO airworthiness_directives (aircraft_id, ad_number, description, due_date, due_hobbs)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, ad_number || null, description, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null]
+      [req.params.id, ad_number || null, description, due_date || null, due.value]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -288,6 +310,8 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
 router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { status, description, due_date, due_hobbs, ad_number } = req.body;
+    const due = parseOptionalNumber(due_hobbs, 'due_hobbs');
+    if (due.error) return res.status(400).json({ error: due.error });
     const result = await pool.query(
       `UPDATE airworthiness_directives
        SET status = COALESCE($1, status),
@@ -297,7 +321,7 @@ router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_
            ad_number = COALESCE($5, ad_number),
            updated_at = NOW()
        WHERE id = $6 AND aircraft_id = $7 RETURNING *`,
-      [status || null, description || null, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null, ad_number || null, req.params.adId, req.params.id]
+      [status || null, description || null, due_date || null, due.value, ad_number || null, req.params.adId, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'AD not found' });
     res.json(result.rows[0]);

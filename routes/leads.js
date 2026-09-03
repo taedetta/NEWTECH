@@ -6,7 +6,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { createLead, createManualLead, listLeads, countNewLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus, recordLeadFollowUp, markLeadConverted } = require('../db/leads');
+const { createLead, createManualLead, listLeads, countNewLeads, getLeadById, getLeadActivity, addLeadNote, updateLeadStatus, recordLeadFollowUp, markLeadConverted, deleteLead } = require('../db/leads');
 const { enforceCaptcha } = require('../lib/captcha');
 const { sendEmail } = require('../email-templates');
 const { authenticateToken, requireRole } = require('../middleware/auth');
@@ -324,11 +324,10 @@ router.post('/:id/convert', authenticateToken, requireRole(...LEADS_STAFF_ROLES)
 
 // DELETE /api/leads/:id — admin/owner only
 router.delete('/:id', authenticateToken, requireRole(...LEADS_ADMIN_ROLES), async (req, res) => {
-  const db = require('../db/index');
   try {
     const id = parseInt(req.params.id);
-    const result = await db.query('DELETE FROM discovery_flight_leads WHERE id = $1 RETURNING id', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Lead not found.' });
+    const deleted = await deleteLead(id);
+    if (!deleted) return res.status(404).json({ error: 'Lead not found.' });
     return res.json({ ok: true });
   } catch (err) {
     console.error('[leads] delete error:', err.message);
