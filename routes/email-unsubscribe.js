@@ -1,9 +1,8 @@
 'use strict';
 
 const express = require('express');
-const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
+const { resolveUnsubscribeRequest, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -41,7 +40,6 @@ function renderPage({ title, message, ok }) {
 router.get('/unsubscribe', async (req, res) => {
   try {
     const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -50,8 +48,8 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    const verified = verifyUnsubscribeToken(token);
-    if (!verified) {
+    const verified = resolveUnsubscribeRequest(token, req.query.type);
+    if (verified.error) {
       return res.status(400).send(renderPage({
         ok: false,
         title: 'Link expired or invalid',
@@ -59,13 +57,7 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
-      return res.status(400).send(renderPage({
-        ok: false,
-        title: 'Invalid preference type',
-        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
+    const rawType = verified.type;
 
     await ensureDefaultPrefs(verified.userId);
 
@@ -80,7 +72,7 @@ router.get('/unsubscribe', async (req, res) => {
       ok: true,
       title: 'Unsubscribed',
       message: rawType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+        ? 'You will no longer receive optional email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
