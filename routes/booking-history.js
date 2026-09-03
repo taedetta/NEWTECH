@@ -188,6 +188,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!canEditBookingHistoryFlight(role, userId, b)) {
       return res.status(403).json({ error: 'You can only edit your own flight records' });
     }
+    const canOverrideCharges = ['owner', 'admin'].includes(role);
 
     const {
       flight_date,
@@ -240,8 +241,9 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
+        aircraft_charge_amount: canOverrideCharges ? aircraft_charge_amount : undefined,
+        instruction_charge_amount: canOverrideCharges ? instruction_charge_amount : undefined,
+        allow_charge_overrides: canOverrideCharges,
         submitted_by: userId,
       });
 
@@ -285,7 +287,8 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
+    const canOverrideCharges = ['owner', 'admin'].includes(role);
+    const instrCharge = canOverrideCharges && instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
       : (gs.instructor_rate != null
         ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100

@@ -74,6 +74,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       dual_instruction_hours,
       aircraft_charge_amount,
       instruction_charge_amount,
+      allow_charge_overrides: true,
       lesson_type,
       submitted_by: req.user.id,
     });

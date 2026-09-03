@@ -41,6 +41,8 @@ const {
   isEmailSuppressedByPrefs,
   shouldSendEmail,
 } = require('../lib/notification-prefs');
+const { bookingUpdateNeedsConflictCheck } = require('../lib/booking-overlap');
+const { syncFlightRecord, shiftedBookingTimesForFlightDate } = require('../lib/sync-flight-record');
 
 function getUrlToken(url) {
   return new URL(url).searchParams.get('token');
@@ -94,6 +96,96 @@ async function run() {
   const visibleTypes = studentCatalog.flatMap((category) => category.types.map((type) => type.key));
   assert(!visibleTypes.includes('password_reset'));
   assert(visibleTypes.includes('booking_confirmation'));
+
+  assert.strictEqual(bookingUpdateNeedsConflictCheck({
+    previousStatus: 'confirmed',
+    nextStatus: 'confirmed',
+    scheduleChanged: true,
+  }), true);
+  assert.strictEqual(bookingUpdateNeedsConflictCheck({
+    previousStatus: 'cancelled',
+    nextStatus: 'confirmed',
+    scheduleChanged: false,
+  }), true);
+  assert.strictEqual(bookingUpdateNeedsConflictCheck({
+    previousStatus: 'confirmed',
+    nextStatus: 'confirmed',
+    scheduleChanged: false,
+  }), false);
+  assert.strictEqual(bookingUpdateNeedsConflictCheck({
+    previousStatus: 'completed',
+    nextStatus: 'completed',
+    scheduleChanged: true,
+  }), false);
+
+  const booking = {
+    start_time: '2026-01-15T14:30:00.000Z',
+    end_time: '2026-01-15T16:00:00.000Z',
+  };
+  assert.strictEqual(shiftedBookingTimesForFlightDate(booking, '2026-01-15'), null);
+  assert.deepStrictEqual(shiftedBookingTimesForFlightDate(booking, '2026-01-16'), {
+    start_time: '2026-01-16T14:30:00.000Z',
+    end_time: '2026-01-16T16:00:00.000Z',
+  });
+
+  let flightLogUpdateValues = null;
+  const fakeClient = {
+    query: async (sql, params) => {
+      const text = String(sql);
+      if (text === 'SELECT * FROM bookings WHERE id = $1') {
+        return {
+          rows: [{
+            id: 99,
+            status: 'completed',
+            aircraft_id: 5,
+            student_id: 7,
+            instructor_id: null,
+            booking_type: 'student_solo',
+            lesson_type: 'Solo',
+            start_time: booking.start_time,
+            end_time: booking.end_time,
+            hobbs_start: 10,
+            hobbs_end: 11,
+            billing_voided: false,
+          }],
+        };
+      }
+      if (text === 'SELECT * FROM flight_logs WHERE booking_id = $1') {
+        return {
+          rows: [{
+            booking_id: 99,
+            aircraft_id: 5,
+            student_id: 7,
+            instructor_id: null,
+            booking_type: 'student_solo',
+            flight_date: '2026-01-15',
+            hobbs_start: 10,
+            hobbs_end: 11,
+            hobbs_delta: 1,
+            tach_start: null,
+            tach_end: null,
+            tach_delta: null,
+            dual_instruction_hours: 0,
+            aircraft_charge_amount: 100,
+            instruction_charge_amount: 0,
+          }],
+        };
+      }
+      if (text === 'SELECT hourly_rate FROM aircraft WHERE id = $1') return { rows: [{ hourly_rate: 100 }] };
+      if (text.startsWith('UPDATE flight_logs SET')) flightLogUpdateValues = params;
+      return { rows: [] };
+    },
+  };
+  await syncFlightRecord(fakeClient, 99, {
+    hobbs_start: 10,
+    hobbs_end: 11,
+    dual_instruction_hours: 1,
+    aircraft_charge_amount: 1,
+    instruction_charge_amount: 2,
+    allow_charge_overrides: false,
+  });
+  assert.strictEqual(flightLogUpdateValues[8], 100);
+  assert.strictEqual(flightLogUpdateValues[9], 0);
 
   console.log('Critical bug regressions passed');
 }
