@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
+const { EMAIL_TYPES, getPreferenceCatalog, isConfigurableEmailType } = require('../lib/notification-prefs');
 const { sendEmailToUser } = require('../lib/notification-prefs');
 const { profileChangeEmail } = require('../email-templates');
 
@@ -206,6 +206,7 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
     const patch = {};
     if (body.email_all_off !== undefined) patch.email_all_off = !!body.email_all_off;
     for (const key of Object.keys(EMAIL_TYPES)) {
+      if (!isConfigurableEmailType(key)) continue;
       if (body[key] !== undefined) patch[key] = !!body[key];
     }
     if (Object.keys(patch).length === 0) {
@@ -219,7 +220,8 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
   }
 });
 
-router.use((req, res) => {
+router.use((req, res, next) => {
+  if (req.baseUrl !== '/api/account') return next();
   res.status(404).json({ error: 'Not found' });
 });
 

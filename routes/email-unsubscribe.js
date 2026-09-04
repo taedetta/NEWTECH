@@ -3,7 +3,6 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
@@ -41,7 +40,7 @@ function renderPage({ title, message, ok }) {
 router.get('/unsubscribe', async (req, res) => {
   try {
     const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
+    const requestedType = req.query.type == null ? '' : String(req.query.type).trim();
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -59,7 +58,8 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
+    const rawType = verified.type;
+    if (requestedType && requestedType !== rawType) {
       return res.status(400).send(renderPage({
         ok: false,
         title: 'Invalid preference type',

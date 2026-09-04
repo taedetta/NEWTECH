@@ -6,8 +6,9 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
-const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { syncFlightRecord, normalizeCalendarDate } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { calendarDateFromDate } = require('../lib/school-timezone');
 
 const router = express.Router();
 
@@ -19,6 +20,10 @@ function canEditBookingHistoryFlight(role, userId, booking) {
 function canEditGroundSessionHistory(role, userId, session) {
   if (['owner', 'admin'].includes(role)) return true;
   return role === 'instructor' && session.instructor_id === userId;
+}
+
+function canEditBillingFields(role) {
+  return ['owner', 'admin'].includes(role);
 }
 
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
@@ -177,9 +182,10 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
 
     const bkResult = await pool.query(
-      `SELECT b.*, a.hourly_rate
+      `SELECT b.*, a.hourly_rate, fl.flight_date AS existing_flight_date
        FROM bookings b
        JOIN aircraft a ON b.aircraft_id = a.id
+       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
        WHERE b.id = $1`,
       [bookingId]
     );
@@ -218,11 +224,14 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+    const requestedDate = flight_date !== undefined && flight_date !== null && flight_date !== ''
+      ? normalizeCalendarDate(flight_date)
+      : null;
+    const existingDate = normalizeCalendarDate(b.existing_flight_date)
+      || (b.start_time ? calendarDateFromDate(b.start_time) : null);
+    const allowBillingEdit = canEditBillingFields(role);
     const effectiveLessonType = inferLessonType(
-      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+      allowBillingEdit && lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
     );
 
@@ -232,18 +241,24 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const patch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
         submitted_by: userId,
-      });
+      };
+      if (requestedDate && requestedDate !== existingDate) {
+        patch.flight_date = requestedDate;
+      }
+      if (allowBillingEdit) {
+        patch.aircraft_charge_amount = aircraft_charge_amount;
+        patch.instruction_charge_amount = instruction_charge_amount;
+      }
+
+      const synced = await syncFlightRecord(client, bookingId, patch);
 
       await client.query('COMMIT');
       inTxn = false;
@@ -285,7 +300,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
+    const instrCharge = canEditBillingFields(role) && instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
       : (gs.instructor_rate != null
         ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
@@ -427,3 +442,4 @@ router.post('/manual', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.canEditBillingFields = canEditBillingFields;
