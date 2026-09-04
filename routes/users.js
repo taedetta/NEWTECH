@@ -14,13 +14,26 @@ const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
 const router = express.Router();
 
+function parseUserHours(value, field) {
+  if (value === null || value === '') return { error: `${field} must be a number` };
+  const str = typeof value === 'number' ? String(value) : String(value).trim();
+  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(str)) {
+    return { error: `${field} must be a non-negative number` };
+  }
+  const parsed = Number(str);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 99999) {
+    return { error: `${field} must be between 0 and 99999` };
+  }
+  return { value: parsed };
+}
+
 // GET /api/users
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role } = req.query;
     const requesterRole = req.user.role;
-    if (['student', 'renter'].includes(requesterRole)) {
-      // Renters and students only see instructors/admins/owners in their user list
+    if (['student', 'renter', 'maintenance'].includes(requesterRole)) {
+      // Non-staff roster users only see the bookable instructor directory, without PII.
       const result = await pool.query(
         `SELECT u.id, u.name, u.role, u.is_instructor,
           EXISTS (SELECT 1 FROM instructor_availability WHERE instructor_id = u.id) as has_instructor_availability
@@ -118,7 +131,7 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
       return res.send(buf);
     }
 
-    const buf = buildFspWorkbook(users, exportOptions);
+    const buf = await buildFspWorkbook(users, exportOptions);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
     return res.send(buf);
@@ -479,8 +492,18 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    if (total_hobbs_hours !== undefined) {
+      const parsed = parseUserHours(total_hobbs_hours, 'total_hobbs_hours');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(parsed.value);
+    }
+    if (total_tach_hours !== undefined) {
+      const parsed = parseUserHours(total_tach_hours, 'total_tach_hours');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(parsed.value);
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,

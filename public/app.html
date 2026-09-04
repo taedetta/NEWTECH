@@ -6836,7 +6836,7 @@ async function addStage(programId) {
   const name = inp ? inp.value.trim() : '';
   if (!name) { alert('Stage name is required'); return; }
   try {
-    await api('/api/admin/training/stages', { method: 'POST', body: JSON.stringify({ program_id: programId, name }) });
+    await api('/api/admin/training/admin/stages', { method: 'POST', body: JSON.stringify({ program_id: programId, name }) });
     await loadProgramsAdmin();
     showToast('Stage added');
   } catch (err) {
@@ -6847,7 +6847,7 @@ async function addStage(programId) {
 async function deleteProgram(programId) {
   if (!confirm('Delete this training program? All stages and maneuvers will be permanently removed. This cannot be undone.')) return;
   try {
-    await api(`/api/admin/training/programs/${programId}`, { method: 'DELETE' });
+    await api(`/api/admin/training/admin/programs/${programId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Program deleted', 'success');
   } catch (err) {
@@ -6858,7 +6858,7 @@ async function deleteProgram(programId) {
 async function deleteStage(stageId, programId) {
   if (!confirm('Delete this stage? Maneuvers in it will also be removed. Students currently in this stage must be reassigned first.')) return;
   try {
-    await api(`/api/admin/training/stages/${stageId}`, { method: 'DELETE' });
+    await api(`/api/admin/training/admin/stages/${stageId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Stage deleted');
   } catch (err) {
@@ -6888,7 +6888,7 @@ async function addManeuver(stageId) {
   const name = inp ? inp.value.trim() : '';
   if (!name) { alert('Maneuver name is required'); return; }
   try {
-    await api('/api/admin/training/maneuvers', { method: 'POST', body: JSON.stringify({ stage_id: stageId, name }) });
+    await api('/api/admin/training/admin/maneuvers', { method: 'POST', body: JSON.stringify({ stage_id: stageId, name }) });
     await loadProgramsAdmin();
     showToast('Maneuver added');
     // Re-expand the stage
@@ -6902,7 +6902,7 @@ async function addManeuver(stageId) {
 async function deleteManeuver(maneuverId) {
   if (!confirm('Delete this maneuver? Student progress records for it will also be removed.')) return;
   try {
-    await api(`/api/admin/training/maneuvers/${maneuverId}`, { method: 'DELETE' });
+    await api(`/api/admin/training/admin/maneuvers/${maneuverId}`, { method: 'DELETE' });
     await loadProgramsAdmin();
     showToast('Maneuver deleted');
   } catch (err) {
@@ -6926,7 +6926,7 @@ async function createNewProgram() {
   const description = document.getElementById('new-prog-desc').value.trim();
   if (!name || !code) { alert('Name and code are required'); return; }
   try {
-    await api('/api/admin/training/programs', { method: 'POST', body: JSON.stringify({ name, code, description }) });
+    await api('/api/admin/training/admin/programs', { method: 'POST', body: JSON.stringify({ name, code, description }) });
     hideNewProgramForm();
     await loadProgramsAdmin();
     showToast('Program created');
@@ -8565,6 +8565,7 @@ async function loadLeadsBadge() {
 // ─── DISCREPANCIES ───────────────────────────────────────────
 
 let currentDiscFilter = 'all';
+let discrepancyRowsById = new Map();
 
 function setDiscrepancyFilter(filter) {
   currentDiscFilter = filter;
@@ -8586,6 +8587,7 @@ async function loadDiscrepancies() {
   if (listEl) listEl.classList.add('hidden');
   try {
     const rows = await api('/api/discrepancies' + (currentDiscFilter !== 'all' ? '?status=' + currentDiscFilter : ''));
+    discrepancyRowsById = new Map((rows || []).map(d => [Number(d.id), d]));
     loadingEl.style.display = 'none';
     if (!rows || rows.length === 0) { if (emptyEl) emptyEl.classList.remove('hidden'); return; }
     if (listEl) listEl.classList.remove('hidden');
@@ -8600,7 +8602,7 @@ async function loadDiscrepancies() {
       const deltaColor = d.delta_hours != null && parseFloat(d.delta_hours) > 0.5 ? 'color:#EF4444;font-weight:700' : 'color:#F59E0B;font-weight:600';
       const resolveBtn = isHoursAudit
         ? '<button class="btn btn-sm btn-secondary" onclick="navigate(\'instructor-hours\')">Review Hours</button>'
-        : '<button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick=\'openDiscrepancyResolve(' + d.id + ', ' + JSON.stringify(d) + ')\'>Resolve</button>';
+        : '<button class="btn btn-sm" style="background:rgba(34,197,94,0.1);color:var(--green);border:1px solid rgba(34,197,94,0.2);" onclick="openDiscrepancyResolve(' + d.id + ')">Resolve</button>';
       const canDeleteDisc = currentUser && ['owner','admin'].includes(currentUser.role);
       const resolvedCell = isPending ? resolveBtn : (
         '<span style="color:var(--gray-500);font-size:0.8rem">' + (d.resolved_by_name || '—') + '</span>' +
@@ -8613,9 +8615,9 @@ async function loadDiscrepancies() {
         : `<span style="${deltaColor}">${parseFloat(d.delta_hours).toFixed(2)} hrs</span>`;
       return `<tr style="${isPending ? '' : 'opacity:0.7'}">
         <td style="white-space:nowrap">${flightDate}</td>
-        <td>${d.student_name || '—'}</td>
-        <td>${d.instructor_name || '—'}</td>
-        <td><span style="font-family:monospace">${d.tail_number || '—'}</span></td>
+        <td>${escHtml(d.student_name || '—')}</td>
+        <td>${escHtml(d.instructor_name || '—')}</td>
+        <td><span style="font-family:monospace">${escHtml(d.tail_number || '—')}</span></td>
         <td style="white-space:nowrap">${d.student_hobbs_delta != null ? parseFloat(d.student_hobbs_delta).toFixed(1) + ' hrs' + (isHoursAudit ? ' (aircraft)' : '') : '—'}${!isHoursAudit && d.student_hobbs_start ? '<br><span style="font-size:0.75rem;color:var(--gray-500)">' + d.student_hobbs_start + '→' + d.student_hobbs_end + '</span>' : ''}</td>
         <td style="white-space:nowrap">${d.instructor_hobbs_delta != null ? parseFloat(d.instructor_hobbs_delta).toFixed(1) + ' hrs' + (isHoursAudit ? ' (instruction)' : '') : '—'}${!isHoursAudit && d.instructor_hobbs_start ? '<br><span style="font-size:0.75rem;color:var(--gray-500)">' + d.instructor_hobbs_start + '→' + d.instructor_hobbs_end + '</span>' : ''}</td>
         <td>${deltaCell}</td>
@@ -8642,6 +8644,11 @@ async function loadDiscrepanciesBadge() {
 }
 
 function openDiscrepancyResolve(id, d) {
+  d = d || discrepancyRowsById.get(Number(id));
+  if (!d) {
+    showToast('Could not load discrepancy details', 'error');
+    return;
+  }
   document.getElementById('disc-resolve-id').value = id;
   const errEl = document.getElementById('disc-resolve-error');
   if (errEl) { errEl.classList.add('hidden'); errEl.textContent = ''; }
@@ -8652,9 +8659,9 @@ function openDiscrepancyResolve(id, d) {
   if (details) details.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem 1.5rem;">
       <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Flight Date</div><div style="font-weight:600">${flightDate}</div></div>
-      <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Aircraft</div><div style="font-weight:600;font-family:monospace">${d.tail_number || '—'}</div></div>
-      <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Student</div><div>${d.student_name || '—'}</div></div>
-      <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Instructor</div><div>${d.instructor_name || '—'}</div></div>
+      <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Aircraft</div><div style="font-weight:600;font-family:monospace">${escHtml(d.tail_number || '—')}</div></div>
+      <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Student</div><div>${escHtml(d.student_name || '—')}</div></div>
+      <div><div style="font-size:0.7rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.25rem">Instructor</div><div>${escHtml(d.instructor_name || '—')}</div></div>
     </div>
     <div style="margin-top:0.75rem;display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
       <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.12);border-radius:8px;padding:0.65rem 0.85rem;">
@@ -14642,6 +14649,57 @@ function showProgressList() {
   document.getElementById('progress-detail-view').classList.add('hidden');
 }
 
+function parseHoursPrompt(value, label) {
+  const trimmed = String(value == null ? '' : value).trim();
+  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed)) {
+    throw new Error(label + ' must be a non-negative number');
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 99999) {
+    throw new Error(label + ' must be between 0 and 99999');
+  }
+  return parsed;
+}
+
+async function openEditStudentHoursModal(studentId, studentName, hobbsHours, tachHours) {
+  try {
+    const hobbsInput = prompt('Set Hobbs hours for ' + studentName, Number(hobbsHours || 0).toFixed(1));
+    if (hobbsInput === null) return;
+    const tachInput = prompt('Set Tach hours for ' + studentName, Number(tachHours || 0).toFixed(1));
+    if (tachInput === null) return;
+    const updated = await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify({
+        total_hobbs_hours: parseHoursPrompt(hobbsInput, 'Hobbs hours'),
+        total_tach_hours: parseHoursPrompt(tachInput, 'Tach hours'),
+      }),
+    });
+    showToast('Updated hours for ' + (updated.name || studentName), 'success');
+    await loadUsers();
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to update student hours', 'error');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, meter) {
+  const label = meter === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm('Reset ' + label + ' hours for ' + studentName + ' to 0.0?')) return;
+  try {
+    await api('/api/users/' + studentId + '/hours', {
+      method: 'PUT',
+      body: JSON.stringify(meter === 'tach'
+        ? { total_tach_hours: 0 }
+        : { total_hobbs_hours: 0 }),
+    });
+    showToast(label + ' hours reset for ' + studentName, 'success');
+    await loadUsers();
+    await openProgressDetail(studentId);
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to reset student hours', 'error');
+  }
+}
+
 async function toggleEnrollForm() {
   const container = document.getElementById('enroll-form-container');
   const wasHidden = container.classList.contains('hidden');
@@ -17018,6 +17076,7 @@ function populateEditorFields() {
   populateFleetFields();
   renderInstructorEditorItems();
   populateInstructorFields();
+  renderFreeformItems();
   buildDynamicMaps();
 }
 
@@ -17081,6 +17140,8 @@ function collectEditorFields() {
     out.element_positions = JSON.stringify(elementPositions);
   }
 
+  out.freeform_items = JSON.stringify(getFreeformItems());
+
   // Include orphan text edits (inline edits on non-CMS elements by ordinal index)
   Object.keys(editorContent).forEach(function(k) {
     if (/^orphan_text_\d+$/.test(k)) {
@@ -17089,6 +17150,83 @@ function collectEditorFields() {
   });
 
   return out;
+}
+
+function getFreeformItems() {
+  try {
+    const parsed = JSON.parse(editorContent.freeform_items || '[]');
+    return Array.isArray(parsed) ? parsed.filter(item => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function setFreeformItems(items) {
+  editorContent.freeform_items = JSON.stringify(items);
+  renderFreeformItems();
+  markEditorDirty();
+}
+
+function freeformItemKey(item, idx) {
+  return (String(item.id || (idx + 1)).replace(/[^A-Za-z0-9_-]/g, '') || String(idx + 1));
+}
+
+function renderFreeformItems() {
+  const list = document.getElementById('freeform-items-list');
+  if (!list) return;
+  const items = getFreeformItems();
+  if (!items.length) {
+    list.innerHTML = '<div class="freeform-hint">No custom text boxes yet.</div>';
+    return;
+  }
+  list.innerHTML = items.map((item, idx) => {
+    const id = freeformItemKey(item, idx);
+    return `<div class="freeform-item">
+      <div class="freeform-item-hdr">
+        <span class="freeform-item-label">Text Box ${idx + 1}</span>
+        <div class="freeform-item-actions">
+          <button class="btn-freeform-del" type="button" onclick="deleteFreeformItem('${id}')">Delete</button>
+        </div>
+      </div>
+      <label style="display:block;font-size:0.7rem;color:var(--gray-400);margin-bottom:0.25rem">Section</label>
+      <select class="input-field" style="margin-bottom:0.5rem" onchange="updateFreeformItem('${id}', 'section', this.value)">
+        ${['hero','about','programs','fleet','instructors','contact'].map(section => `<option value="${section}" ${item.section === section ? 'selected' : ''}>${section}</option>`).join('')}
+      </select>
+      <label style="display:block;font-size:0.7rem;color:var(--gray-400);margin-bottom:0.25rem">Text</label>
+      <textarea class="input-field" rows="3" oninput="updateFreeformItem('${id}', 'text', this.value)">${escHtml(item.text || '')}</textarea>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.4rem;margin-top:0.5rem">
+        <input class="input-field" type="number" min="0" max="100" value="${escHtml(item.top || '18')}" title="Top %" oninput="updateFreeformItem('${id}', 'top', this.value)">
+        <input class="input-field" type="number" min="0" max="100" value="${escHtml(item.left || '8')}" title="Left %" oninput="updateFreeformItem('${id}', 'left', this.value)">
+        <input class="input-field" type="number" min="120" max="900" value="${escHtml(item.width || '320')}" title="Width px" oninput="updateFreeformItem('${id}', 'width', this.value)">
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function addFreeformItem() {
+  const items = getFreeformItems();
+  items.push({
+    id: String(Date.now()),
+    section: 'hero',
+    text: 'New announcement',
+    top: '18',
+    left: '8',
+    width: '320',
+  });
+  setFreeformItems(items);
+}
+
+function updateFreeformItem(id, field, value) {
+  const items = getFreeformItems();
+  const item = items.find((entry, idx) => freeformItemKey(entry, idx) === String(id));
+  if (!item) return;
+  item[field] = value;
+  editorContent.freeform_items = JSON.stringify(items);
+  markEditorDirty();
+}
+
+function deleteFreeformItem(id) {
+  setFreeformItems(getFreeformItems().filter((item, idx) => freeformItemKey(item, idx) !== String(id)));
 }
 
 // ──────────────────────────────────────────────
@@ -17263,7 +17401,10 @@ function downloadSourceCode() {
   document.body.appendChild(link);
 
   // Use fetch to check for errors before triggering download
-  fetch('/api/download-source', { credentials: 'same-origin' })
+  fetch('/api/download-source', {
+    credentials: 'same-origin',
+    headers: { 'Authorization': 'Bearer ' + (token || localStorage.getItem('fs_token') || '') }
+  })
     .then(function(response) {
       if (!response.ok) {
         throw new Error('Download failed — ' + response.status);
@@ -17465,10 +17606,7 @@ async function loadFileTree() {
   const emptyEl = document.getElementById('code-file-empty');
   treeEl.innerHTML = '<div class="code-empty-state"><div class="ces-icon">&#8987;</div><p>Loading files…</p></div>';
   try {
-    const data = await fetch('/api/project-files').then(async (r) => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    });
+    const data = await api('/api/project-files');
     fileTreeCache = data;
     // Show root entries as a flat list with folder expansion
     renderFileTree(data.entries || [], treeEl, '');
@@ -17508,7 +17646,7 @@ function renderFileTree(entries, container, parentPath) {
           // Load children
           icon.textContent = '&#8987;';
           try {
-            const data = await fetch('/api/project-files?path=' + encodeURIComponent(fullPath)).then(r => r.json());
+            const data = await api('/api/project-files?path=' + encodeURIComponent(fullPath));
             const childDiv = document.createElement('div');
             childDiv.className = 'ft-children';
             item.parentNode.insertBefore(childDiv, item.nextSibling);
@@ -17569,10 +17707,7 @@ async function openFile(filePath) {
   document.getElementById('code-status-msg').textContent = '';
 
   try {
-    const data = await fetch('/api/project-files?path=' + encodeURIComponent(filePath)).then(async (r) => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    });
+    const data = await api('/api/project-files?path=' + encodeURIComponent(filePath));
     if (data.type === 'file' && data.content !== undefined) {
       currentFileContent = data.content;
       const lang = getLangLabel(data.extension || '.' + filename.split('.').pop());
@@ -21469,9 +21604,9 @@ function downloadSourceCode() {
   if (status) { status.style.display = 'inline'; status.textContent = 'Building archive — this may take a few seconds…'; }
 
   // Create a hidden anchor and trigger download via the authenticated session
-  fetch('/api/admin/download-source', {
+  fetch('/api/download-source', {
     method: 'GET',
-    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('fs_token') || '') },
+    headers: { 'Authorization': 'Bearer ' + (token || localStorage.getItem('fs_token') || '') },
     credentials: 'include'
   })
   .then(res => {
