@@ -144,11 +144,11 @@ const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8
 for (const route of ['programs', 'stages', 'maneuvers']) {
   if (!trainingSrc.includes(`/${route}`)) continue;
 }
-if (!/router\.post\('\/admin\/programs', authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc)
-  || !/router\.put\('\/admin\/stages\/:id', authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc)
-  || !/router\.delete\('\/admin\/maneuvers\/:id', authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc)) {
+if (!/router\.post\(\[('\/admin\/programs'|"\/admin\/programs"), ('\/programs'|"\/programs")\], authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc)
+  || !/router\.put\(\[('\/admin\/stages\/:id'|"\/admin\/stages\/:id"), ('\/stages\/:id'|"\/stages\/:id")\], authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc)
+  || !/router\.delete\(\[('\/admin\/maneuvers\/:id'|"\/admin\/maneuvers\/:id"), ('\/maneuvers\/:id'|"\/maneuvers\/:id")\], authenticateToken, requireRole\('owner', 'admin'\)/.test(trainingSrc)) {
   fail('Training admin routes missing authenticateToken');
-} else ok('Training admin routes require authentication');
+} else ok('Training admin routes and admin aliases require authentication');
 if (!trainingSrc.includes('canWriteStudentTraining(req.user, studentId)')) {
   fail('Training writes missing assigned-instructor/admin guard');
 } else ok('Training writes are scoped');
