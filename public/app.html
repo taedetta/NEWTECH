@@ -11757,10 +11757,11 @@ async function loadFleet() {
 
 function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
   const st = aircraftStatusDisplay(a);
+  const typeLabel = aircraftTypeLabel(a);
   return `<tr>
     <td style="font-family:'Space Grotesk';font-weight:600">${a.tail_number}</td>
     <td>${a.make_model}${st.down ? `<div style="font-size:0.72rem;color:var(--red);margin-top:0.15rem">${escHtml(st.reason)}</div>` : ''}</td>
-    <td>${a.type.replace('_', ' ')}</td>
+    <td>${escHtml(typeLabel)}</td>
     <td>${a.year || '-'}</td>
     <td>${a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) : '-'}</td>
     <td style="font-family:'Space Grotesk';font-weight:500;color:var(--sky)">
@@ -11781,17 +11782,23 @@ function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
   </tr>`;
 }
 
+function aircraftTypeLabel(a) {
+  const raw = typeof a?.type === 'string' && a.type.trim() ? a.type.trim() : 'single_engine';
+  return raw.replace(/_/g, ' ');
+}
+
 function renderFleetCard(a, canEdit, canEditHours, canDelete) {
   const st = aircraftStatusDisplay(a);
   const hobbs = (() => { const h = aircraftMeterHobbs(a); return h != null ? h.toFixed(1) : '0.0'; })();
   const tach = (() => { const t = aircraftMeterTach(a); return t != null ? t.toFixed(1) : '0.0'; })();
   const rate = a.hourly_rate ? '$' + parseFloat(a.hourly_rate).toFixed(0) + '/hr' : '—';
+  const typeLabel = aircraftTypeLabel(a);
   return `<article class="fleet-card">
     <div class="fleet-card-hdr">
       <span class="fleet-card-tail">${escHtml(a.tail_number)}</span>
       <span class="tag ${st.tagClass}">${st.label}</span>
     </div>
-    <div class="fleet-card-model">${escHtml(a.make_model)} · ${escHtml(a.type.replace('_', ' '))}${a.year ? ' · ' + a.year : ''}</div>
+    <div class="fleet-card-model">${escHtml(a.make_model)} · ${escHtml(typeLabel)}${a.year ? ' · ' + a.year : ''}</div>
     ${st.down ? `<div style="font-size:0.78rem;color:var(--red);margin:0.35rem 0">${escHtml(st.reason)}</div>` : ''}
     <div class="fleet-card-stats">
       <div class="fleet-card-stat"><div class="fleet-card-stat-lbl">Rate</div><div class="fleet-card-stat-val">${rate}</div></div>

@@ -238,6 +238,11 @@ if (!appHtml.includes('function openEditStudentHoursModal') || !appHtml.includes
   fail('Progress student hour edit/reset handlers are missing');
 } else ok('Progress student hour edit/reset handlers present');
 
+if (!appHtml.includes('function aircraftTypeLabel')
+  || /a\.type\.replace\(/.test(appHtml)) {
+  fail('Fleet aircraft type rendering can throw when type is missing');
+} else ok('Fleet aircraft type rendering tolerates missing type');
+
 if (/onclick='openDiscrepancyResolve\([^']+JSON\.stringify\(d\)/.test(appHtml)
   || !appHtml.includes('discrepancyRowsById')) {
   fail('Discrepancy resolve button embeds unsafe row JSON');
