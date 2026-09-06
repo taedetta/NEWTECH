@@ -183,6 +183,70 @@ async function run() {
     'valid unsubscribe should only update the signed type'
   );
 
+  const bookingHistory = freshRequire('../routes/booking-history');
+  assert.strictEqual(
+    bookingHistory.isEditableHistoryFlightStatus('confirmed'),
+    false,
+    'confirmed bookings must not be editable through booking history'
+  );
+  assert.strictEqual(
+    bookingHistory.isEditableHistoryFlightStatus('completed'),
+    true,
+    'completed bookings should remain editable through booking history'
+  );
+  const historyPatch = bookingHistory.buildHistoryFlightSyncPatch({
+    body: {
+      aircraft_charge_amount: 100,
+      instruction_charge_amount: 50,
+    },
+    hStart: 100,
+    hEnd: 101,
+    tStart: null,
+    tEnd: null,
+    dualHrs: 1,
+    effectiveLessonType: 'Dual Instruction',
+    userId: 7,
+  });
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(historyPatch, 'flight_date'),
+    'booking-history edits must not pass flight_date unless explicitly changed'
+  );
+  const datedHistoryPatch = bookingHistory.buildHistoryFlightSyncPatch({
+    body: { flight_date: '2026-09-07' },
+    hStart: 100,
+    hEnd: 101,
+    tStart: null,
+    tEnd: null,
+    dualHrs: 1,
+    effectiveLessonType: 'Dual Instruction',
+    userId: 7,
+  });
+  assert.strictEqual(datedHistoryPatch.flight_date, '2026-09-07', 'explicit flight_date should be forwarded');
+
+  const { preserveLocalTimeOnDate } = freshRequire('../lib/sync-flight-record');
+  const { timeHmFromDate } = freshRequire('../lib/school-timezone');
+  const originalStart = '2026-09-06T17:00:00.000Z';
+  const originalEnd = '2026-09-06T19:30:00.000Z';
+  const moved = preserveLocalTimeOnDate(originalStart, originalEnd, '2026-09-07');
+  assert.strictEqual(
+    timeHmFromDate(moved.startTime),
+    timeHmFromDate(originalStart),
+    'date moves should preserve school-local start time'
+  );
+  assert.strictEqual(
+    moved.endTime.getTime() - moved.startTime.getTime(),
+    new Date(originalEnd).getTime() - new Date(originalStart).getTime(),
+    'date moves should preserve booking duration'
+  );
+
+  const profileRoute = freshRequire('../routes/profile');
+  const cfiGetIndex = profileRoute.stack.findIndex((item) => item.route?.path === '/cfi-profile' && item.route.methods.get);
+  const cfiPutIndex = profileRoute.stack.findIndex((item) => item.route?.path === '/cfi-profile' && item.route.methods.put);
+  const catchAllIndex = profileRoute.stack.findIndex((item) => !item.route);
+  assert.ok(cfiGetIndex >= 0, 'profile router should expose legacy CFI profile GET');
+  assert.ok(cfiPutIndex >= 0, 'profile router should expose legacy CFI profile PUT');
+  assert.ok(cfiGetIndex < catchAllIndex && cfiPutIndex < catchAllIndex, 'CFI profile routes must be before catch-all');
+
   if (realDbCache) require.cache[dbPath] = realDbCache;
   else delete require.cache[dbPath];
   delete require.cache[routePath];

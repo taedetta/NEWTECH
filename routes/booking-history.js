@@ -21,6 +21,41 @@ function canEditGroundSessionHistory(role, userId, session) {
   return role === 'instructor' && session.instructor_id === userId;
 }
 
+function isEditableHistoryFlightStatus(status) {
+  return String(status || '').toLowerCase() === 'completed';
+}
+
+function hasExplicitFlightDate(value) {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+function buildHistoryFlightSyncPatch({
+  body,
+  hStart,
+  hEnd,
+  tStart,
+  tEnd,
+  dualHrs,
+  effectiveLessonType,
+  userId,
+}) {
+  const patch = {
+    hobbs_start: hStart,
+    hobbs_end: hEnd,
+    tach_start: tStart,
+    tach_end: tEnd,
+    dual_instruction_hours: dualHrs,
+    lesson_type: effectiveLessonType,
+    aircraft_charge_amount: body.aircraft_charge_amount,
+    instruction_charge_amount: body.instruction_charge_amount,
+    submitted_by: userId,
+  };
+  if (hasExplicitFlightDate(body.flight_date)) {
+    patch.flight_date = String(body.flight_date).slice(0, 10);
+  }
+  return patch;
+}
+
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -188,6 +223,9 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!canEditBookingHistoryFlight(role, userId, b)) {
       return res.status(403).json({ error: 'You can only edit your own flight records' });
     }
+    if (!isEditableHistoryFlightStatus(b.status)) {
+      return res.status(400).json({ error: 'Only completed flight history records can be edited here' });
+    }
 
     const {
       flight_date,
@@ -218,9 +256,6 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
     const effectiveLessonType = inferLessonType(
       lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
@@ -233,16 +268,16 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       inTxn = true;
 
       const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
-        hobbs_start: hStart,
-        hobbs_end: hEnd,
-        tach_start: tStart,
-        tach_end: tEnd,
-        dual_instruction_hours: dualHrs,
-        lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
-        submitted_by: userId,
+        ...buildHistoryFlightSyncPatch({
+          body: req.body || {},
+          hStart,
+          hEnd,
+          tStart,
+          tEnd,
+          dualHrs,
+          effectiveLessonType,
+          userId,
+        }),
       });
 
       await client.query('COMMIT');
@@ -427,3 +462,6 @@ router.post('/manual', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildHistoryFlightSyncPatch = buildHistoryFlightSyncPatch;
+module.exports.hasExplicitFlightDate = hasExplicitFlightDate;
+module.exports.isEditableHistoryFlightStatus = isEditableHistoryFlightStatus;
