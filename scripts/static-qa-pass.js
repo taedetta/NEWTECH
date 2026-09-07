@@ -119,7 +119,26 @@ NODE`, { cwd: root, stdio: 'pipe' });
   fail(`FSP workbook generation failed: ${err.message}`);
 }
 
-// 8. Critical auth/permission guardrails
+// 8. Destructive QA scripts must fail closed without explicit credentials.
+console.log('\n=== QA script safety ===');
+for (const scriptName of ['full-beta-qa.js', 'user-flow-e2e.js']) {
+  const scriptSrc = fs.readFileSync(path.join(root, 'scripts', scriptName), 'utf8');
+  if (/process\.env\.DATABASE_URL\s*=\s*process\.env\.DATABASE_URL/.test(scriptSrc)) {
+    fail(`${scriptName} can coerce missing DATABASE_URL into a truthy env string`);
+  } else if (/postgresql:\/\/[^'"]+/.test(scriptSrc)) {
+    fail(`${scriptName} contains a hardcoded database URL`);
+  } else {
+    ok(`${scriptName} requires explicit DATABASE_URL`);
+  }
+}
+const downtimeUiSrc = fs.readFileSync(path.join(root, 'scripts', 'e2e-downtime-ui.js'), 'utf8');
+if (!downtimeUiSrc.includes('DATABASE_URL and JWT_SECRET required')) {
+  fail('e2e-downtime-ui.js does not guard required credentials before DB access');
+} else {
+  ok('e2e-downtime-ui.js guards required credentials');
+}
+
+// 9. Critical auth/permission guardrails
 console.log('\n=== Critical auth guardrails ===');
 const authMiddlewareSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
 if (!/SELECT id, email, name, role, is_instructor, approval_status, deleted_at[\s\S]+FROM users/.test(authMiddlewareSrc)) {

@@ -34,6 +34,11 @@ async function main() {
   };
 
   console.log('Downtime UI E2E —', BASE);
+  if (!DB || !JWT_SECRET) {
+    console.error('DATABASE_URL and JWT_SECRET required');
+    process.exit(1);
+  }
+
   const token = await getMaintenanceToken();
 
   const browser = await chromium.launch({ headless: true });

@@ -13,8 +13,12 @@ const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'qa-admin@test.local';
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || PASS;
 
-process.env.DATABASE_URL = process.env.DATABASE_URL
-  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);
+const envDatabaseUrl = fs.existsSync('.env')
+  ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim()
+  : null;
+if (!process.env.DATABASE_URL && envDatabaseUrl) {
+  process.env.DATABASE_URL = envDatabaseUrl;
+}
 
 async function login(email, password) {
   const r = await fetch(`${BASE}/api/auth/login`, {
