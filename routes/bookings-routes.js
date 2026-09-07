@@ -27,7 +27,8 @@ const {
 } = require('../lib/school-timezone');
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
-const { overlapWhere } = require('../lib/booking-overlap');
+const { overlapWhere, shouldCheckBookingConflict } = require('../lib/booking-overlap');
+const { canEditHistoricalBooking } = require('../lib/booking-permissions');
 
 const router = express.Router();
 
@@ -840,8 +841,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
+    if (isHistoricalBooking && !canEditHistoricalBooking(req.user, b)) {
+      return res.status(403).json({ error: 'Only owners, admins, or the assigned instructor can edit completed or cancelled bookings' });
+    }
+    const isStaffHistoricalEdit = isAdmin || (isAssignedInstructor && isHistoricalBooking);
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
@@ -885,8 +889,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const nextStatus = status !== undefined && status !== null && status !== '' ? status : b.status;
+    const needsConflictCheck = shouldCheckBookingConflict({
+      previousStatus: b.status,
+      nextStatus,
+      scheduleChanged,
+    });
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
@@ -994,3 +1002,4 @@ module.exports.lockBookingResources = lockBookingResources;
 module.exports.ACTIVE_BOOKING_SQL = ACTIVE_BOOKING_SQL;
 module.exports.isInstructorAvailable = isInstructorAvailable;
 module.exports.findNextAvailableSlots = findNextAvailableSlots;
+module.exports.canEditHistoricalBooking = canEditHistoricalBooking;
