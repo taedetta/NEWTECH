@@ -17,6 +17,12 @@ const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../
 
 const router = express.Router();
 
+function canAccessBooking(user, booking) {
+  if (!user || !booking) return false;
+  if (['owner', 'admin'].includes(user.role)) return true;
+  return user.id === booking.student_id || user.id === booking.instructor_id;
+}
+
 // ── Hobbs submission rate limiter: >5 failed attempts in 10 min → block 15 min ──
 const hobbsFailMap = new Map();
 const HOBBS_FAIL_WINDOW = 10 * 60 * 1000; // 10 minutes
@@ -84,17 +90,33 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const { actual_end_time } = req.body;
     if (!actual_end_time) return res.status(400).json({ error: 'actual_end_time is required' });
     const endTime = new Date(actual_end_time);
-    const result = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (isNaN(endTime.getTime())) return res.status(400).json({ error: 'Invalid actual_end_time' });
+    await client.query('BEGIN');
+    const result = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
     const b = result.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isAdmin && req.user.id !== b.instructor_id && req.user.id !== b.student_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (b.status !== 'confirmed') return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    if (b.status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be ended early' });
+    }
+    const startTime = new Date(b.start_time);
+    if (endTime <= startTime) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'actual_end_time must be after the booking start time' });
+    }
     const originalEnd = new Date(b.end_time);
-    if (endTime >= originalEnd) return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
-    await client.query('BEGIN');
+    if (endTime >= originalEnd) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'actual_end_time must be before the scheduled end time' });
+    }
     const newEndIso = endTime.toISOString();
     const updated = await client.query(
       `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
@@ -187,8 +209,17 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     if (no_change) {
       const finishedEnd = completionEndTime(b);
       await client.query('BEGIN');
+      const locked = await client.query('SELECT status FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (locked.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Booking not found' });
+      }
+      if (locked.rows[0].status !== 'confirmed') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+      }
       await client.query(
-        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2`,
+        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
         [finishedEnd, req.params.id]
       );
       await client.query('COMMIT');
@@ -252,6 +283,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
               error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
             });
           }
+          if (hEnd < currentHobbs) {
+            recordHobbsFail(req.user.id);
+            return res.status(400).json({
+              error: `Hobbs end (${hEnd.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
+            });
+          }
           if (hStart > currentHobbs + 5) {
             recordHobbsFail(req.user.id);
             return res.status(400).json({
@@ -264,6 +301,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
           if (tStart < currentTach - 0.1) {
             return res.status(400).json({
               error: `Tach start (${tStart.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
+            });
+          }
+          if (tEnd < currentTach) {
+            return res.status(400).json({
+              error: `Tach end (${tEnd.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
             });
           }
           if (tStart > currentTach + 5) {
@@ -291,6 +333,15 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const instrumentFlag = !!is_instrument;
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
     await client.query('BEGIN');
+    const locked = await client.query('SELECT status FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (locked.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    if (locked.rows[0].status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be completed' });
+    }
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
       ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
@@ -508,6 +559,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (!canAccessBooking(req.user, result.rows[0])) return res.status(403).json({ error: 'Access denied' });
     res.json(result.rows[0]);
   } catch (err) {
     const ts = new Date().toISOString();
