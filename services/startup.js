@@ -60,14 +60,18 @@ async function ensureDatabaseSchema(pool) {
     // Create default admin account if no users exist
     const users = await pool.query('SELECT COUNT(*) AS cnt FROM users');
     if (parseInt(users.rows[0].cnt, 10) === 0) {
-      const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
-      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
+      const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL;
+      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD;
+      if (!email || !pass) {
+        console.warn('[bootstrap] No users exist; set ADMIN_EMAIL and ADMIN_PASSWORD (or OWNER_EMAIL/OWNER_PASSWORD) to create the first admin.');
+        return;
+      }
       const hash = await bcrypt.hash(pass, 12);
       const inserted = await pool.query(
         `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor)
          VALUES ($1, $2, $3, 'admin', 'approved', TRUE)
          RETURNING id`,
-        [email.toLowerCase(), 'Evaughntae White', hash]
+        [email.toLowerCase(), process.env.ADMIN_NAME || process.env.OWNER_NAME || 'Administrator', hash]
       );
       await pool.query(
         `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
