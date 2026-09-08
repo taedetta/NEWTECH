@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 process.env.APP_URL = process.env.APP_URL || 'https://example.test';
 
@@ -137,6 +139,18 @@ async function run() {
     shouldCheckBookingConflict({ previousStatus: 'completed', nextStatus: 'completed', scheduleChanged: true }),
     false,
     'completed bookings that remain historical do not block the schedule'
+  );
+
+  const serverJs = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const cfiProfileMount = "app.use('/api/users/me', endorsementsRoutes);";
+  const profileAliasMount = "app.use('/api/users/me', profileRoutes);";
+  assert(
+    serverJs.indexOf(cfiProfileMount) !== -1 && serverJs.indexOf(profileAliasMount) !== -1,
+    'server must mount both /api/users/me routers'
+  );
+  assert(
+    serverJs.indexOf(cfiProfileMount) < serverJs.indexOf(profileAliasMount),
+    'CFI profile routes must mount before profileRoutes catch-all'
   );
 }
 
