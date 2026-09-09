@@ -24,7 +24,8 @@ const pool = new Pool({
 });
 
 // Retry initial connection — managed DB may still be starting
-(async () => {
+if (process.env.SKIP_DB_CONNECT !== 'true') {
+  (async () => {
   for (let attempt = 1; attempt <= 10; attempt++) {
     try {
       await pool.query('SELECT 1');
@@ -39,7 +40,8 @@ const pool = new Pool({
       }
     }
   }
-})();
+  })();
+}
 
 pool.on('error', (err) => {
   console.error('[db-pool] Unexpected error on idle client:', err.message);

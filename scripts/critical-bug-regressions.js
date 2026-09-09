@@ -3,6 +3,8 @@
 const assert = require('assert');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'critical-regression-test-secret';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://localhost/critical_regression_test';
+process.env.SKIP_DB_CONNECT = 'true';
 
 const {
   EMAIL_TYPES,
