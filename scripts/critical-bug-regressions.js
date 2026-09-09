@@ -5,6 +5,8 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'critical-regression-secret';
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/test';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const dbIndexPath = require.resolve('../db/index');
 require.cache[dbIndexPath] = {
@@ -112,10 +114,30 @@ function testInstructorRatePreservation() {
   });
 }
 
+function testCompletionUsesLockedBookingRow() {
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  const routeStart = completionSrc.indexOf("router.patch('/:id/complete'");
+  const routeEnd = completionSrc.indexOf("router.get('/:id'", routeStart);
+  assert(routeStart >= 0 && routeEnd > routeStart, 'completion route not found');
+
+  const routeSrc = completionSrc.slice(routeStart, routeEnd);
+  const fullLock = "SELECT * FROM bookings WHERE id = $1 FOR UPDATE";
+  assert(routeSrc.includes(fullLock), 'completion must lock and read full booking row');
+  assert(!routeSrc.includes("const bResult = await client.query('SELECT * FROM bookings WHERE id = $1'"), 'completion must not use stale pre-lock booking row');
+  assert(!routeSrc.includes("SELECT status FROM bookings WHERE id = $1 FOR UPDATE"), 'completion must not use status-only booking lock');
+  assert(routeSrc.indexOf(fullLock) < routeSrc.indexOf('completionEndTime(b)'), 'completion end time must use locked booking row');
+  assert(routeSrc.indexOf(fullLock) < routeSrc.indexOf('const flight_date = new Date(b.start_time)'), 'flight date must use locked booking row');
+  assert(
+    routeSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE'),
+    'completion must lock aircraft meter row before validating readings'
+  );
+}
+
 testRequiredEmailPreferences();
 testUnsubscribeTokenScope();
 testBookingDateShift();
 testBookingConflictDecision();
 testInstructorRatePreservation();
+testCompletionUsesLockedBookingRow();
 
 console.log('critical bug regressions passed');
