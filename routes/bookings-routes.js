@@ -842,6 +842,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
     const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
+    if (isHistoricalBooking && !isAdmin && !isAssignedInstructor) {
+      return res.status(403).json({ error: 'Only staff can edit completed or cancelled bookings' });
+    }
+    if (isHistoricalBooking && !isAdmin && lesson_type !== undefined) {
+      return res.status(403).json({ error: 'Only admins can change the lesson type on completed or cancelled bookings' });
+    }
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;

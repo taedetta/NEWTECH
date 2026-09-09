@@ -26,20 +26,20 @@ const pool = new Pool({
 // Retry initial connection — managed DB may still be starting
 if (process.env.SKIP_DB_CONNECT !== 'true') {
   (async () => {
-  for (let attempt = 1; attempt <= 10; attempt++) {
-    try {
-      await pool.query('SELECT 1');
-      console.log('[db-pool] Database connection verified');
-      return;
-    } catch (err) {
-      console.warn(`[db-pool] Connect attempt ${attempt}/10 failed:`, err.message);
-      if (attempt === 10) {
-        console.error('[db-pool] Could not connect to DATABASE_URL after 10 attempts');
-      } else {
-        await new Promise((r) => setTimeout(r, 3000));
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      try {
+        await pool.query('SELECT 1');
+        console.log('[db-pool] Database connection verified');
+        return;
+      } catch (err) {
+        console.warn(`[db-pool] Connect attempt ${attempt}/10 failed:`, err.message);
+        if (attempt === 10) {
+          console.error('[db-pool] Could not connect to DATABASE_URL after 10 attempts');
+        } else {
+          await new Promise((r) => setTimeout(r, 3000));
+        }
       }
     }
-  }
   })();
 }
 

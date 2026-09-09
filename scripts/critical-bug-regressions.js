@@ -25,6 +25,19 @@ const {
   rowToPrefs,
   updatePrefs,
 } = require('../db/notification-prefs');
+const {
+  bookingTimesForFlightDate,
+  buildPatchFromInstructorHoursRow,
+} = require('../lib/sync-flight-record');
+const {
+  calendarDateFromDate,
+  timeHmFromDate,
+} = require('../lib/school-timezone');
+const profileRoutes = require('../routes/profile');
+const {
+  buildHistoryFlightSyncPatch,
+  currentFlightDateForBooking,
+} = require('../routes/booking-history');
 
 async function testRequiredAccountEmailsAreNotUserMutable() {
   const required = [
@@ -91,6 +104,18 @@ function testUnsubscribeTokensAreBoundToType() {
   assert.deepStrictEqual(resolveUnsubscribeType('all', verifyUnsubscribeToken(allToken)), { ok: true, type: 'all' });
 }
 
+function testUnsubscribeGetRequiresPostConfirmation() {
+  const { renderConfirmationPage } = require('../routes/email-unsubscribe');
+  const html = renderConfirmationPage({
+    token: 'test-token',
+    type: EMAIL_TYPES.booking_confirmation,
+    label: 'Booking confirmations',
+  });
+  assert.match(html, /method="POST"/);
+  assert.match(html, /Confirm unsubscribe/);
+  assert.doesNotMatch(html, /name="password_reset"/);
+}
+
 async function testRequiredPreferencePatchesAreIgnored() {
   const statements = [];
   const fakeDb = {
@@ -120,11 +145,119 @@ async function testRequiredPreferencePatchesAreIgnored() {
   assert.doesNotMatch(updateStatement, /profile_change/);
 }
 
+function testProfileRouterHandlesLegacyCfiPathBeforeCatchAll() {
+  const cfiRouteIndex = profileRoutes.stack.findIndex((layer) => layer.route?.path === '/cfi-profile');
+  const catchAllIndex = profileRoutes.stack.findIndex((layer) => !layer.route);
+  assert.ok(cfiRouteIndex >= 0, 'expected profile router to define /cfi-profile');
+  assert.ok(catchAllIndex >= 0, 'expected profile router catch-all');
+  assert.ok(cfiRouteIndex < catchAllIndex, 'legacy CFI profile route must be before catch-all 404');
+}
+
+function testBookingDateMovePreservesSchoolLocalTime() {
+  const booking = {
+    start_time: '2026-09-10T02:00:00.000Z', // 10:00 PM ET on Sep 9
+    end_time: '2026-09-10T03:30:00.000Z',
+  };
+  const moved = bookingTimesForFlightDate(booking, '2026-09-11');
+  assert.strictEqual(calendarDateFromDate(moved.startTime), '2026-09-11');
+  assert.strictEqual(timeHmFromDate(moved.startTime), '22:00');
+  assert.strictEqual(timeHmFromDate(moved.endTime), '23:30');
+  assert.strictEqual(new Date(moved.endTime) - new Date(moved.startTime), 90 * 60 * 1000);
+}
+
+function testHistoryPatchDoesNotCorruptTimesOrBillingForInstructors() {
+  const booking = {
+    id: 42,
+    instructor_id: 7,
+    start_time: '2026-09-10T02:00:00.000Z',
+    end_time: '2026-09-10T03:30:00.000Z',
+    current_flight_date: '2026-09-09',
+    lesson_type: 'Dual Instruction',
+    booking_type: 'dual',
+  };
+  assert.strictEqual(currentFlightDateForBooking(booking), '2026-09-09');
+  const patch = buildHistoryFlightSyncPatch({
+    booking,
+    role: 'instructor',
+    userId: 7,
+    hStart: 100,
+    hEnd: 101.5,
+    tStart: null,
+    tEnd: null,
+    dualHrs: 1.5,
+    body: {
+      flight_date: '2026-09-09',
+      lesson_type: 'Discovery Flight',
+      aircraft_charge_amount: 0,
+      instruction_charge_amount: 0,
+    },
+  });
+  assert.strictEqual(patch.flight_date, undefined);
+  assert.strictEqual(patch.lesson_type, 'Dual Instruction');
+  assert.strictEqual(patch.aircraft_charge_amount, undefined);
+  assert.strictEqual(patch.instruction_charge_amount, undefined);
+
+  const adminPatch = buildHistoryFlightSyncPatch({
+    booking,
+    role: 'admin',
+    userId: 1,
+    hStart: 100,
+    hEnd: 101.5,
+    tStart: null,
+    tEnd: null,
+    dualHrs: 1.5,
+    body: {
+      flight_date: '2026-09-10',
+      lesson_type: 'Discovery Flight',
+      aircraft_charge_amount: 0,
+      instruction_charge_amount: 0,
+    },
+  });
+  assert.strictEqual(adminPatch.flight_date, '2026-09-10');
+  assert.strictEqual(adminPatch.lesson_type, 'Discovery Flight');
+  assert.strictEqual(adminPatch.aircraft_charge_amount, 0);
+  assert.strictEqual(adminPatch.instruction_charge_amount, 0);
+}
+
+function testInstructorHoursSyncDoesNotPropagateRatesForInstructors() {
+  const bookingRow = {
+    start_time: '2026-09-10T02:00:00.000Z',
+    end_time: '2026-09-10T03:30:00.000Z',
+    flight_date: '2026-09-09',
+  };
+  const instructorPatch = buildPatchFromInstructorHoursRow({
+    entry_date: '2026-09-09',
+    instruction_hours: 1.5,
+    instructor_rate: 1,
+    aircraft_rate: 1,
+    allow_rate_overrides: false,
+  }, bookingRow);
+  assert.strictEqual(instructorPatch.flight_date, undefined);
+  assert.strictEqual(instructorPatch.instructor_rate_override, undefined);
+  assert.strictEqual(instructorPatch.aircraft_rate_override, undefined);
+
+  const adminPatch = buildPatchFromInstructorHoursRow({
+    entry_date: '2026-09-10',
+    instruction_hours: 1.5,
+    instructor_rate: 1,
+    aircraft_rate: 2,
+    allow_rate_overrides: true,
+  }, bookingRow);
+  assert.strictEqual(adminPatch.flight_date, '2026-09-10');
+  assert.strictEqual(adminPatch.instructor_rate_override, 1);
+  assert.strictEqual(adminPatch.aircraft_rate_override, 2);
+}
+
 async function main() {
   await testRequiredAccountEmailsAreNotUserMutable();
   testRequiredEmailsDoNotGetUnsubscribeFooters();
   testUnsubscribeTokensAreBoundToType();
+  testUnsubscribeGetRequiresPostConfirmation();
   await testRequiredPreferencePatchesAreIgnored();
+  testProfileRouterHandlesLegacyCfiPathBeforeCatchAll();
+  testBookingDateMovePreservesSchoolLocalTime();
+  testHistoryPatchDoesNotCorruptTimesOrBillingForInstructors();
+  testInstructorHoursSyncDoesNotPropagateRatesForInstructors();
   console.log('critical bug regression checks passed');
 }
 

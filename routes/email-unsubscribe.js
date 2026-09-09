@@ -8,7 +8,7 @@ const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
 
-function renderPage({ title, message, ok }) {
+function renderPage({ title, message, ok, actionHtml = '' }) {
   const color = ok ? '#059669' : '#DC2626';
   const manageUrl = buildManagePrefsUrl();
   const appUrl = `${getAppUrl()}/app`;
@@ -31,11 +31,31 @@ function renderPage({ title, message, ok }) {
   <div class="card">
     <h1>${title}</h1>
     <p>${message}</p>
-    <a class="btn" href="${manageUrl}">Manage email preferences</a>
+    ${actionHtml || `<a class="btn" href="${manageUrl}">Manage email preferences</a>`}
     <p style="margin-top:20px"><a class="link" href="${appUrl}">Open FlightSlate</a></p>
   </div>
 </body>
 </html>`;
+}
+
+function renderConfirmationPage({ token, type, label }) {
+  const safeToken = String(token || '').replace(/"/g, '&quot;');
+  const safeType = String(type || '').replace(/"/g, '&quot;');
+  const actionHtml = `
+    <form method="POST" action="/api/email/unsubscribe" style="margin:0 0 18px;">
+      <input type="hidden" name="token" value="${safeToken}">
+      <input type="hidden" name="type" value="${safeType}">
+      <button class="btn" type="submit" style="border:0;cursor:pointer;">Confirm unsubscribe</button>
+    </form>
+    <a class="link" href="${buildManagePrefsUrl()}">Manage email preferences instead</a>`;
+  return renderPage({
+    ok: true,
+    title: 'Confirm unsubscribe',
+    message: type === 'all'
+      ? 'Confirm that you want to stop optional email notifications from New Tech Aviation. Required account and security emails will still be sent.'
+      : `Confirm that you want to unsubscribe from <strong>${label}</strong>.`,
+    actionHtml,
+  });
 }
 
 function resolveUnsubscribeType(rawType, verified) {
@@ -49,9 +69,9 @@ function resolveUnsubscribeType(rawType, verified) {
   return { ok: true, type };
 }
 
-router.get('/unsubscribe', async (req, res) => {
+async function applyUnsubscribe(req, res) {
   try {
-    const token = req.query.token;
+    const token = req.query.token || req.body?.token;
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -69,12 +89,20 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    const resolved = resolveUnsubscribeType(req.query.type, verified);
+    const resolved = resolveUnsubscribeType(req.query.type || req.body?.type, verified);
     if (!resolved.ok) {
       return res.status(400).send(renderPage({
         ok: false,
         title: resolved.title,
         message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+      }));
+    }
+
+    if (req.method === 'GET') {
+      return res.send(renderConfirmationPage({
+        token,
+        type: resolved.type,
+        label: typeLabel(resolved.type),
       }));
     }
 
@@ -102,7 +130,11 @@ router.get('/unsubscribe', async (req, res) => {
       message: 'We could not process your unsubscribe request. Please try again or manage preferences in My Account.',
     }));
   }
-});
+}
+
+router.get('/unsubscribe', applyUnsubscribe);
+router.post('/unsubscribe', express.urlencoded({ extended: false }), applyUnsubscribe);
 
 module.exports = router;
 module.exports.resolveUnsubscribeType = resolveUnsubscribeType;
+module.exports.renderConfirmationPage = renderConfirmationPage;
