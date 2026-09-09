@@ -18,8 +18,8 @@ const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const ROLES = [
   {
     name: 'admin',
-    email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com',
-    password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!',
+    email: process.env.ADMIN_EMAIL || 'qa-admin@test.local',
+    password: process.env.ADMIN_PASSWORD || PASSWORD,
     fallbackEmail: 'qa-admin@test.local',
     fallbackPassword: PASSWORD,
     pages: [
@@ -107,7 +107,7 @@ async function loginApi(email, password) {
 
 async function getAdminToken() {
   const attempts = [
-    { email: process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com', password: process.env.ADMIN_PASSWORD || 'Frbaga12$$!!' },
+    { email: process.env.ADMIN_EMAIL || 'qa-admin@test.local', password: process.env.ADMIN_PASSWORD || PASSWORD },
     { email: 'qa-admin@test.local', password: PASSWORD },
   ];
   for (const a of attempts) {

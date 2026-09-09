@@ -16,11 +16,11 @@ const BASE = process.argv.includes('--base')
   : (process.env.QA_BASE || 'https://www.newtechaviation.com');
 
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'qa-admin@test.local';
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || PASS;
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
-  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null)
-  || 'postgresql://postgres:cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij@shortline.proxy.rlwy.net:26871/railway';
+  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);
 
 const failures = [];
 const ok = (name, cond, detail = '') => {
@@ -430,12 +430,15 @@ async function testStudentDualBooking(tokens, users, ac) {
 
 async function main() {
   console.log('Full beta QA —', BASE);
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for full-beta-qa because it creates and cleans up test data.');
+  }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
 
   await testLegalPages();
   await testTermsSignup(pool);
 
-  const adminTok = await login('evaughntaemw@gmail.com', ADMIN_PASS);
+  const adminTok = await login(ADMIN_EMAIL, ADMIN_PASS);
   const studentTok = await login('qa-student@test.local', PASS);
   const instructorTok = await login('qa-instructor@test.local', PASS);
   const renterTok = await login('qa-renter@test.local', PASS);
@@ -444,7 +447,7 @@ async function main() {
   const users = (await api(adminTok, '/api/users')).data;
   const student = users.find((u) => u.email === 'qa-student@test.local');
   const instructor = users.find((u) => u.email === 'qa-instructor@test.local')
-    || users.find((u) => u.email === 'evaughntaemw@gmail.com');
+    || users.find((u) => u.email === ADMIN_EMAIL);
   const renter = users.find((u) => u.email === 'qa-renter@test.local');
   const acList = (await api(adminTok, '/api/aircraft')).data;
   await ensureFleetBookable(adminTok, acList);

@@ -87,7 +87,6 @@ const {
 // ── App Setup ─────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
 app.use(compression({ threshold: 1024, filter: (req, res) => {
   const ct = res.getHeader('Content-Type');
