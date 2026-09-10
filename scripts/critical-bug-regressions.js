@@ -173,11 +173,26 @@ async function testUnsubscribeRouteIsPostOnlyAndTypeBound() {
   }]);
 }
 
+async function testProfileRouterDoesNotShadowCfiProfileRoute() {
+  const profilePath = require.resolve('../routes/profile');
+  delete require.cache[profilePath];
+  const profileRoutes = require('../routes/profile');
+  const app = express();
+  app.use('/api/users/me', profileRoutes);
+  app.use('/api/users/me/cfi-profile', (req, res) => {
+    res.status(204).end();
+  });
+
+  const result = await request(app, 'GET', '/api/users/me/cfi-profile');
+  assert.strictEqual(result.status, 204);
+}
+
 async function main() {
   await testTokenBindingAndRequiredEmails();
   await testRequiredEmailsBypassPrefsAndFooter();
   await testPreferenceWritesCannotDisableRequiredTypes();
   await testUnsubscribeRouteIsPostOnlyAndTypeBound();
+  await testProfileRouterDoesNotShadowCfiProfileRoute();
   console.log('critical bug regressions passed');
 }
 

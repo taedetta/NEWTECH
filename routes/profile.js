@@ -219,9 +219,5 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
   }
 });
 
-router.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
-
 module.exports = router;
 module.exports.ensureDefaultPrefs = ensureDefaultPrefs;
