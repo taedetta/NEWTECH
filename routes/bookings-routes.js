@@ -95,8 +95,8 @@ router.get('/', authenticateToken, async (req, res) => {
     const { start, end, instructor_id, student_id, aircraft_id } = req.query;
     let query = `
       SELECT b.*,
-        s.name as student_name, s.email as student_email,
-        i.name as instructor_name, i.email as instructor_email,
+        s.name as student_name,
+        i.name as instructor_name,
         a.tail_number, a.make_model
       FROM bookings b
       LEFT JOIN users s ON b.student_id = s.id

@@ -8,7 +8,7 @@ const trainingDb = require('../db/training');
 const router = express.Router();
 
 function isTrainingStaff(user) {
-  return ['owner', 'admin', 'instructor'].includes(user.role) || (user.is_instructor && user.role !== 'student');
+  return ['owner', 'admin', 'instructor'].includes(user.role);
 }
 
 async function canManageAllTraining(user) {
@@ -157,11 +157,26 @@ router.post('/enroll', authenticateToken, requireRole('owner', 'admin', 'instruc
     const { student_id, program_id, instructor_id } = req.body;
     if (!student_id) return res.status(400).json({ error: 'student_id is required' });
     if (!program_id) return res.status(400).json({ error: 'program_id is required' });
+    const studentId = parseInt(student_id, 10);
+    const programId = parseInt(program_id, 10);
+    const instructorId = instructor_id ? parseInt(instructor_id, 10) : null;
+    if (!Number.isFinite(studentId) || !Number.isFinite(programId) || (instructor_id && !Number.isFinite(instructorId))) {
+      return res.status(400).json({ error: 'Invalid student, program, or instructor ID' });
+    }
+    const canManageAll = await canManageAllTraining(req.user);
+    if (!canManageAll) {
+      if (!(await canWriteStudentTraining(req.user, studentId))) {
+        return res.status(403).json({ error: 'Only assigned instructors or admins can enroll this student' });
+      }
+      if (instructorId && instructorId !== req.user.id) {
+        return res.status(403).json({ error: 'Instructors cannot assign students to another instructor' });
+      }
+    }
 
     const enrollment = await trainingDb.enrollStudent(
-      parseInt(student_id),
-      parseInt(program_id),
-      instructor_id ? parseInt(instructor_id) : null
+      studentId,
+      programId,
+      instructorId
     );
     res.status(201).json(enrollment);
   } catch (err) {

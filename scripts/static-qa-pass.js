@@ -58,6 +58,10 @@ console.log('\n=== Admin routes ===');
 const adminSrc = fs.readFileSync(path.join(root, 'routes/admin.js'), 'utf8');
 if (adminSrc.includes('child.spawn')) fail('child.spawn still present in admin.js');
 else ok('spawn used correctly');
+if (!adminSrc.includes("require('../lib/app-env')") || !adminSrc.includes('isStaging()')
+  || !adminSrc.includes('Reset all data is disabled on staging')) {
+  fail('Reset all data is not blocked on staging');
+} else ok('Reset all data is blocked on staging');
 
 // 4. Page div coverage for nav items in app.html
 console.log('\n=== Page div coverage ===');
@@ -141,6 +145,9 @@ if (!authRoutesSrc.includes('isPlatformAdminEmail(req.user.email)')) {
 } else ok('Owner claim limited to platform admin');
 
 const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+if (/function isTrainingStaff\(user\) \{[\s\S]*user\.is_instructor/.test(trainingSrc)) {
+  fail('is_instructor flag still grants training staff access');
+} else ok('Training staff access is role-gated');
 for (const route of ['programs', 'stages', 'maneuvers']) {
   if (!trainingSrc.includes(`/${route}`)) continue;
 }
@@ -152,8 +159,15 @@ if (!/router\.post\(\[('\/admin\/programs'|"\/admin\/programs"), ('\/programs'|"
 if (!trainingSrc.includes('canWriteStudentTraining(req.user, studentId)')) {
   fail('Training writes missing assigned-instructor/admin guard');
 } else ok('Training writes are scoped');
+if (!/router\.post\('\/enroll'[\s\S]+canWriteStudentTraining\(req\.user, studentId\)/.test(trainingSrc)) {
+  fail('Training enrollment missing assigned-instructor/admin guard');
+} else ok('Training enrollment is scoped');
 
 const bookingsSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
+const activeBookingsRoute = bookingsSrc.slice(bookingsSrc.indexOf("router.get('/',"), bookingsSrc.indexOf("router.get('/history'"));
+if (/email as (student_email|instructor_email)/.test(activeBookingsRoute)) {
+  fail('Active booking calendar leaks participant emails');
+} else ok('Active booking calendar omits participant emails');
 if (!bookingsSrc.includes('Only owners and admins can force bookings')) {
   fail('Non-admin force booking bypass still possible');
 } else ok('Force booking limited to owners/admins');
@@ -204,6 +218,20 @@ if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
 } else ok('Website Editor image upload endpoint present');
 
 const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
+if (!usersSrc.includes('canViewFullRoster')
+  || !usersSrc.includes('Plain users never receive roster PII')) {
+  fail('Plain instructors may still receive full roster PII');
+} else ok('Plain instructor roster PII is limited');
+const permissionsSrc = fs.readFileSync(path.join(root, 'routes/permissions.js'), 'utf8');
+if (!permissionsSrc.includes('targetId === req.user.id')
+  || !permissionsSrc.includes('Only owners and admins can grant website editor access')) {
+  fail('Delegated permission managers can still self-grant dangerous permissions');
+} else ok('Delegated permission manager self-escalation is blocked');
+const endorsementsSrc = fs.readFileSync(path.join(root, 'routes/endorsements.js'), 'utf8');
+if (!endorsementsSrc.includes('canCreateEndorsementForStudent')
+  || !endorsementsSrc.includes('Only assigned instructors or admins can endorse this student')) {
+  fail('Endorsement creation missing assigned-instructor/admin guard');
+} else ok('Endorsement creation is scoped');
 const strictNumberSrc = fs.readFileSync(path.join(root, 'lib/strict-number.js'), 'utf8');
 if (!strictNumberSrc.includes('function parseStrictNumber')
   || !strictNumberSrc.includes('/^(?:\\d+(?:\\.\\d+)?|\\.\\d+)$/')) {

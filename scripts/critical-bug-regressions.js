@@ -156,6 +156,29 @@ function testRequestNumericInputSourceGuards() {
   );
 }
 
+function testFollowUpSecuritySourceGuards() {
+  const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert(adminSrc.includes('isStaging()'), 'reset-all-data must be disabled on staging');
+
+  const permissionsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'permissions.js'), 'utf8');
+  assert(permissionsSrc.includes('targetId === req.user.id'), 'delegated permission managers must not self-modify');
+  assert(permissionsSrc.includes('Only owners and admins can grant website editor access'), 'website editor grants must require owner/admin');
+
+  const usersSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
+  assert(usersSrc.includes('canViewFullRoster'), 'plain instructors must not receive full roster PII');
+
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const activeBookingsRoute = bookingsSrc.slice(bookingsSrc.indexOf("router.get('/',"), bookingsSrc.indexOf("router.get('/history'"));
+  assert(!/email as (student_email|instructor_email)/.test(activeBookingsRoute), 'active booking calendar must not expose participant emails');
+
+  const trainingSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'training.js'), 'utf8');
+  assert(!/function isTrainingStaff\(user\) \{[\s\S]*user\.is_instructor/.test(trainingSrc), 'is_instructor flag must not grant training staff access');
+  assert(/router\.post\('\/enroll'[\s\S]+canWriteStudentTraining\(req\.user, studentId\)/.test(trainingSrc), 'training enrollment must be scoped');
+
+  const endorsementsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'endorsements.js'), 'utf8');
+  assert(endorsementsSrc.includes('canCreateEndorsementForStudent'), 'endorsement creation must be scoped');
+}
+
 function testCompletionUsesLockedBookingRow() {
   const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
   const routeStart = completionSrc.indexOf("router.patch('/:id/complete'");
@@ -182,6 +205,7 @@ testBookingConflictDecision();
 testInstructorRatePreservation();
 testStrictNumberValidation();
 testRequestNumericInputSourceGuards();
+testFollowUpSecuritySourceGuards();
 testCompletionUsesLockedBookingRow();
 
 console.log('critical bug regressions passed');

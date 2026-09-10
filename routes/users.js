@@ -32,14 +32,44 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role } = req.query;
     const requesterRole = req.user.role;
-    if (['student', 'renter', 'maintenance'].includes(requesterRole)) {
-      // Non-staff roster users only see the bookable instructor directory, without PII.
-      const result = await pool.query(
-        `SELECT u.id, u.name, u.role, u.is_instructor,
+    let requesterPerms = null;
+    if (!['owner', 'admin'].includes(requesterRole)) {
+      requesterPerms = await getUserPermissions(req.user.id, requesterRole);
+    }
+    const canViewFullRoster = ['owner', 'admin'].includes(requesterRole)
+      || requesterPerms?.can_manage_students
+      || requesterPerms?.can_manage_instructors
+      || requesterPerms?.can_manage_permissions;
+    if (!canViewFullRoster) {
+      // Plain users never receive roster PII. Instructors also need names for scheduling/training pickers.
+      let query = `
+        SELECT u.id, u.name, u.role, u.is_instructor,
+          ''::text as email,
+          NULL::text as phone_number,
+          NULL::numeric as total_hobbs_hours,
+          NULL::numeric as total_tach_hours,
+          NULL::numeric as instructor_rate,
+          false as can_manage_aircraft,
+          false as can_manage_instructors,
+          false as can_manage_permissions,
+          false as can_manage_students,
+          false as can_edit_website,
           EXISTS (SELECT 1 FROM instructor_availability WHERE instructor_id = u.id) as has_instructor_availability
-         FROM users u
-         WHERE ${BOOKABLE_INSTRUCTOR_WHERE}
-         ORDER BY u.name`
+        FROM users u
+        WHERE ${requesterRole === 'instructor'
+          ? `u.deleted_at IS NULL AND COALESCE(u.approval_status, 'approved') = 'approved'
+             AND (u.role IN ('student', 'renter') OR (u.is_instructor = TRUE OR u.role = 'instructor'))`
+          : BOOKABLE_INSTRUCTOR_WHERE}
+      `;
+      const params = [];
+      if (role) {
+        query += ' AND u.role = $1';
+        params.push(role);
+      }
+      query += ' ORDER BY u.name';
+      const result = await pool.query(
+        query,
+        params
       );
       return res.json(result.rows);
     }
