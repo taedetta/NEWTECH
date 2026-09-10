@@ -8,6 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { calendarDateFromDate } = require('../lib/school-timezone');
 
 const router = express.Router();
 
@@ -19,6 +20,10 @@ function canEditBookingHistoryFlight(role, userId, booking) {
 function canEditGroundSessionHistory(role, userId, session) {
   if (['owner', 'admin'].includes(role)) return true;
   return role === 'instructor' && session.instructor_id === userId;
+}
+
+function canManageHistoryBilling(role) {
+  return ['owner', 'admin'].includes(role);
 }
 
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
@@ -218,11 +223,11 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+    const billingAdmin = canManageHistoryBilling(role);
+    const currentFlightDate = b.start_time ? calendarDateFromDate(b.start_time) : null;
+    const requestedFlightDate = flight_date ? String(flight_date).slice(0, 10) : null;
     const effectiveLessonType = inferLessonType(
-      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+      billingAdmin && lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
     );
 
@@ -232,18 +237,24 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const syncPatch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
         submitted_by: userId,
-      });
+      };
+      if (requestedFlightDate && requestedFlightDate !== currentFlightDate) {
+        syncPatch.flight_date = requestedFlightDate;
+      }
+      if (billingAdmin) {
+        syncPatch.aircraft_charge_amount = aircraft_charge_amount;
+        syncPatch.instruction_charge_amount = instruction_charge_amount;
+      }
+
+      const synced = await syncFlightRecord(client, bookingId, syncPatch);
 
       await client.query('COMMIT');
       inTxn = false;
@@ -285,10 +296,15 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
+    let instructorRate = gs.instructor_rate;
+    if (!canManageHistoryBilling(role) && gs.instructor_id) {
+      const rateRow = await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [gs.instructor_id]);
+      instructorRate = rateRow.rows[0]?.instructor_rate;
+    }
+    const instrCharge = canManageHistoryBilling(role) && instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
-      : (gs.instructor_rate != null
-        ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
+      : (instructorRate != null
+        ? Math.round(groundHours * parseFloat(instructorRate) * 100) / 100
         : gs.instruction_charge_amount);
 
     await pool.query(
@@ -427,3 +443,4 @@ router.post('/manual', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.canManageHistoryBilling = canManageHistoryBilling;

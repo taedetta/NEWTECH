@@ -33,6 +33,9 @@ const {
   buildUnsubscribeUrl,
   verifyUnsubscribeToken,
 } = require('../lib/unsubscribe-token');
+const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
+const { canManageHistoryBilling } = require('../routes/booking-history');
+const { canManageInstructorHourRates } = require('../routes/instructor-hours');
 
 async function request(app, method, path, body) {
   const server = app.listen(0);
@@ -187,12 +190,112 @@ async function testProfileRouterDoesNotShadowCfiProfileRoute() {
   assert.strictEqual(result.status, 204);
 }
 
+async function testBillingOverridesAreAdminOnly() {
+  assert.strictEqual(canManageHistoryBilling('owner'), true);
+  assert.strictEqual(canManageHistoryBilling('admin'), true);
+  assert.strictEqual(canManageHistoryBilling('instructor'), false);
+  assert.strictEqual(canManageInstructorHourRates('owner'), true);
+  assert.strictEqual(canManageInstructorHourRates('admin'), true);
+  assert.strictEqual(canManageInstructorHourRates('instructor'), false);
+}
+
+async function testInstructorHoursSyncIgnoresNonAdminRateOverrides() {
+  const booking = {
+    id: 77,
+    student_id: 9,
+    instructor_id: 42,
+    aircraft_id: 5,
+    status: 'completed',
+    booking_type: 'dual',
+    lesson_type: 'Dual',
+    hobbs_start: 100,
+    hobbs_end: 101,
+    tach_start: null,
+    tach_end: null,
+    billing_voided: false,
+    start_time: '2026-03-15T14:00:00.000Z',
+    end_time: '2026-03-15T15:30:00.000Z',
+  };
+  const oldLog = {
+    booking_id: 77,
+    student_id: 9,
+    instructor_id: 42,
+    aircraft_id: 5,
+    booking_type: 'dual',
+    flight_date: '2026-03-15',
+    hobbs_start: 100,
+    hobbs_end: 101,
+    hobbs_delta: 1,
+    tach_start: null,
+    tach_end: null,
+    tach_delta: null,
+    dual_instruction_hours: 1,
+  };
+  const queries = [];
+  const client = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes('SELECT hobbs_start, hobbs_end, start_time FROM bookings')) {
+        return { rows: [booking] };
+      }
+      if (sql === 'SELECT * FROM bookings WHERE id = $1') {
+        return { rows: [booking] };
+      }
+      if (sql === 'SELECT * FROM flight_logs WHERE booking_id = $1') {
+        return { rows: [oldLog] };
+      }
+      if (sql.includes('SELECT hourly_rate FROM aircraft')) {
+        return { rows: [{ hourly_rate: 200 }] };
+      }
+      if (sql.includes('SELECT instructor_rate FROM users')) {
+        return { rows: [{ instructor_rate: 80 }] };
+      }
+      if (sql.includes('SELECT name FROM users')) {
+        return { rows: [{ name: 'Student Pilot' }] };
+      }
+      if (sql.includes('SELECT * FROM instructor_hours WHERE booking_id')) {
+        return { rows: [{ id: 12, aircraft_rate: 0, instructor_rate: 0, notes: 'malicious stale rates' }] };
+      }
+      if (sql.includes('SELECT id FROM instructor_hours WHERE booking_id')) {
+        return { rows: [{ id: 12 }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await syncFlightRecordFromInstructorHours(client, {
+    booking_id: 77,
+    entry_date: '2026-03-15',
+    aircraft_hours: 1,
+    instruction_hours: 1,
+    aircraft_rate: 0,
+    instructor_rate: 0,
+  }, { preserveRateOverrides: false });
+
+  const bookingUpdate = queries.find((q) => q.sql.startsWith('UPDATE bookings SET'));
+  assert.ok(bookingUpdate, 'expected booking meter update');
+  assert.doesNotMatch(bookingUpdate.sql, /start_time/);
+  assert.doesNotMatch(bookingUpdate.sql, /end_time/);
+
+  const flightLogUpdate = queries.find((q) => q.sql.includes('UPDATE flight_logs SET'));
+  assert.ok(flightLogUpdate, 'expected flight log update');
+  assert.strictEqual(flightLogUpdate.params[8], 200);
+  assert.strictEqual(flightLogUpdate.params[9], 80);
+
+  const instructorHoursUpdate = queries.find((q) => q.sql.includes('UPDATE instructor_hours SET'));
+  assert.ok(instructorHoursUpdate, 'expected instructor hours sync update');
+  assert.strictEqual(instructorHoursUpdate.params[5], 200);
+  assert.strictEqual(instructorHoursUpdate.params[6], 80);
+}
+
 async function main() {
   await testTokenBindingAndRequiredEmails();
   await testRequiredEmailsBypassPrefsAndFooter();
   await testPreferenceWritesCannotDisableRequiredTypes();
   await testUnsubscribeRouteIsPostOnlyAndTypeBound();
   await testProfileRouterDoesNotShadowCfiProfileRoute();
+  await testBillingOverridesAreAdminOnly();
+  await testInstructorHoursSyncIgnoresNonAdminRateOverrides();
   console.log('critical bug regressions passed');
 }
 
