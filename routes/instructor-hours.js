@@ -15,6 +15,10 @@ const { inferLessonType } = require('../lib/booking-rules');
 
 const router = express.Router();
 
+function canManageInstructorHourRates(role) {
+  return ['owner', 'admin'].includes(role);
+}
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
@@ -65,6 +69,7 @@ router.post('/', authenticateToken, async (req, res) => {
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
     const entryDate = entry_date || new Date().toISOString().slice(0, 10);
+    const canManageRates = canManageInstructorHourRates(verifiedRole);
     const dup = await pool.query(
       `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
        AND aircraft_id IS NOT DISTINCT FROM $3 AND ABS(instruction_hours - $4) < 0.01 LIMIT 1`,
@@ -91,8 +96,8 @@ router.post('/', authenticateToken, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
        entryDate, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       canManageRates && aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
+       canManageRates && instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
        notes || null, student_name || null,
        parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
        audit.status, audit.message]
@@ -208,6 +213,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
     if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
     const row = existing.rows[0];
+    const canManageRates = canManageInstructorHourRates(role);
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
     const newDate = entry_date || row.entry_date;
@@ -222,20 +228,28 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
 
     await client.query('BEGIN');
+    const nextAircraftRate = canManageRates
+      ? (aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null)
+      : row.aircraft_rate;
+    const nextInstructorRate = canManageRates
+      ? (instructor_rate !== undefined ? parseFloat(instructor_rate) : null)
+      : row.instructor_rate;
     const result = await client.query(`
       UPDATE instructor_hours SET entry_date = COALESCE($1, entry_date), aircraft_hours = $2, instruction_hours = $3,
         aircraft_rate = $4, instructor_rate = $5, notes = $6, student_name = $7,
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       nextAircraftRate,
+       nextInstructorRate,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
 
     if (result.rows[0].booking_id) {
-      await syncFlightRecordFromInstructorHours(client, result.rows[0]);
+      await syncFlightRecordFromInstructorHours(client, result.rows[0], {
+        preserveRateOverrides: canManageRates,
+      });
     }
 
     await client.query('COMMIT');
@@ -347,3 +361,4 @@ router.get('/prefill', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.canManageInstructorHourRates = canManageInstructorHourRates;
