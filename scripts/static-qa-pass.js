@@ -204,9 +204,42 @@ if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
 } else ok('Website Editor image upload endpoint present');
 
 const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
+const strictNumberSrc = fs.readFileSync(path.join(root, 'lib/strict-number.js'), 'utf8');
+if (!strictNumberSrc.includes('function parseStrictNumber')
+  || !strictNumberSrc.includes('/^(?:\\d+(?:\\.\\d+)?|\\.\\d+)$/')) {
+  fail('Strict numeric request parser is missing');
+} else ok('Strict numeric request parser present');
 if (!usersSrc.includes('function parseUserHours') || /parseFloat\(total_hobbs_hours\)|parseFloat\(total_tach_hours\)/.test(usersSrc)) {
   fail('User hour updates are not strictly validated');
 } else ok('User hour updates are strictly validated');
+if (/parseFloat\(instructor_rate\)/.test(usersSrc)
+  || !/const parsedRate = parseUserHours\(instructor_rate, 'instructor_rate'\)/.test(usersSrc)) {
+  fail('Instructor rate updates are not strictly validated');
+} else ok('Instructor rate updates are strictly validated');
+
+const groundSrc = fs.readFileSync(path.join(root, 'routes/ground.js'), 'utf8');
+if (/parseFloat\(ground_hours\)/.test(groundSrc)
+  || !groundSrc.includes("parsePositiveNumber(ground_hours, 'ground_hours')")) {
+  fail('Ground session hours are not strictly validated');
+} else ok('Ground session hours are strictly validated');
+
+const instructorHoursSrc = fs.readFileSync(path.join(root, 'routes/instructor-hours.js'), 'utf8');
+if (/parseFloat\((instruction_hours|aircraft_hours|aircraft_rate|instructor_rate|hobbs_start|hobbs_end)\)/.test(instructorHoursSrc)
+  || !instructorHoursSrc.includes("parseStrictNumber(instruction_hours, 'instruction_hours')")) {
+  fail('Instructor hours request numeric fields are not strictly validated');
+} else ok('Instructor hours request numeric fields are strictly validated');
+
+const completionNumericSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (/parseFloat\((hobbs_start|hobbs_end|tach_start|tach_end|dual_instruction_hours)\)/.test(completionNumericSrc)
+  || !completionNumericSrc.includes("parseStrictNumber(hobbs_start, 'hobbs_start')")) {
+  fail('Booking completion hour fields are not strictly validated');
+} else ok('Booking completion hour fields are strictly validated');
+
+const bookingHistorySrc = fs.readFileSync(path.join(root, 'routes/booking-history.js'), 'utf8');
+if (/parseFloat\((hobbs_start|hobbs_end|tach_start|tach_end|dual_instruction_hours|ground_hours|aircraft_charge_amount|instruction_charge_amount)\)/.test(bookingHistorySrc)
+  || !bookingHistorySrc.includes("parseStrictNumber(hobbs_start, 'hobbs_start')")) {
+  fail('Manual history numeric fields are not strictly validated');
+} else ok('Manual history numeric fields are strictly validated');
 
 const appFeaturesSrc = fs.readFileSync(path.join(root, 'public/js/app-features.js'), 'utf8');
 if (!/async function sendMessageReply[\s\S]+catch \(err\)[\s\S]+Failed to send reply/.test(appFeaturesSrc)

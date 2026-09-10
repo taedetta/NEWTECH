@@ -30,6 +30,7 @@ const { rowToPrefs, WRITABLE_PREF_COLUMNS } = require('../db/notification-prefs'
 const { shiftBookingTimesToFlightDate } = require('../lib/sync-flight-record');
 const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
+const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
 
 function testRequiredEmailPreferences() {
   assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
@@ -112,6 +113,47 @@ function testInstructorRatePreservation() {
     aircraftRate: '150.00',
     instructorRate: '80.00',
   });
+  assert.match(
+    instructorHourRatesForUpdate('admin', existing, { instructor_rate: '90abc' }).error,
+    /valid number/
+  );
+}
+
+function testStrictNumberValidation() {
+  assert.strictEqual(parseStrictNumber('75.25', 'rate').value, 75.25);
+  assert.strictEqual(parseStrictNumber('.5', 'hours').value, 0.5);
+  assert.match(parseStrictNumber('75abc', 'rate').error, /valid number/);
+  assert.match(parseStrictNumber('NaN', 'rate').error, /valid number/);
+  assert.match(parseStrictNumber('-1', 'rate').error, /valid number|negative/);
+  assert.match(parseStrictNumber('100000', 'rate').error, /exceeds maximum/);
+  assert.strictEqual(parseStrictNumber('', 'optional', { required: false, allowEmpty: true }).value, null);
+  assert.match(parsePositiveNumber('0', 'ground_hours').error, /greater than 0/);
+}
+
+function testRequestNumericInputSourceGuards() {
+  const usersSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
+  assert(!/parseFloat\(instructor_rate\)/.test(usersSrc), 'People instructor_rate updates must reject partial numbers');
+
+  const groundSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ground.js'), 'utf8');
+  assert(!/parseFloat\(ground_hours\)/.test(groundSrc), 'Ground sessions must reject partial ground_hours');
+
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    !/parseFloat\((instruction_hours|aircraft_hours|aircraft_rate|instructor_rate|hobbs_start|hobbs_end)\)/.test(instructorHoursSrc),
+    'Instructor-hours request numeric fields must reject partial numbers'
+  );
+
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  assert(
+    !/parseFloat\((hobbs_start|hobbs_end|tach_start|tach_end|dual_instruction_hours)\)/.test(completionSrc),
+    'Booking completion hour fields must reject partial numbers'
+  );
+
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  assert(
+    !/parseFloat\((hobbs_start|hobbs_end|tach_start|tach_end|dual_instruction_hours|ground_hours|aircraft_charge_amount|instruction_charge_amount)\)/.test(historySrc),
+    'Manual history request numeric fields must reject partial numbers'
+  );
 }
 
 function testCompletionUsesLockedBookingRow() {
@@ -138,6 +180,8 @@ testUnsubscribeTokenScope();
 testBookingDateShift();
 testBookingConflictDecision();
 testInstructorRatePreservation();
+testStrictNumberValidation();
+testRequestNumericInputSourceGuards();
 testCompletionUsesLockedBookingRow();
 
 console.log('critical bug regressions passed');

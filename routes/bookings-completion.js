@@ -14,6 +14,7 @@ const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours'
 const { computeFlightCharges } = require('../lib/flight-charges');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
+const { parseStrictNumber } = require('../lib/strict-number');
 
 const router = express.Router();
 
@@ -68,11 +69,7 @@ hobbsPruneInterval.unref?.();
 
 // Numeric validation helper — rejects NaN, negative, and impossibly large values
 function validateHobbsValue(val, fieldName) {
-  const num = parseFloat(val);
-  if (isNaN(num)) return `${fieldName} must be a valid number`;
-  if (num < 0) return `${fieldName} cannot be negative`;
-  if (num > 99999) return `${fieldName} exceeds maximum allowed value`;
-  return null;
+  return parseStrictNumber(val, fieldName).error || null;
 }
 
 /** When a flight finishes before its scheduled end, shrink end_time so the slot can be rebooked. */
@@ -152,17 +149,26 @@ router.patch('/:id/hours', authenticateToken, async (req, res) => {
     }
 
     const { hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, lesson_type, flight_date } = req.body;
-    if (hobbs_start != null && hobbs_end != null && parseFloat(hobbs_end) <= parseFloat(hobbs_start)) {
+    const parsedHoursPatch = {};
+    for (const field of ['hobbs_start', 'hobbs_end', 'tach_start', 'tach_end', 'dual_instruction_hours']) {
+      if (req.body[field] !== undefined) {
+        const parsed = parseStrictNumber(req.body[field], field, { required: false, allowEmpty: true });
+        if (parsed.error) return res.status(400).json({ error: parsed.error });
+        parsedHoursPatch[field] = parsed.value;
+      }
+    }
+    if (parsedHoursPatch.hobbs_start != null && parsedHoursPatch.hobbs_end != null
+      && parsedHoursPatch.hobbs_end <= parsedHoursPatch.hobbs_start) {
       return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
+    }
+    if (parsedHoursPatch.tach_start != null && parsedHoursPatch.tach_end != null
+      && parsedHoursPatch.tach_end <= parsedHoursPatch.tach_start) {
+      return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
     }
 
     await client.query('BEGIN');
     const synced = await syncFlightRecord(client, bookingId, {
-      hobbs_start,
-      hobbs_end,
-      tach_start,
-      tach_end,
-      dual_instruction_hours,
+      ...parsedHoursPatch,
       lesson_type,
       flight_date,
       submitted_by: req.user.id,
@@ -249,8 +255,8 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const hEndErr = validateHobbsValue(hobbs_end, 'hobbs_end');
     if (hEndErr) { recordHobbsFail(req.user.id); return abortTransaction(400, { error: hEndErr }); }
 
-    const hStart = parseFloat(hobbs_start);
-    const hEnd = parseFloat(hobbs_end);
+    const hStart = parseStrictNumber(hobbs_start, 'hobbs_start').value;
+    const hEnd = parseStrictNumber(hobbs_end, 'hobbs_end').value;
     if (hEnd <= hStart) { recordHobbsFail(req.user.id); return abortTransaction(400, { error: 'hobbs_end must be greater than hobbs_start' }); }
 
     // Validate tach values if provided — both or neither
@@ -263,12 +269,13 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       const tEndErr = validateHobbsValue(tach_end, 'tach_end');
       if (tEndErr) return abortTransaction(400, { error: tEndErr });
     }
-    if (tach_start != null && tach_end != null && parseFloat(tach_end) <= parseFloat(tach_start)) {
+    if (tach_start != null && tach_end != null
+      && parseStrictNumber(tach_end, 'tach_end').value <= parseStrictNumber(tach_start, 'tach_start').value) {
       return abortTransaction(400, { error: 'tach_end must be greater than tach_start' });
     }
 
-    const tStart = tach_start != null ? parseFloat(tach_start) : null;
-    const tEnd = tach_end != null ? parseFloat(tach_end) : null;
+    const tStart = tach_start != null ? parseStrictNumber(tach_start, 'tach_start').value : null;
+    const tEnd = tach_end != null ? parseStrictNumber(tach_end, 'tach_end').value : null;
 
     // ── Server-side meter validation: start cannot be before aircraft current reading ──
     if (b.aircraft_id) {
@@ -328,7 +335,9 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       if (dualErr) return abortTransaction(400, { error: dualErr });
     }
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
-    const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : 0;
+    const dualHrs = (dual_instruction_hours != null)
+      ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours').value
+      : 0;
     const flight_date = new Date(b.start_time).toISOString().slice(0, 10);
     // Flight type flags from post-flight wizard
     const nightFlag = !!is_night;

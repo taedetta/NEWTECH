@@ -198,9 +198,11 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
     const targetId = parseInt(req.params.id);
     const { instructor_rate } = req.body;
     if (instructor_rate === undefined) return res.status(400).json({ error: 'instructor_rate is required' });
+    const parsedRate = parseUserHours(instructor_rate, 'instructor_rate');
+    if (parsedRate.error) return res.status(400).json({ error: parsedRate.error });
     const result = await pool.query(
       `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, instructor_rate`,
-      [parseFloat(instructor_rate), targetId]
+      [parsedRate.value, targetId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
