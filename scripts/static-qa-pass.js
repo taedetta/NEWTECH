@@ -275,6 +275,40 @@ if (!/async function sendMessageReply[\s\S]+catch \(err\)[\s\S]+Failed to send r
   fail('Messages send/reply errors are not surfaced to users');
 } else ok('Messages send/reply errors are surfaced');
 
+const inlineHandlerSrc = appHtml + '\n' + appFeaturesSrc;
+const handlerIgnores = new Set([
+  'alert',
+  'clearTimeout',
+  'confirm',
+  'decodeURIComponent',
+  'document',
+  'encodeURIComponent',
+  'event',
+  'getComputedStyle',
+  'if',
+  'Number',
+  'parseFloat',
+  'parseInt',
+  'rgba',
+  'setTimeout',
+  'String',
+  'this',
+  'var',
+]);
+const inlineHandlerCalls = new Set();
+for (const attr of appHtml.matchAll(/\son[a-z]+="([^"]+)"/g)) {
+  for (const call of attr[1].matchAll(/(?:^|[^.$\w])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    if (!handlerIgnores.has(call[1])) inlineHandlerCalls.add(call[1]);
+  }
+}
+const missingInlineHandlers = [...inlineHandlerCalls].sort().filter((name) => {
+  const definition = new RegExp(`(?:function\\s+${name}\\s*\\(|(?:const|let|var)\\s+${name}\\s*=|window\\.${name}\\s*=)`);
+  return !definition.test(inlineHandlerSrc);
+});
+if (missingInlineHandlers.length) {
+  fail(`Inline event handlers missing global functions: ${missingInlineHandlers.join(', ')}`);
+} else ok(`${inlineHandlerCalls.size} inline event handler functions are defined`);
+
 if (appHtml.includes('/api/admin/training/programs')
   || appHtml.includes('/api/admin/training/stages')
   || appHtml.includes('/api/admin/training/maneuvers')) {

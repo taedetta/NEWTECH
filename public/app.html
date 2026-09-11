@@ -11275,6 +11275,29 @@ function closePostFlightWizard() {
   document.getElementById('post-flight-wizard').classList.add('hidden');
 }
 function closeCompleteModal() { closePostFlightWizard(); }
+function closeCompleteFlightModal() {
+  document.getElementById('complete-flight-modal')?.classList.add('hidden');
+  closePostFlightWizard();
+}
+
+function prefillCompletionFromBooking() {
+  const select = document.getElementById('complete-booking-select');
+  const bookingId = select ? parseInt(select.value, 10) : NaN;
+  const booking = completableBookings.find(b => parseInt(b.id, 10) === bookingId);
+  if (!booking) return;
+
+  const aircraft = allAircraft.find(a => parseInt(a.id, 10) === parseInt(booking.aircraft_id, 10));
+  const hobbs = aircraft ? aircraftMeterHobbs(aircraft) : null;
+  const tach = aircraft ? aircraftMeterTach(aircraft) : null;
+  const info = document.getElementById('complete-flight-info');
+  if (info) {
+    info.innerHTML = `<strong>${escHtml(booking.tail_number || aircraft?.tail_number || 'Flight')}</strong><br>
+      ${escHtml(booking.student_name || 'Student')} ${booking.instructor_name ? '&middot; ' + escHtml(booking.instructor_name) : ''}`;
+  }
+  if (hobbs != null) document.getElementById('cf-hobbs-start').value = Number(hobbs).toFixed(1);
+  if (tach != null) document.getElementById('cf-tach-start').value = Number(tach).toFixed(1);
+  document.getElementById('complete-flight-type').value = booking.booking_type === 'solo' ? 'solo' : 'dual';
+}
 
 function pfwShowStep(n) {
   document.getElementById('pfw-step1').classList.toggle('hidden', n !== 1);
@@ -16111,6 +16134,11 @@ function closeEditFlogModal() {
   document.getElementById('edit-flog-modal').classList.add('hidden');
 }
 
+function closeFlogEditModal() {
+  document.getElementById('flog-edit-modal')?.classList.add('hidden');
+  document.getElementById('edit-flog-modal')?.classList.add('hidden');
+}
+
 async function saveEditFlog() {
   var errEl = document.getElementById('edit-flog-error');
   if (errEl) errEl.classList.add('hidden');
@@ -16204,6 +16232,10 @@ function promptEditAircraftHours(aircraftId, tailNumber, currentHobbs, currentTa
       api('/api/aircraft').then(function(data) { allAircraft = data; loadFlogAircraftHours(); });
     })
     .catch(function(e) { showToast(e.error || 'Failed to update hours', 'error'); });
+}
+
+function closeAircraftHoursEditModal() {
+  document.getElementById('ac-hours-edit-modal')?.classList.add('hidden');
 }
 
 // ─── BOOKING HISTORY PAGE ─────────────────────────────────
@@ -17234,6 +17266,66 @@ function updateFreeformItem(id, field, value) {
 
 function deleteFreeformItem(id) {
   setFreeformItems(getFreeformItems().filter((item, idx) => freeformItemKey(item, idx) !== String(id)));
+}
+
+// ──────────────────────────────────────────────
+// WEBSITE EDITOR: Rich text toolbar compatibility
+// ──────────────────────────────────────────────
+let richSelectionRange = null;
+
+document.addEventListener('selectionchange', function () {
+  const editorPage = document.getElementById('page-website-editor');
+  if (!editorPage || editorPage.classList.contains('hidden')) return;
+  const selection = window.getSelection ? window.getSelection() : null;
+  if (!selection || selection.rangeCount === 0) return;
+  const anchorNode = selection.anchorNode;
+  const anchorEl = anchorNode && (anchorNode.nodeType === 1 ? anchorNode : anchorNode.parentElement);
+  if (anchorEl && editorPage.contains(anchorEl)) {
+    richSelectionRange = selection.getRangeAt(0).cloneRange();
+  }
+});
+
+function restoreRichSelection() {
+  if (!richSelectionRange || !window.getSelection) return;
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(richSelectionRange);
+}
+
+function runRichCommand(command, value) {
+  if (!command) return false;
+  restoreRichSelection();
+  try {
+    const applied = document.execCommand(command, false, value || null);
+    if (applied) markEditorDirty();
+    return applied;
+  } catch (err) {
+    console.warn('[website-editor] rich text command failed:', command, err);
+    return false;
+  }
+}
+
+function execRichCmd(command) {
+  runRichCommand(command);
+}
+
+function execRichFontSize(value) {
+  if (value) runRichCommand('fontSize', value);
+}
+
+function execRichColor(value) {
+  if (value) runRichCommand('foreColor', value);
+}
+
+function clearRichFormat() {
+  runRichCommand('removeFormat');
+}
+
+function cancelStyleClone() {
+  const bar = document.getElementById('style-clone-bar');
+  if (bar) bar.style.display = 'none';
+  const sourceName = document.getElementById('scb-source-name');
+  if (sourceName) sourceName.textContent = 'element';
 }
 
 // ──────────────────────────────────────────────
