@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { bookingsOverlap } = require('../lib/booking-overlap');
 const {
   bookingStatusBlocksSchedule,
@@ -116,9 +118,23 @@ function testRequiredEmailTypes() {
   );
 }
 
+function testCfiProfileRouteNotShadowed() {
+  const profileRoutes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'profile.js'), 'utf8');
+  const endorsementsRoutes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'endorsements.js'), 'utf8');
+  assert.ok(
+    endorsementsRoutes.includes("router.get('/cfi-profile'") && endorsementsRoutes.includes("router.put('/cfi-profile'"),
+    'endorsements router must continue to provide legacy CFI profile routes'
+  );
+  assert.ok(
+    !/router\.use\(\s*\(\s*req\s*,\s*res\s*\)\s*=>\s*\{\s*res\.status\(404\)/.test(profileRoutes),
+    'profile router must not end with a catch-all that shadows /api/users/me/cfi-profile'
+  );
+}
+
 testHalfOpenBookingOverlap();
 testConflictPolicy();
 testHistoricalEditPermissions();
 testRequiredEmailTypes();
+testCfiProfileRouteNotShadowed();
 
 console.log('critical bug regressions passed');
