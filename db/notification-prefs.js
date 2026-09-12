@@ -23,6 +23,7 @@ const DEFAULT_PREFS = {
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
 
 const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
+const { REQUIRED_EMAIL_TYPES } = require('../lib/email-types');
 
 let schemaPromise = null;
 
@@ -97,7 +98,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const vals = [];
   let i = 1;
   for (const col of PREF_COLUMNS) {
-    if (patch[col] !== undefined) {
+    if (patch[col] !== undefined && !REQUIRED_EMAIL_TYPES.has(col)) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
     }

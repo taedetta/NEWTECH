@@ -28,6 +28,12 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const {
+  VALID_BOOKING_STATUSES,
+  canEditHistoricalBooking,
+  isHistoricalStatus,
+  shouldCheckBookingConflict,
+} = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -838,10 +844,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
+    const isHistoricalBooking = isHistoricalStatus(b.status);
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
+    if (!canEditHistoricalBooking(req.user, b)) {
+      return res.status(403).json({ error: 'Only staff can edit completed or cancelled bookings' });
+    }
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
@@ -853,7 +862,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
       }
     }
-    if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    const statusProvided = status !== undefined;
+    const nextStatus = statusProvided ? String(status || '').trim().toLowerCase() : b.status;
+    if (statusProvided && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (statusProvided && !VALID_BOOKING_STATUSES.has(nextStatus)) {
+      return res.status(400).json({ error: 'Invalid booking status' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -885,18 +899,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const needsConflictCheck = shouldCheckBookingConflict({
+      scheduleChanged,
+      previousStatus: b.status,
+      nextStatus,
+    });
+    if (needsConflictCheck) {
       await client.query('BEGIN');
       try {
-        if (needsConflictCheck) {
-          await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-          const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-          if (conflicts.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Scheduling conflict', conflicts });
-          }
+        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+        if (conflicts.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
         }
         const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
         let booking_type = await deriveBookingType(client, sid, iid);
@@ -912,7 +927,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
            reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
            updated_at = NOW()
            WHERE id = $10 RETURNING *`,
-          [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
+          [sid, iid, acId, stIso, etIso, lesson_type, notes, statusProvided ? nextStatus : null, booking_type, bookingId]
         );
         const updated = result.rows[0];
         await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
@@ -939,7 +954,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
        reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
        updated_at = NOW()
        WHERE id = $10 RETURNING *`,
-      [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
+      [sid, iid, acId, stIso, etIso, lesson_type, notes, statusProvided ? nextStatus : null, booking_type, bookingId]
     );
     const updated = result.rows[0];
     await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);

@@ -95,6 +95,7 @@ app.use(compression({ threshold: 1024, filter: (req, res) => {
 }}));
 app.use(canonicalHostRedirect);
 app.use(expressJson({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 app.use(cookieParser());
 
 // Health: /health (no DB) for Railway probes; /health/deep for full stack check
