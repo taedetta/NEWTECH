@@ -219,6 +219,14 @@ async function markLeadConverted(id, userId, convertedUserId) {
   return normalizeLeadRow(result.rows[0]);
 }
 
+async function deleteLead(id) {
+  const result = await queryWithSourceFilter(
+    'DELETE FROM discovery_flight_leads WHERE id = $1 RETURNING id',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   createLead,
   createManualLead,
@@ -231,4 +239,5 @@ module.exports = {
   logLeadActivity,
   recordLeadFollowUp,
   markLeadConverted,
+  deleteLead,
 };

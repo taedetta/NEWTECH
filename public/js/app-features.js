@@ -78,24 +78,32 @@ async function sendMessageReply(e, threadId) {
   e.preventDefault();
   var body = document.getElementById('msg-reply-input').value.trim();
   if (!body) return;
-  await api('/api/messages/threads/' + threadId, { method: 'POST', body: JSON.stringify({ body: body }) });
-  document.getElementById('msg-reply-input').value = '';
-  openMessageThread(threadId);
+  try {
+    await api('/api/messages/threads/' + threadId, { method: 'POST', body: JSON.stringify({ body: body }) });
+    document.getElementById('msg-reply-input').value = '';
+    openMessageThread(threadId);
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to send reply', 'error');
+  }
 }
 
 async function startNewMessageThread(e) {
   e.preventDefault();
-  await api('/api/messages/threads', {
-    method: 'POST',
-    body: JSON.stringify({
-      student_id: parseInt(document.getElementById('msg-new-student').value, 10),
-      instructor_id: parseInt(document.getElementById('msg-new-instructor').value, 10),
-      body: document.getElementById('msg-new-body').value.trim(),
-    }),
-  });
-  document.getElementById('msg-new-body').value = '';
-  showToast('Message sent', 'success');
-  loadMessagesPage();
+  try {
+    await api('/api/messages/threads', {
+      method: 'POST',
+      body: JSON.stringify({
+        student_id: parseInt(document.getElementById('msg-new-student').value, 10),
+        instructor_id: parseInt(document.getElementById('msg-new-instructor').value, 10),
+        body: document.getElementById('msg-new-body').value.trim(),
+      }),
+    });
+    document.getElementById('msg-new-body').value = '';
+    showToast('Message sent', 'success');
+    loadMessagesPage();
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to send message', 'error');
+  }
 }
 
 function populateMessageNewForm() {
@@ -245,16 +253,26 @@ async function checkPushStatus() {
 }
 
 async function sendLeadFollowUp(leadId) {
-  var data = await api('/api/leads/' + leadId + '/follow-up', { method: 'POST' });
-  showToast('Follow-up sent', 'success');
-  if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+  try {
+    var data = await api('/api/leads/' + leadId + '/follow-up', { method: 'POST' });
+    showToast('Follow-up sent', 'success');
+    if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+  } catch (err) {
+    console.error('[leads] follow-up failed:', err);
+    showToast(err.error || err.message || 'Failed to send follow-up', 'error');
+  }
 }
 
 async function convertLead(leadId) {
-  var data = await api('/api/leads/' + leadId + '/convert', { method: 'POST' });
-  showToast(data.needs_account ? 'Converted — create account in People' : 'Lead linked to user', 'success');
-  if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
-  loadLeads();
+  try {
+    var data = await api('/api/leads/' + leadId + '/convert', { method: 'POST' });
+    showToast(data.needs_account ? 'Converted — create account in People' : 'Lead linked to user', 'success');
+    if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+    loadLeads();
+  } catch (err) {
+    console.error('[leads] conversion failed:', err);
+    showToast(err.error || err.message || 'Failed to convert lead', 'error');
+  }
 }
 
 async function loadLocationsAdmin() {

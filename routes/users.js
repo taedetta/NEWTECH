@@ -14,19 +14,62 @@ const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
 const router = express.Router();
 
+function parseUserHours(value, field) {
+  if (value === null || value === '') return { error: `${field} must be a number` };
+  const str = typeof value === 'number' ? String(value) : String(value).trim();
+  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(str)) {
+    return { error: `${field} must be a non-negative number` };
+  }
+  const parsed = Number(str);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 99999) {
+    return { error: `${field} must be between 0 and 99999` };
+  }
+  return { value: parsed };
+}
+
 // GET /api/users
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role } = req.query;
     const requesterRole = req.user.role;
-    if (['student', 'renter'].includes(requesterRole)) {
-      // Renters and students only see instructors/admins/owners in their user list
-      const result = await pool.query(
-        `SELECT u.id, u.name, u.role, u.is_instructor,
+    let requesterPerms = null;
+    if (!['owner', 'admin'].includes(requesterRole)) {
+      requesterPerms = await getUserPermissions(req.user.id, requesterRole);
+    }
+    const canViewFullRoster = ['owner', 'admin'].includes(requesterRole)
+      || requesterPerms?.can_manage_students
+      || requesterPerms?.can_manage_instructors
+      || requesterPerms?.can_manage_permissions;
+    if (!canViewFullRoster) {
+      // Plain users never receive roster PII. Instructors also need names for scheduling/training pickers.
+      let query = `
+        SELECT u.id, u.name, u.role, u.is_instructor,
+          ''::text as email,
+          NULL::text as phone_number,
+          NULL::numeric as total_hobbs_hours,
+          NULL::numeric as total_tach_hours,
+          NULL::numeric as instructor_rate,
+          false as can_manage_aircraft,
+          false as can_manage_instructors,
+          false as can_manage_permissions,
+          false as can_manage_students,
+          false as can_edit_website,
           EXISTS (SELECT 1 FROM instructor_availability WHERE instructor_id = u.id) as has_instructor_availability
-         FROM users u
-         WHERE ${BOOKABLE_INSTRUCTOR_WHERE}
-         ORDER BY u.name`
+        FROM users u
+        WHERE ${requesterRole === 'instructor'
+          ? `u.deleted_at IS NULL AND COALESCE(u.approval_status, 'approved') = 'approved'
+             AND (u.role IN ('student', 'renter') OR (u.is_instructor = TRUE OR u.role = 'instructor'))`
+          : BOOKABLE_INSTRUCTOR_WHERE}
+      `;
+      const params = [];
+      if (role) {
+        query += ' AND u.role = $1';
+        params.push(role);
+      }
+      query += ' ORDER BY u.name';
+      const result = await pool.query(
+        query,
+        params
       );
       return res.json(result.rows);
     }
@@ -118,7 +161,7 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
       return res.send(buf);
     }
 
-    const buf = buildFspWorkbook(users, exportOptions);
+    const buf = await buildFspWorkbook(users, exportOptions);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
     return res.send(buf);
@@ -185,9 +228,11 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
     const targetId = parseInt(req.params.id);
     const { instructor_rate } = req.body;
     if (instructor_rate === undefined) return res.status(400).json({ error: 'instructor_rate is required' });
+    const parsedRate = parseUserHours(instructor_rate, 'instructor_rate');
+    if (parsedRate.error) return res.status(400).json({ error: parsedRate.error });
     const result = await pool.query(
       `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, instructor_rate`,
-      [parseFloat(instructor_rate), targetId]
+      [parsedRate.value, targetId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
@@ -479,8 +524,18 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    if (total_hobbs_hours !== undefined) {
+      const parsed = parseUserHours(total_hobbs_hours, 'total_hobbs_hours');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(parsed.value);
+    }
+    if (total_tach_hours !== undefined) {
+      const parsed = parseUserHours(total_tach_hours, 'total_tach_hours');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(parsed.value);
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,

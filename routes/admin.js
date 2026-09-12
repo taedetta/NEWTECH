@@ -11,6 +11,7 @@ const { emailFullDataBackup } = require('../lib/full-data-backup');
 const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue, timeToComparable } = require('../lib/instructors');
 const { getAllInstructorsDayAvailability } = require('../lib/instructor-availability');
 const { calendarDateFromDate } = require('../lib/school-timezone');
+const { isStaging } = require('../lib/app-env');
 const { execSync, spawn } = require('child_process');
 
 const router = express.Router();
@@ -40,6 +41,10 @@ const RESET_DELETE_TABLES = [
 // ─── ADMIN: RESET ALL DATA ───────────────────────────────
 
 router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Reset all data is disabled on staging.' });
+  }
+
   const client = await pool.connect();
   try {
     // Safety backup before any deletion — abort if email fails
