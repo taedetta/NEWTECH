@@ -31,6 +31,7 @@ const { shiftBookingTimesToFlightDate } = require('../lib/sync-flight-record');
 const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
+const { rollbackAircraftMeterForDeletedBooking } = require('../lib/aircraft-meter');
 
 function testRequiredEmailPreferences() {
   assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
@@ -198,14 +199,115 @@ function testCompletionUsesLockedBookingRow() {
   );
 }
 
-testRequiredEmailPreferences();
-testUnsubscribeTokenScope();
-testBookingDateShift();
-testBookingConflictDecision();
-testInstructorRatePreservation();
-testStrictNumberValidation();
-testRequestNumericInputSourceGuards();
-testFollowUpSecuritySourceGuards();
-testCompletionUsesLockedBookingRow();
+function testNewCriticalSourceGuards() {
+  const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
+  assert(
+    aircraftSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE')
+      && aircraftSrc.includes('hobbs cannot be less than current aircraft reading')
+      && aircraftSrc.includes('tach cannot be less than current aircraft reading'),
+    'manual aircraft meter edits must lock and reject rollbacks'
+  );
 
-console.log('critical bug regressions passed');
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  assert(
+    historySrc.includes('rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log)')
+      && historySrc.indexOf('rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log)') < historySrc.indexOf("DELETE FROM aircraft_hours_history WHERE booking_id = $1"),
+    'completed booking deletion must reconcile aircraft meters before deleting audit rows'
+  );
+
+  const documentsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'documents.js'), 'utf8');
+  assert(
+    documentsSrc.includes('async function canManageStudentDocuments')
+      && documentsSrc.includes('student_training')
+      && documentsSrc.includes('Only assigned instructors or admins can manage student documents'),
+    'student document routes must be limited to admins or assigned instructors'
+  );
+
+  const analyticsSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin', 'analytics.html'), 'utf8');
+  assert(
+    analyticsSrc.includes("localStorage.getItem('fs_token')")
+      && analyticsSrc.includes("sessionStorage.getItem('fs_token')"),
+    'admin analytics page must read the SPA auth token key'
+  );
+
+  const appFeaturesSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-features.js'), 'utf8');
+  assert(
+    /async function sendLeadFollowUp[\s\S]+catch \(err\)[\s\S]+Failed to send follow-up/.test(appFeaturesSrc)
+      && /async function convertLead[\s\S]+catch \(err\)[\s\S]+Failed to convert lead/.test(appFeaturesSrc),
+    'lead follow-up and conversion failures must be surfaced'
+  );
+}
+
+async function testHistoryDeleteMeterRollbackHelper() {
+  const updates = [];
+  const makeClient = (aircraft) => ({
+    async query(sql, params) {
+      if (sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE')) {
+        return { rows: [aircraft] };
+      }
+      if (sql.includes('FROM aircraft_hours_history') && sql.includes('ORDER BY created_at DESC')) {
+        const field = params[2];
+        return {
+          rows: [{
+            old_value: field === 'hobbs' ? 100 : 50,
+            new_value: field === 'hobbs' ? 101 : 51,
+          }],
+        };
+      }
+      if (sql.includes('MAX(new_value)')) return { rows: [{ max_value: null }] };
+      if (sql.includes('MAX(hobbs_end)') || sql.includes('MAX(tach_end)')) return { rows: [{ max_value: null }] };
+      if (sql.startsWith('UPDATE aircraft SET')) {
+        updates.push({ sql, params });
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  });
+
+  await rollbackAircraftMeterForDeletedBooking(makeClient({
+    current_hobbs: 101,
+    current_tach: 51,
+    total_hobbs_hours: 101,
+    total_tach_hours: 51,
+  }), 7, 42, {
+    hobbs_start: 100,
+    hobbs_end: 101,
+    tach_start: 50,
+    tach_end: 51,
+  });
+  assert.deepStrictEqual(updates[0].params, [100, 50, 7]);
+
+  updates.length = 0;
+  await rollbackAircraftMeterForDeletedBooking(makeClient({
+    current_hobbs: 110,
+    current_tach: 60,
+    total_hobbs_hours: 110,
+    total_tach_hours: 60,
+  }), 7, 42, {
+    hobbs_start: 100,
+    hobbs_end: 101,
+    tach_start: 50,
+    tach_end: 51,
+  });
+  assert.strictEqual(updates.length, 0, 'deleting older history must not roll back later meter readings');
+}
+
+async function main() {
+  testRequiredEmailPreferences();
+  testUnsubscribeTokenScope();
+  testBookingDateShift();
+  testBookingConflictDecision();
+  testInstructorRatePreservation();
+  testStrictNumberValidation();
+  testRequestNumericInputSourceGuards();
+  testFollowUpSecuritySourceGuards();
+  testCompletionUsesLockedBookingRow();
+  testNewCriticalSourceGuards();
+  await testHistoryDeleteMeterRollbackHelper();
+  console.log('critical bug regressions passed');
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

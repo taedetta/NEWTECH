@@ -253,16 +253,26 @@ async function checkPushStatus() {
 }
 
 async function sendLeadFollowUp(leadId) {
-  var data = await api('/api/leads/' + leadId + '/follow-up', { method: 'POST' });
-  showToast('Follow-up sent', 'success');
-  if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+  try {
+    var data = await api('/api/leads/' + leadId + '/follow-up', { method: 'POST' });
+    showToast('Follow-up sent', 'success');
+    if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+  } catch (err) {
+    console.error('[leads] follow-up failed:', err);
+    showToast(err.error || err.message || 'Failed to send follow-up', 'error');
+  }
 }
 
 async function convertLead(leadId) {
-  var data = await api('/api/leads/' + leadId + '/convert', { method: 'POST' });
-  showToast(data.needs_account ? 'Converted — create account in People' : 'Lead linked to user', 'success');
-  if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
-  loadLeads();
+  try {
+    var data = await api('/api/leads/' + leadId + '/convert', { method: 'POST' });
+    showToast(data.needs_account ? 'Converted — create account in People' : 'Lead linked to user', 'success');
+    if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+    loadLeads();
+  } catch (err) {
+    console.error('[leads] conversion failed:', err);
+    showToast(err.error || err.message || 'Failed to convert lead', 'error');
+  }
 }
 
 async function loadLocationsAdmin() {

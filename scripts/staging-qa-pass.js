@@ -212,7 +212,7 @@ async function testPages(roleCfg) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   await context.addInitScript((t) => {
-    localStorage.setItem('token', t);
+    localStorage.setItem('fs_token', t);
   }, token);
 
   const page = await context.newPage();

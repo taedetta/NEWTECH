@@ -217,6 +217,12 @@ if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
   fail('Website Editor image upload endpoint is missing');
 } else ok('Website Editor image upload endpoint present');
 
+const analyticsAdminSrc = fs.readFileSync(path.join(root, 'public', 'admin', 'analytics.html'), 'utf8');
+if (!analyticsAdminSrc.includes("localStorage.getItem('fs_token')")
+  || !analyticsAdminSrc.includes("sessionStorage.getItem('fs_token')")) {
+  fail('Admin analytics page does not read the SPA auth token');
+} else ok('Admin analytics reads SPA auth token');
+
 const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
 if (!usersSrc.includes('canViewFullRoster')
   || !usersSrc.includes('Plain users never receive roster PII')) {
@@ -232,6 +238,12 @@ if (!endorsementsSrc.includes('canCreateEndorsementForStudent')
   || !endorsementsSrc.includes('Only assigned instructors or admins can endorse this student')) {
   fail('Endorsement creation missing assigned-instructor/admin guard');
 } else ok('Endorsement creation is scoped');
+const documentsSrc = fs.readFileSync(path.join(root, 'routes/documents.js'), 'utf8');
+if (!documentsSrc.includes('async function canManageStudentDocuments')
+  || !documentsSrc.includes('student_training')
+  || !documentsSrc.includes('Only assigned instructors or admins can manage student documents')) {
+  fail('Student document routes are not scoped to assigned instructors/admins');
+} else ok('Student document access is scoped');
 const strictNumberSrc = fs.readFileSync(path.join(root, 'lib/strict-number.js'), 'utf8');
 if (!strictNumberSrc.includes('function parseStrictNumber')
   || !strictNumberSrc.includes('/^(?:\\d+(?:\\.\\d+)?|\\.\\d+)$/')) {
@@ -274,6 +286,10 @@ if (!/async function sendMessageReply[\s\S]+catch \(err\)[\s\S]+Failed to send r
   || !/async function startNewMessageThread[\s\S]+catch \(err\)[\s\S]+Failed to send message/.test(appFeaturesSrc)) {
   fail('Messages send/reply errors are not surfaced to users');
 } else ok('Messages send/reply errors are surfaced');
+if (!/async function sendLeadFollowUp[\s\S]+catch \(err\)[\s\S]+Failed to send follow-up/.test(appFeaturesSrc)
+  || !/async function convertLead[\s\S]+catch \(err\)[\s\S]+Failed to convert lead/.test(appFeaturesSrc)) {
+  fail('Leads follow-up/convert errors are not surfaced to users');
+} else ok('Leads follow-up/convert errors are surfaced');
 
 const inlineHandlerSrc = appHtml + '\n' + appFeaturesSrc;
 const handlerIgnores = new Set([
@@ -337,11 +353,26 @@ if (!appHtml.includes('function aircraftTypeLabel')
   || /a\.type\.replace\(/.test(appHtml)) {
   fail('Fleet aircraft type rendering can throw when type is missing');
 } else ok('Fleet aircraft type rendering tolerates missing type');
+if (!aircraftSrc.includes('FOR UPDATE')
+  || !aircraftSrc.includes('hobbs cannot be less than current aircraft reading')
+  || !aircraftSrc.includes('tach cannot be less than current aircraft reading')) {
+  fail('Fleet manual Hobbs/Tach update can roll back aircraft meters');
+} else ok('Fleet manual Hobbs/Tach updates are monotonic');
+const aircraftMeterSrc = fs.readFileSync(path.join(root, 'lib/aircraft-meter.js'), 'utf8');
+if (!aircraftMeterSrc.includes('async function rollbackAircraftMeterForDeletedBooking')
+  || !bookingHistorySrc.includes('rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log)')) {
+  fail('Completed history deletion does not reconcile aircraft meters');
+} else ok('Completed history deletion reconciles aircraft meters');
 
 if (/onclick='openDiscrepancyResolve\([^']+JSON\.stringify\(d\)/.test(appHtml)
   || !appHtml.includes('discrepancyRowsById')) {
   fail('Discrepancy resolve button embeds unsafe row JSON');
 } else ok('Discrepancy resolve uses cached row data');
+
+const stagingQaSrc = fs.readFileSync(path.join(root, 'scripts', 'staging-qa-pass.js'), 'utf8');
+if (!stagingQaSrc.includes("localStorage.setItem('fs_token', t)")) {
+  fail('Staging authenticated browser QA seeds the wrong token key');
+} else ok('Staging authenticated browser QA seeds SPA token key');
 
 console.log('\n=== Summary ===');
 if (failures.length === 0) {

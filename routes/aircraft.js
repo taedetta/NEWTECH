@@ -177,13 +177,26 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   if (parsedTach.error) return res.status(400).json({ error: parsedTach.error });
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const current = await client.query(
-      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
+      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE',
       [req.params.id]
     );
-    if (current.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+    if (current.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aircraft not found' });
+    }
     const acRow = current.rows[0];
-    await client.query('BEGIN');
+    const currentHobbs = getMeterHobbs(acRow);
+    if (hobbs != null && currentHobbs != null && parsedHobbs.value < currentHobbs) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `hobbs cannot be less than current aircraft reading (${currentHobbs.toFixed(1)})` });
+    }
+    const currentTach = getMeterTach(acRow);
+    if (tach != null && currentTach != null && parsedTach.value < currentTach) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `tach cannot be less than current aircraft reading (${currentTach.toFixed(1)})` });
+    }
     const sets = [];
     const vals = [];
     let idx = 1;

@@ -5,7 +5,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
-const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
+const { applyAircraftMeterReadings, rollbackAircraftMeterForDeletedBooking } = require('../lib/aircraft-meter');
 const { syncFlightRecord, dateOnly } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
@@ -390,6 +390,9 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
             );
           }
         }
+      }
+      if (b.status === 'completed' && b.aircraft_id) {
+        await rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log);
       }
       // Clean up related rows first; several booking_id FKs are RESTRICT by default.
       await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
