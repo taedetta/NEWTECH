@@ -3,6 +3,7 @@
 const assert = require('assert');
 const http = require('http');
 const express = require('express');
+const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 process.env.APP_URL = process.env.APP_URL || 'https://example.test';
@@ -31,20 +32,33 @@ function installPoolStub(pool) {
   };
 }
 
-function request(app, method, target, body) {
+function installSyncFlightRecordStub(exports) {
+  const syncPath = require.resolve('../lib/sync-flight-record');
+  require.cache[syncPath] = {
+    id: syncPath,
+    filename: syncPath,
+    loaded: true,
+    exports,
+  };
+}
+
+function request(app, method, target, body, bearerToken) {
   return new Promise((resolve, reject) => {
     const server = app.listen(0, '127.0.0.1', () => {
       const address = server.address();
       const payload = body ? new URLSearchParams(body).toString() : '';
+      const headers = {};
+      if (payload) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        headers['Content-Length'] = Buffer.byteLength(payload);
+      }
+      if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
       const req = http.request({
         hostname: '127.0.0.1',
         port: address.port,
         path: target,
         method,
-        headers: payload ? {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Content-Length': Buffer.byteLength(payload),
-        } : {},
+        headers,
       }, (res) => {
         let raw = '';
         res.setEncoding('utf8');
@@ -199,11 +213,124 @@ function testBookingConflictDecisions() {
   assert.strictEqual(canEditHistoricalBooking({ id: 5, role: 'admin' }, completed), true);
 }
 
+function testFlightDateHelpers() {
+  clearModule('../lib/sync-flight-record');
+  const {
+    resolveFlightDate,
+    moveBookingWindowToDate,
+  } = require('../lib/sync-flight-record');
+  const { timeHmFromDate } = require('../lib/school-timezone');
+
+  assert.strictEqual(resolveFlightDate({
+    bookingStartTime: '2026-07-04T00:30:00.000Z',
+    fallbackDate: new Date('2026-01-01T12:00:00.000Z'),
+  }), '2026-07-03', 'booking timestamp fallback must use school-local date, not UTC date');
+
+  const booking = {
+    start_time: '2026-03-10T14:30:00.000Z',
+    end_time: '2026-03-10T16:00:00.000Z',
+  };
+  const moved = moveBookingWindowToDate(booking, '2026-03-12');
+  assert.strictEqual(timeHmFromDate(moved.startTime), timeHmFromDate(booking.start_time));
+  assert.strictEqual(moved.endTime.getTime() - moved.startTime.getTime(), 90 * 60 * 1000);
+  assert.notStrictEqual(moved.startTime.toISOString(), '2026-03-12T12:00:00.000Z');
+}
+
+async function testBookingHistoryOmitsUnchangedFlightDate() {
+  clearModule('../routes/booking-history');
+  clearModule('../middleware/auth');
+  clearModule('../lib/sync-flight-record');
+
+  const booking = {
+    id: 123,
+    status: 'completed',
+    aircraft_id: 2,
+    instructor_id: 5,
+    student_id: 7,
+    start_time: '2026-07-04T00:30:00.000Z',
+    end_time: '2026-07-04T02:00:00.000Z',
+    hobbs_start: 100,
+    hobbs_end: 101,
+    tach_start: null,
+    tach_end: null,
+    booking_type: 'dual',
+    lesson_type: 'Dual Instruction',
+    hourly_rate: 150,
+  };
+  const fakeClient = {
+    query: async () => ({ rows: [] }),
+    release: () => {},
+  };
+  const fakePool = {
+    query: async (sql) => {
+      if (String(sql).includes('SELECT b.*, a.hourly_rate')) return { rows: [booking] };
+      return { rows: [] };
+    },
+    connect: async () => fakeClient,
+  };
+  installPoolStub(fakePool);
+  installDbStub({
+    getPrefs: async () => ({}),
+    updatePrefs: async () => ({}),
+    ensureDefaultPrefs: async () => {},
+  });
+
+  const patches = [];
+  installSyncFlightRecordStub({
+    syncFlightRecord: async (client, bookingId, patch) => {
+      patches.push({ bookingId, patch });
+      return { aircraftChargeAmount: 150, instructionChargeAmount: 0 };
+    },
+  });
+
+  const app = express();
+  app.use(express.urlencoded({ extended: false }));
+  app.use('/api/booking-history', require('../routes/booking-history'));
+  const token = jwt.sign({ id: 99, role: 'admin' }, process.env.JWT_SECRET);
+
+  const unchanged = await request(app, 'PATCH', '/api/booking-history/flights/123', {
+    flight_date: '2026-07-03',
+    hobbs_start: '100',
+    hobbs_end: '101',
+  }, token);
+  assert.strictEqual(unchanged.status, 200);
+  assert.strictEqual(patches[0].patch.flight_date, undefined);
+
+  const changed = await request(app, 'PATCH', '/api/booking-history/flights/123', {
+    flight_date: '2026-07-05',
+    hobbs_start: '100',
+    hobbs_end: '101',
+  }, token);
+  assert.strictEqual(changed.status, 200);
+  assert.strictEqual(patches[1].patch.flight_date, '2026-07-05');
+}
+
+async function testProfileRouterFallsThroughForCfiProfile() {
+  clearModule('../routes/profile');
+  clearModule('../middleware/auth');
+  installPoolStub({ query: async () => ({ rows: [] }) });
+  installDbStub({
+    getPrefs: async () => ({}),
+    updatePrefs: async () => ({}),
+    ensureDefaultPrefs: async () => {},
+  });
+
+  const app = express();
+  app.use('/api/users/me', require('../routes/profile'));
+  app.use('/api/users/me', (req, res) => res.status(204).end());
+
+  const res = await request(app, 'GET', '/api/users/me/cfi-profile');
+  assert.strictEqual(res.status, 204);
+}
+
 (async () => {
   await testUnsubscribeRoute();
   await testRequiredEmailPreferences();
   await testUpdatePrefsIgnoresRequiredColumns();
   testBookingConflictDecisions();
+  testFlightDateHelpers();
+  await testBookingHistoryOmitsUnchangedFlightDate();
+  await testProfileRouterFallsThroughForCfiProfile();
   console.log('critical bug regressions passed');
 })().catch((err) => {
   console.error(err);

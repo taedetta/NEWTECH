@@ -8,6 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { calendarDateFromDate } = require('../lib/school-timezone');
 
 const router = express.Router();
 
@@ -218,9 +219,11 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+    const currentFlightDate = b.start_time ? calendarDateFromDate(b.start_time) : null;
+    const requestedFlightDate = flight_date ? String(flight_date).slice(0, 10) : null;
+    if (requestedFlightDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedFlightDate)) {
+      return res.status(400).json({ error: 'flight_date must be YYYY-MM-DD' });
+    }
     const effectiveLessonType = inferLessonType(
       lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
@@ -232,8 +235,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const syncPatch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
@@ -243,7 +245,12 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         aircraft_charge_amount,
         instruction_charge_amount,
         submitted_by: userId,
-      });
+      };
+      if (requestedFlightDate && requestedFlightDate !== currentFlightDate) {
+        syncPatch.flight_date = requestedFlightDate;
+      }
+
+      const synced = await syncFlightRecord(client, bookingId, syncPatch);
 
       await client.query('COMMIT');
       inTxn = false;
