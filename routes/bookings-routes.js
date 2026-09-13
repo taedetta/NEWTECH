@@ -28,6 +28,12 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const {
+  canEditHistoricalBooking,
+  isAssignedInstructor: userIsAssignedInstructor,
+  isHistoricalBookingStatus,
+  shouldCheckBookingConflict,
+} = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -838,10 +844,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
-    const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isHistoricalBooking = isHistoricalBookingStatus(b.status);
+    const isAssignedInstructor = userIsAssignedInstructor(req.user, b);
+    const isStaffHistoricalEdit = isAdmin || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
+    if (!canEditHistoricalBooking(req.user, b)) {
+      return res.status(403).json({ error: 'Only staff can edit completed or cancelled bookings' });
+    }
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
@@ -849,7 +858,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Cannot change student or instructor on an existing booking' });
     }
     if (!isAdmin && rescheduleRequested) {
-      if (b.status !== 'confirmed' && !(isAssignedInstructor && isHistoricalBooking)) {
+      if (b.status !== 'confirmed' && !isAssignedInstructor) {
         return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
       }
     }
@@ -885,18 +894,20 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const nextStatus = status !== undefined ? status : b.status;
+    const needsConflictCheck = shouldCheckBookingConflict({
+      previousStatus: b.status,
+      nextStatus,
+      scheduleChanged,
+    });
+    if (needsConflictCheck) {
       await client.query('BEGIN');
       try {
-        if (needsConflictCheck) {
-          await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-          const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-          if (conflicts.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Scheduling conflict', conflicts });
-          }
+        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+        if (conflicts.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
         }
         const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
         let booking_type = await deriveBookingType(client, sid, iid);
