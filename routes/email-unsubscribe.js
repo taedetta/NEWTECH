@@ -3,15 +3,35 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
+const { EMAIL_TYPES, REQUIRED_EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
 
-function renderPage({ title, message, ok }) {
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function validUnsubscribeType(type) {
+  return type === 'all' || (EMAIL_TYPES[type] && !REQUIRED_EMAIL_TYPES.has(type));
+}
+
+function requestType(req) {
+  return String(req.query.type || req.body?.type || 'all').trim();
+}
+
+function renderPage({ title, message, ok, confirm }) {
   const color = ok ? '#059669' : '#DC2626';
   const manageUrl = buildManagePrefsUrl();
   const appUrl = `${getAppUrl()}/app`;
+  const confirmHtml = confirm ? `
+    <form method="POST" action="/api/email/unsubscribe?token=${escapeHtml(confirm.token)}&type=${escapeHtml(confirm.type)}" style="margin:0 0 20px;">
+      <button type="submit" class="btn">Confirm unsubscribe</button>
+    </form>` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -23,7 +43,7 @@ function renderPage({ title, message, ok }) {
     .card { max-width: 520px; margin: 0 auto; background: #fff; border-radius: 10px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }
     h1 { font-size: 1.35rem; margin: 0 0 12px; color: ${color}; }
     p { font-size: 0.95rem; line-height: 1.6; color: #475569; margin: 0 0 20px; }
-    a.btn { display: inline-block; background: #0EA5E9; color: #fff; text-decoration: none; padding: 12px 22px; border-radius: 7px; font-weight: 600; font-size: 0.9rem; }
+    a.btn, button.btn { display: inline-block; background: #0EA5E9; color: #fff; text-decoration: none; border:0; cursor:pointer; padding: 12px 22px; border-radius: 7px; font-weight: 600; font-size: 0.9rem; }
     a.link { color: #0EA5E9; text-decoration: none; font-size: 0.88rem; }
   </style>
 </head>
@@ -31,6 +51,7 @@ function renderPage({ title, message, ok }) {
   <div class="card">
     <h1>${title}</h1>
     <p>${message}</p>
+    ${confirmHtml}
     <a class="btn" href="${manageUrl}">Manage email preferences</a>
     <p style="margin-top:20px"><a class="link" href="${appUrl}">Open FlightSlate</a></p>
   </div>
@@ -41,7 +62,7 @@ function renderPage({ title, message, ok }) {
 router.get('/unsubscribe', async (req, res) => {
   try {
     const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
+    const rawType = requestType(req);
     if (!token) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -50,7 +71,15 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    const verified = verifyUnsubscribeToken(token);
+    if (!validUnsubscribeType(rawType)) {
+      return res.status(400).send(renderPage({
+        ok: false,
+        title: 'Invalid preference type',
+        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+      }));
+    }
+
+    const verified = verifyUnsubscribeToken(token, rawType);
     if (!verified) {
       return res.status(400).send(renderPage({
         ok: false,
@@ -59,11 +88,51 @@ router.get('/unsubscribe', async (req, res) => {
       }));
     }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
+    const label = typeLabel(rawType);
+    return res.send(renderPage({
+      ok: true,
+      title: 'Confirm unsubscribe',
+      message: rawType === 'all'
+        ? 'Click confirm to stop optional email notifications from New Tech Aviation. Required account and security emails will still be delivered.'
+        : `Click confirm to unsubscribe from <strong>${label}</strong>. Other notification types are unchanged.`,
+      confirm: { token, type: rawType },
+    }));
+  } catch (err) {
+    console.error('[email-unsubscribe] confirm error:', err.message);
+    res.status(500).send(renderPage({
+      ok: false,
+      title: 'Something went wrong',
+      message: 'We could not process your unsubscribe request. Please try again or manage preferences in My Account.',
+    }));
+  }
+});
+
+router.post('/unsubscribe', async (req, res) => {
+  try {
+    const token = req.query.token || req.body?.token;
+    const rawType = requestType(req);
+    if (!token) {
+      return res.status(400).send(renderPage({
+        ok: false,
+        title: 'Invalid link',
+        message: 'This unsubscribe link is missing required information. Sign in and open My Account to manage email preferences.',
+      }));
+    }
+
+    if (!validUnsubscribeType(rawType)) {
       return res.status(400).send(renderPage({
         ok: false,
         title: 'Invalid preference type',
         message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+      }));
+    }
+
+    const verified = verifyUnsubscribeToken(token, rawType);
+    if (!verified) {
+      return res.status(400).send(renderPage({
+        ok: false,
+        title: 'Link expired or invalid',
+        message: 'This unsubscribe link is no longer valid. Sign in and open My Account to manage your email preferences.',
       }));
     }
 
@@ -80,7 +149,7 @@ router.get('/unsubscribe', async (req, res) => {
       ok: true,
       title: 'Unsubscribed',
       message: rawType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+        ? 'You will no longer receive optional email notifications from New Tech Aviation. Required account and security emails will still be delivered.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
