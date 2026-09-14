@@ -11,6 +11,7 @@ const { bookingsOverlap } = require('../lib/booking-overlap');
 const { REQUIRED_EMAIL_TYPES, TYPE_CATEGORIES } = require('../lib/email-types');
 const { buildUnsubscribeUrl, signUnsubscribeToken, verifyUnsubscribeToken } = require('../lib/unsubscribe-token');
 const { getPreferenceCatalog, appendUnsubscribeFooter, shouldSendEmail } = require('../lib/notification-prefs');
+const { dateOnly, shiftBookingTimesToFlightDate } = require('../lib/flight-date-shift');
 
 function user(role, id) {
   return { role, id };
@@ -68,6 +69,21 @@ assert.strictEqual(
   true,
   'overlapping bookings are rejected'
 );
+
+const scheduledFlight = {
+  start_time: '2026-09-14T19:00:00.000Z',
+  end_time: '2026-09-14T21:00:00.000Z',
+};
+assert.strictEqual(dateOnly('2026-09-14T00:00:00.000Z'), '2026-09-14', 'date-only strings remain calendar dates');
+assert.strictEqual(
+  shiftBookingTimesToFlightDate(scheduledFlight, '2026-09-14'),
+  null,
+  'syncing the existing flight date does not rewrite booking times'
+);
+const shiftedFlight = shiftBookingTimesToFlightDate(scheduledFlight, '2026-09-15');
+assert.strictEqual(shiftedFlight.startTime.toISOString(), '2026-09-15T19:00:00.000Z', 'explicit date move preserves local start time');
+assert.strictEqual(shiftedFlight.endTime.toISOString(), '2026-09-15T21:00:00.000Z', 'explicit date move preserves duration');
+assert.notStrictEqual(shiftedFlight.startTime.toISOString(), '2026-09-15T12:00:00.000Z', 'date moves must not collapse to noon UTC');
 
 assert.strictEqual(REQUIRED_EMAIL_TYPES.has('password_reset'), true, 'password reset emails are required');
 assert.strictEqual(REQUIRED_EMAIL_TYPES.has('profile_change'), true, 'profile change emails are required');

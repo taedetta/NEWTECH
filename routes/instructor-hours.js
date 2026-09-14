@@ -10,6 +10,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { recordHobbsReading } = require('../db/discrepancies');
 const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
+const { dateOnly } = require('../lib/flight-date-shift');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 const { inferLessonType } = require('../lib/booking-rules');
 
@@ -211,6 +212,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
     const newDate = entry_date || row.entry_date;
+    const entryDateChanged = entry_date !== undefined
+      && entry_date !== null
+      && entry_date !== ''
+      && dateOnly(entry_date) !== dateOnly(row.entry_date);
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
       entryDate: newDate,
@@ -235,7 +240,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     );
 
     if (result.rows[0].booking_id) {
-      await syncFlightRecordFromInstructorHours(client, result.rows[0]);
+      await syncFlightRecordFromInstructorHours(client, result.rows[0], { entryDateChanged });
     }
 
     await client.query('COMMIT');
