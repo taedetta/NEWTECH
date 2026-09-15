@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { isPreferenceMutable } = require('../lib/email-types');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -97,7 +98,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const vals = [];
   let i = 1;
   for (const col of PREF_COLUMNS) {
-    if (patch[col] !== undefined) {
+    if (patch[col] !== undefined && isPreferenceMutable(col)) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
     }
