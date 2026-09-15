@@ -335,6 +335,14 @@ if (/fetch\('\/api\/project-files/.test(appHtml)) {
   fail('Website Editor Code tab reads project files without auth helper');
 } else ok('Website Editor Code tab uses authenticated project-file reads');
 
+if (appHtml.includes('id=&quot;editor-code-error&quot;')
+  || appHtml.includes('id=&quot;editor-code-textarea&quot;')
+  || !appHtml.includes('id="editor-code-error"')
+  || !appHtml.includes('id="editor-code-textarea"')
+  || !appHtml.includes('onclick="switchCodeMode(\'files\')"')) {
+  fail('Website Editor Code tab controls are not parseable DOM elements');
+} else ok('Website Editor Code tab controls are parseable DOM elements');
+
 if (appHtml.includes("fetch('/api/admin/download-source'")) {
   fail('Website Editor source download uses admin-only endpoint');
 } else ok('Website Editor source download uses editor-authorized endpoint');
