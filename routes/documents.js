@@ -18,7 +18,7 @@ async function canManageStudentDocuments(user, studentId) {
   if (['owner', 'admin'].includes(user.role)) return true;
   if (user.role !== 'instructor') return false;
   const perms = await getUserPermissions(user.id, user.role);
-  if (perms.can_manage_students || perms.can_manage_instructors) return true;
+  if (perms.can_manage_students) return true;
   const assigned = await pool.query(
     `SELECT 1 FROM student_training
      WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'

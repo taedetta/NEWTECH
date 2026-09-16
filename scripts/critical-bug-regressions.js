@@ -219,7 +219,8 @@ function testNewCriticalSourceGuards() {
   assert(
     documentsSrc.includes('async function canManageStudentDocuments')
       && documentsSrc.includes('student_training')
-      && documentsSrc.includes('Only assigned instructors or admins can manage student documents'),
+      && documentsSrc.includes('Only assigned instructors or admins can manage student documents')
+      && !/perms\.can_manage_instructors/.test(documentsSrc),
     'student document routes must be limited to admins or assigned instructors'
   );
 
