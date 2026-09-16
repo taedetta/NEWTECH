@@ -283,7 +283,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Instructor hours update error:', err);
-    res.status(500).json({ error: err.message || 'Failed to update entry' });
+    res.status(err.status || 500).json({ error: err.message || 'Failed to update entry' });
   } finally {
     client.release();
   }

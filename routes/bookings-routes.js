@@ -851,43 +851,64 @@ router.post('/', authenticateToken, async (req, res) => {
 
 router.put('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
+  let transactionStarted = false;
+  const abortTransaction = async (statusCode, payload) => {
+    if (transactionStarted) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+    }
+    return res.status(statusCode).json(payload);
+  };
   try {
-    const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, status } = req.body;
+    const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, status, expected_status } = req.body;
     const bookingId = parseInt(req.params.id, 10);
     if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [bookingId]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+
+    await client.query('BEGIN');
+    transactionStarted = true;
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    if (existing.rows.length === 0) return abortTransaction(404, { error: 'Booking not found' });
     const b = existing.rows[0];
+    if (expected_status && expected_status !== b.status) {
+      return abortTransaction(409, {
+        error: 'Booking changed while you were editing. Reload the booking and try again.',
+      });
+    }
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
     const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
-    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
+    if (!canAccessBooking(req.user, b)) return abortTransaction(403, { error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
     if (!isAdmin && (sid !== b.student_id || iid !== b.instructor_id)) {
-      return res.status(403).json({ error: 'Cannot change student or instructor on an existing booking' });
+      return abortTransaction(403, { error: 'Cannot change student or instructor on an existing booking' });
     }
     if (!isAdmin && rescheduleRequested) {
       if (b.status !== 'confirmed' && !(isAssignedInstructor && isHistoricalBooking)) {
-        return res.status(400).json({ error: 'Only confirmed bookings can be rescheduled' });
+        return abortTransaction(400, { error: 'Only confirmed bookings can be rescheduled' });
       }
     }
-    if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status && !isAdmin) return abortTransaction(403, { error: 'Only admins can change booking status' });
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
-    const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
-    const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
-    const stTime = new Date(stIso);
-    const enTime = new Date(etIso);
-    if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return res.status(400).json({ error: 'Invalid date format' });
-    if (enTime <= stTime) return res.status(400).json({ error: 'End time must be after start time' });
+    const stTime = new Date(start_time !== undefined ? start_time : b.start_time);
+    const enTime = new Date(end_time !== undefined ? end_time : b.end_time);
+    if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return abortTransaction(400, { error: 'Invalid date format' });
+    const stIso = stTime.toISOString();
+    const etIso = enTime.toISOString();
+    if (enTime <= stTime) return abortTransaction(400, { error: 'End time must be after start time' });
     // Duration cap on updates
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
-    if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
+    if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return abortTransaction(400, { error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
     const nextStatus = status !== undefined && status !== null && status !== '' ? status : b.status;
     const statusChanged = nextStatus !== b.status;
+    if (statusChanged) {
+      return abortTransaction(400, {
+        error: 'Booking status changes must use the complete or cancel workflow.',
+      });
+    }
     const statusForUpdate = status !== undefined ? nextStatus : null;
     const isDiscovery = isDiscoveryLessonType(effectiveLessonType);
     const policy = await getPolicySettings();
@@ -896,12 +917,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       skipDiscoveryDurationCheck: !isDiscovery && isStaffHistoricalEdit,
       skipPastTimeCheck: isStaffHistoricalEdit,
     });
-    if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
+    if (timeCheck.errors.length) return abortTransaction(400, { error: timeCheck.errors[0], errors: timeCheck.errors });
     // Downtime check on updates — time-aware overlap (staff may override past maintenance windows)
     if (acId && !isStaffHistoricalEdit) {
       const downtimeHit = await findOverlappingDowntime(client, acId, stIso, etIso);
       if (downtimeHit) {
-        return res.status(409).json({ error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
+        return abortTransaction(409, { error: 'Aircraft is scheduled for maintenance during this period', reason: downtimeHit.reason });
       }
     }
     const scheduleChanged = acId !== b.aircraft_id
@@ -911,40 +932,36 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || etIso !== new Date(b.end_time).toISOString();
     const needsConflictCheck = shouldRunUpdateConflictCheck({ scheduleChanged, statusChanged, nextStatus });
     if (needsConflictCheck) {
-      await client.query('BEGIN');
-      try {
-        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-        if (conflicts.length > 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
-        }
-        const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
-        let booking_type = await deriveBookingType(client, sid, iid);
-        if (isAdmin && req.body.booking_type) {
-          const allowed = ['dual', 'student_solo', 'renter_solo', 'instructor_solo'];
-          if (allowed.includes(req.body.booking_type)) booking_type = req.body.booking_type;
-        }
-        const result = await client.query(
-          `UPDATE bookings SET student_id = $1, instructor_id = $2, aircraft_id = $3,
-           start_time = $4, end_time = $5, lesson_type = COALESCE($6, lesson_type),
-           notes = COALESCE($7, notes), status = COALESCE($8, status),
-           booking_type = $9,
-           reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
-           updated_at = NOW()
-           WHERE id = $10 RETURNING *`,
-          [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId]
-        );
-        const updated = result.rows[0];
-        await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
-        await client.query('COMMIT');
-        return res.json(updated);
-      } catch (err) {
-        await client.query('ROLLBACK');
-        throw err;
+      await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+      const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+      if (conflicts.length > 0) {
+        return abortTransaction(409, { error: 'Scheduling conflict', conflicts });
       }
+      const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
+      let booking_type = await deriveBookingType(client, sid, iid);
+      if (isAdmin && req.body.booking_type) {
+        const allowed = ['dual', 'student_solo', 'renter_solo', 'instructor_solo'];
+        if (allowed.includes(req.body.booking_type)) booking_type = req.body.booking_type;
+      }
+      const result = await client.query(
+        `UPDATE bookings SET student_id = $1, instructor_id = $2, aircraft_id = $3,
+         start_time = $4, end_time = $5, lesson_type = COALESCE($6, lesson_type),
+         notes = COALESCE($7, notes), status = COALESCE($8, status),
+         booking_type = $9,
+         reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
+         updated_at = NOW()
+         WHERE id = $10 AND status = $11 RETURNING *`,
+        [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId, b.status]
+      );
+      if (result.rows.length === 0) {
+        return abortTransaction(409, { error: 'Booking changed while you were editing. Reload the booking and try again.' });
+      }
+      const updated = result.rows[0];
+      await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return res.json(updated);
     }
-    await client.query('BEGIN');
     // Metadata-only updates (lesson type, notes) — no conflict check needed
     const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
     let booking_type = await deriveBookingType(client, sid, iid);
@@ -959,15 +976,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
        booking_type = $9,
        reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
        updated_at = NOW()
-       WHERE id = $10 RETURNING *`,
-      [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId]
+     WHERE id = $10 AND status = $11 RETURNING *`,
+      [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId, b.status]
     );
+    if (result.rows.length === 0) {
+      return abortTransaction(409, { error: 'Booking changed while you were editing. Reload the booking and try again.' });
+    }
     const updated = result.rows[0];
     await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
     await client.query('COMMIT');
+    transactionStarted = false;
     res.json(updated);
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (transactionStarted) await client.query('ROLLBACK').catch(() => {});
     const ts = new Date().toISOString();
     console.error(`[bookings] [${ts}] PUT /:id — user=${req.user?.id} error: ${err.message}`);
     res.status(500).json({ code: 'UPDATE_ERROR', message: 'Booking temporarily unavailable, please try again.' });

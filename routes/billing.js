@@ -252,7 +252,7 @@ router.put('/flights/:bookingId', authenticateToken, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Billing flight update error:', err);
-    res.status(500).json({ error: err.message || 'Failed to update billing entry' });
+    res.status(err.status || 500).json({ error: err.message || 'Failed to update billing entry' });
   } finally {
     client.release();
   }

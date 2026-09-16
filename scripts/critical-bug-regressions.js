@@ -27,7 +27,7 @@ const { EMAIL_TYPES, isRequiredEmailType } = require('../lib/email-types');
 const { getPreferenceCatalog, appendUnsubscribeFooter } = require('../lib/notification-prefs');
 const { signUnsubscribeToken, verifyUnsubscribeToken, buildUnsubscribeUrl } = require('../lib/unsubscribe-token');
 const { rowToPrefs, WRITABLE_PREF_COLUMNS } = require('../db/notification-prefs');
-const { shiftBookingTimesToFlightDate } = require('../lib/sync-flight-record');
+const { syncFlightRecord, shiftBookingTimesToFlightDate } = require('../lib/sync-flight-record');
 const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
@@ -239,6 +239,81 @@ function testNewCriticalSourceGuards() {
   );
 }
 
+function testBookingUpdateStatusRaceGuards() {
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const routeStart = bookingsSrc.indexOf("router.put('/:id'");
+  const routeEnd = bookingsSrc.indexOf("router.delete('/:id'", routeStart);
+  assert(routeStart >= 0 && routeEnd > routeStart, 'booking update route not found');
+  const routeSrc = bookingsSrc.slice(routeStart, routeEnd);
+  assert(routeSrc.includes('SELECT * FROM bookings WHERE id = $1 FOR UPDATE'), 'booking update must lock the booking row before validation');
+  assert(routeSrc.includes('expected_status'), 'booking update must reject stale edit forms');
+  assert(routeSrc.includes('Booking status changes must use the complete or cancel workflow'), 'generic booking update must not rewrite status');
+  assert(/WHERE id = \$10 AND status = \$11 RETURNING \*/.test(routeSrc), 'booking update must guard UPDATE with locked status');
+
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert(appSrc.includes('payload.expected_status = bookingEditStatus'), 'booking edit payload must include expected_status');
+}
+
+function testCompletionNoChangeAuthorizationGuard() {
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  const routeStart = completionSrc.indexOf("router.patch('/:id/complete'");
+  const routeEnd = completionSrc.indexOf("router.get('/:id'", routeStart);
+  assert(routeStart >= 0 && routeEnd > routeStart, 'completion route not found');
+  const routeSrc = completionSrc.slice(routeStart, routeEnd);
+  assert(
+    routeSrc.includes('if (!isAdmin)') && routeSrc.includes('Only owners and admins can complete without meter readings'),
+    'no_change completion must be limited to owner/admin corrections'
+  );
+}
+
+async function testSyncFlightRecordStrictNumbers() {
+  const makeClient = () => ({
+    async query(sql) {
+      if (sql.includes('SELECT * FROM bookings WHERE id = $1')) {
+        return { rows: [{
+          id: 1,
+          status: 'completed',
+          student_id: 4,
+          instructor_id: null,
+          aircraft_id: null,
+          booking_type: 'student_solo',
+          start_time: '2026-08-01T18:30:00.000Z',
+          end_time: '2026-08-01T20:00:00.000Z',
+          hobbs_start: 10,
+          hobbs_end: 11,
+          tach_start: null,
+          tach_end: null,
+        }] };
+      }
+      if (sql.includes('SELECT * FROM flight_logs WHERE booking_id = $1')) return { rows: [] };
+      throw new Error(`Unexpected query before validation: ${sql}`);
+    },
+  });
+
+  await assert.rejects(
+    () => syncFlightRecord(makeClient(), 1, { hobbs_start: '10abc', hobbs_end: '12' }),
+    (err) => err.status === 400 && /hobbs_start must be a valid number/.test(err.message)
+  );
+  await assert.rejects(
+    () => syncFlightRecord(makeClient(), 1, { hobbs_start: '12', hobbs_end: '11' }),
+    (err) => err.status === 400 && /hobbs_end must be greater/.test(err.message)
+  );
+  await assert.rejects(
+    () => syncFlightRecord(makeClient(), 1, { tach_start: '10' }),
+    (err) => err.status === 400 && /tach_start and tach_end are required together/.test(err.message)
+  );
+}
+
+function testHistoryGroundDeleteRoute() {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert(
+    appSrc.includes("confirmDeleteHistoryEntry(${r.id}, '${dateStr}', '${isGround ? 'ground' : 'flight'}')"),
+    'history table delete must pass row type'
+  );
+  assert(appSrc.includes("'/api/booking-history/ground-sessions/' + id"), 'ground history delete must call ground-sessions endpoint');
+  assert(appSrc.includes("'/api/booking-history/flights/' + id"), 'flight history delete must still call flights endpoint');
+}
+
 async function testHistoryDeleteMeterRollbackHelper() {
   const updates = [];
   const makeClient = (aircraft) => ({
@@ -304,6 +379,10 @@ async function main() {
   testFollowUpSecuritySourceGuards();
   testCompletionUsesLockedBookingRow();
   testNewCriticalSourceGuards();
+  testBookingUpdateStatusRaceGuards();
+  testCompletionNoChangeAuthorizationGuard();
+  await testSyncFlightRecordStrictNumbers();
+  testHistoryGroundDeleteRoute();
   await testHistoryDeleteMeterRollbackHelper();
   console.log('critical bug regressions passed');
 }

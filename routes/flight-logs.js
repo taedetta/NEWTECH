@@ -85,7 +85,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Flight log update error:', err);
-    res.status(500).json({ error: err.message || 'Failed to update flight log entry' });
+    res.status(err.status || 500).json({ error: err.message || 'Failed to update flight log entry' });
   } finally {
     client.release();
   }

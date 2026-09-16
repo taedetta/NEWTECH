@@ -11033,6 +11033,7 @@ document.getElementById('booking-form').addEventListener('submit', async (e) => 
     lesson_type: document.getElementById('booking-lesson-type').value || null,
     notes: document.getElementById('booking-notes').value || null,
   };
+  if (bookingEditId && bookingEditStatus) payload.expected_status = bookingEditStatus;
 
   try {
     const isRecurring = document.getElementById('booking-recurring')?.checked;
@@ -16377,7 +16378,7 @@ async function loadHistoryLegacyPage() {
         ? `<td style="white-space:nowrap">${isGround
           ? `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})">✏</button>`
           : `<button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditBookingModal(${r.id})" title="Edit full booking">Booking</button><button class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:2px 7px;margin-right:3px" onclick="openEditHistoryModal(${r.id})" title="Edit hours/charges">Hours</button>`
-        }${canDeleteHistory ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}')">🗑</button>` : ''}</td>`
+        }${canDeleteHistory ? `<button class="btn btn-sm" style="font-size:0.72rem;padding:2px 7px;background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.2)" onclick="confirmDeleteHistoryEntry(${r.id}, '${dateStr}', '${isGround ? 'ground' : 'flight'}')">🗑</button>` : ''}</td>`
         : '';
       return `<tr>
         <td style="white-space:nowrap">${dateStr}</td>
@@ -16426,7 +16427,7 @@ function renderHistoryCard(r, canEditHistory, canDeleteHistory, fmtVal, fmtDolla
         ? '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit</button>'
         : '<button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(' + r.id + ')">Edit Booking</button>' +
           '<button class="btn btn-secondary btn-sm" onclick="openEditHistoryModal(' + r.id + ')">Edit Hours</button>') +
-      (canDeleteHistory ? '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\')">Delete</button>' : '') +
+      (canDeleteHistory ? '<button class="btn btn-danger btn-sm" onclick="confirmDeleteHistoryEntry(' + r.id + ', \'' + dateStr + '\', \'' + (isGround ? 'ground' : 'flight') + '\')">Delete</button>' : '') +
       '</div>'
     : '';
   var cancelNote = (r.status === 'cancelled' && r.cancellation_reason)
@@ -16586,11 +16587,15 @@ async function saveEditHistory() {
   }
 }
 
-async function confirmDeleteHistoryEntry(id, dateStr) {
-  if (!confirm('Delete this booking record from ' + dateStr + '? This cannot be undone.')) return;
+async function confirmDeleteHistoryEntry(id, dateStr, sessionType) {
+  const isGround = sessionType === 'ground';
+  if (!confirm('Delete this ' + (isGround ? 'ground session' : 'booking record') + ' from ' + dateStr + '? This cannot be undone.')) return;
   try {
-    await api('/api/booking-history/flights/' + id, { method: 'DELETE' });
-    showToast('Booking record deleted', 'success');
+    const endpoint = isGround
+      ? '/api/booking-history/ground-sessions/' + id
+      : '/api/booking-history/flights/' + id;
+    await api(endpoint, { method: 'DELETE' });
+    showToast(isGround ? 'Ground session deleted' : 'Booking record deleted', 'success');
     await loadHistoryLegacyPage();
   } catch(e) {
     showToast(e.error || 'Failed to delete record', 'error');

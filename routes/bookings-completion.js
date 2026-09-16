@@ -222,8 +222,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       }
     }
 
-    // "No change" bypass — mark complete without recording hours or updating totals
+    // "No change" bypass is an administrative correction only. Pilots must
+    // enter meter readings so logs, billing, and cumulative totals stay aligned.
     if (no_change) {
+      if (!isAdmin) {
+        return abortTransaction(403, { error: 'Only owners and admins can complete without meter readings' });
+      }
       const finishedEnd = completionEndTime(b);
       await client.query(
         `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
