@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { canEditHistoricalBooking } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -842,6 +843,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
     const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
+    if (!canEditHistoricalBooking(req.user, b)) {
+      return res.status(403).json({ error: 'Only owners, admins, or the assigned instructor can edit completed or cancelled bookings' });
+    }
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
