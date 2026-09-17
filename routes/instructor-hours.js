@@ -12,6 +12,7 @@ const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 const { inferLessonType } = require('../lib/booking-rules');
+const { resolveInstructorHoursRates } = require('../lib/instructor-hours-edits');
 
 const router = express.Router();
 
@@ -210,6 +211,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const row = existing.rows[0];
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const { aircraftRate: aircraftRateVal, instructorRate: instructorRateVal } = resolveInstructorHoursRates({
+      role,
+      row,
+      body: { aircraft_rate, instructor_rate },
+    });
     const newDate = entry_date || row.entry_date;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
@@ -228,8 +234,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraftRateVal,
+       instructorRateVal,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );

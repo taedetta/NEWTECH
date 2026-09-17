@@ -28,7 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
-const { canEditHistoricalBooking } = require('../lib/booking-status');
+const { canEditHistoricalBooking, shouldSyncCompletedBookingSideEffects } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -846,6 +846,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (!canEditHistoricalBooking(req.user, b)) {
       return res.status(403).json({ error: 'Only owners, admins, or the assigned instructor can edit completed or cancelled bookings' });
     }
+    if (isHistoricalBooking && !isAdmin && lesson_type !== undefined) {
+      return res.status(403).json({ error: 'Only admins can change the lesson type on completed or cancelled bookings' });
+    }
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
@@ -919,7 +922,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
           [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
         );
         const updated = result.rows[0];
-        await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+        if (shouldSyncCompletedBookingSideEffects({
+          nextStatus: updated.status,
+          scheduleChanged,
+          lessonTypeChanged: lesson_type !== undefined,
+          statusChanged: status !== undefined,
+          bookingTypeChanged: req.body.booking_type !== undefined,
+        })) {
+          await syncCompletedBookingSideEffects(client, updated, lesson_type !== undefined ? { lesson_type: effectiveLessonType } : {});
+        }
         await client.query('COMMIT');
         return res.json(updated);
       } catch (err) {
@@ -946,7 +957,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
       [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
     );
     const updated = result.rows[0];
-    await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+    if (shouldSyncCompletedBookingSideEffects({
+      nextStatus: updated.status,
+      scheduleChanged,
+      lessonTypeChanged: lesson_type !== undefined,
+      statusChanged: status !== undefined,
+      bookingTypeChanged: req.body.booking_type !== undefined,
+    })) {
+      await syncCompletedBookingSideEffects(client, updated, lesson_type !== undefined ? { lesson_type: effectiveLessonType } : {});
+    }
     await client.query('COMMIT');
     res.json(updated);
   } catch (err) {
