@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { isRequiredEmailType } = require('../lib/email-types');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -22,7 +23,8 @@ const DEFAULT_PREFS = {
 
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
 
-const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
+const TYPE_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
+const UPDATABLE_PREF_COLUMNS = PREF_COLUMNS.filter((c) => c === 'email_all_off' || !isRequiredEmailType(c));
 
 let schemaPromise = null;
 
@@ -50,7 +52,7 @@ async function ensureEmailPrefsSchema(db = pool) {
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
       `);
-      for (const col of OPTIONAL_BOOL_COLUMNS) {
+      for (const col of TYPE_COLUMNS) {
         await db.query(
           `ALTER TABLE user_email_preferences ADD COLUMN IF NOT EXISTS ${col} BOOLEAN NOT NULL DEFAULT TRUE`
         );
@@ -67,6 +69,10 @@ function rowToPrefs(row) {
   if (!row) return { ...DEFAULT_PREFS };
   const out = {};
   for (const col of PREF_COLUMNS) {
+    if (isRequiredEmailType(col)) {
+      out[col] = true;
+      continue;
+    }
     out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
   }
   return out;
@@ -96,7 +102,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const sets = [];
   const vals = [];
   let i = 1;
-  for (const col of PREF_COLUMNS) {
+  for (const col of UPDATABLE_PREF_COLUMNS) {
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
