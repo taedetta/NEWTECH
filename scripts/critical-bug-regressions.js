@@ -31,7 +31,7 @@ const { syncFlightRecord, shiftBookingTimesToFlightDate } = require('../lib/sync
 const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
-const { rollbackAircraftMeterForDeletedBooking } = require('../lib/aircraft-meter');
+const { applyAircraftMeterReadings, rollbackAircraftMeterForDeletedBooking } = require('../lib/aircraft-meter');
 
 function testRequiredEmailPreferences() {
   assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
@@ -368,6 +368,38 @@ async function testHistoryDeleteMeterRollbackHelper() {
   assert.strictEqual(updates.length, 0, 'deleting older history must not roll back later meter readings');
 }
 
+async function testApplyMeterReadingsLocksAircraftRow() {
+  const queries = [];
+  const makeClient = (aircraft) => ({
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE')) {
+        return { rows: [aircraft] };
+      }
+      if (sql.startsWith('UPDATE aircraft SET')) return { rows: [] };
+      if (sql.startsWith('INSERT INTO aircraft_hours_history')) return { rows: [] };
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  });
+
+  await applyAircraftMeterReadings(makeClient({
+    current_hobbs: 120,
+    current_tach: 80,
+    total_hobbs_hours: 120,
+    total_tach_hours: 80,
+  }), 7, {
+    hobbsEnd: 121,
+    tachEnd: 81,
+    bookingId: 42,
+    source: 'critical_regression',
+  });
+
+  assert(
+    queries[0]?.sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE'),
+    'applying aircraft meter readings must lock the aircraft row before computing next meter values'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -384,6 +416,7 @@ async function main() {
   await testSyncFlightRecordStrictNumbers();
   testHistoryGroundDeleteRoute();
   await testHistoryDeleteMeterRollbackHelper();
+  await testApplyMeterReadingsLocksAircraftRow();
   console.log('critical bug regressions passed');
 }
 
