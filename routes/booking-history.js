@@ -369,7 +369,7 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
       const b = locked.rows[0];
       const logResult = await client.query('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [bookingId]);
       const log = logResult.rows[0] || null;
-      if (b.status === 'completed' && !b.billing_voided) {
+      if (b.status === 'completed') {
         const hobbsDelta = log?.hobbs_delta != null
           ? parseFloat(log.hobbs_delta)
           : ((b.hobbs_end != null && b.hobbs_start != null) ? parseFloat(b.hobbs_end) - parseFloat(b.hobbs_start) : 0);
@@ -379,13 +379,19 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
         if (hobbsDelta !== 0 || tachDelta !== 0) {
           if (b.student_id) {
             await client.query(
-              `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
+              `UPDATE users SET
+                 total_hobbs_hours = COALESCE(total_hobbs_hours, 0) - $1,
+                 total_tach_hours = COALESCE(total_tach_hours, 0) - $2
+               WHERE id = $3`,
               [hobbsDelta, tachDelta, b.student_id]
             );
           }
           if (b.instructor_id) {
             await client.query(
-              `UPDATE users SET total_hobbs_hours = total_hobbs_hours - $1, total_tach_hours = total_tach_hours - $2 WHERE id = $3`,
+              `UPDATE users SET
+                 total_hobbs_hours = COALESCE(total_hobbs_hours, 0) - $1,
+                 total_tach_hours = COALESCE(total_tach_hours, 0) - $2
+               WHERE id = $3`,
               [hobbsDelta, tachDelta, b.instructor_id]
             );
           }

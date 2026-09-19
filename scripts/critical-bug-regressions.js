@@ -31,7 +31,11 @@ const { syncFlightRecord, shiftBookingTimesToFlightDate } = require('../lib/sync
 const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
-const { applyAircraftMeterReadings, rollbackAircraftMeterForDeletedBooking } = require('../lib/aircraft-meter');
+const {
+  applyAircraftMeterReadings,
+  reconcileAircraftMeterForFlightEdit,
+  rollbackAircraftMeterForDeletedBooking,
+} = require('../lib/aircraft-meter');
 
 function testRequiredEmailPreferences() {
   assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
@@ -400,6 +404,98 @@ async function testApplyMeterReadingsLocksAircraftRow() {
   );
 }
 
+function testSyncFlightRecordLocksRowsAndReconcilesMeters() {
+  const syncSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-flight-record.js'), 'utf8');
+  assert(
+    syncSrc.includes('SELECT * FROM bookings WHERE id = $1 FOR UPDATE'),
+    'syncFlightRecord must lock booking row before reading old hour totals'
+  );
+  assert(
+    syncSrc.includes('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE'),
+    'syncFlightRecord must lock flight log row before adjusting cumulative hours'
+  );
+  assert(
+    syncSrc.includes('reconcileAircraftMeterForFlightEdit')
+      && syncSrc.indexOf('await reconcileAircraftMeterForFlightEdit') < syncSrc.indexOf('await applyAircraftMeterReadings'),
+    'syncFlightRecord must reconcile downward aircraft meter corrections before applying readings'
+  );
+}
+
+async function testMeterDecreaseEditRollsBackCurrentAircraftMeter() {
+  const updates = [];
+  const inserts = [];
+  const makeClient = () => ({
+    async query(sql, params) {
+      if (sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE')) {
+        return { rows: [{
+          current_hobbs: 101,
+          current_tach: 51,
+          total_hobbs_hours: 101,
+          total_tach_hours: 51,
+        }] };
+      }
+      if (sql.includes('MAX(new_value)')) return { rows: [{ max_value: null }] };
+      if (sql.includes('MAX(hobbs_end)') || sql.includes('MAX(tach_end)')) return { rows: [{ max_value: null }] };
+      if (sql.startsWith('INSERT INTO aircraft_hours_history')) {
+        inserts.push({ sql, params });
+        return { rows: [] };
+      }
+      if (sql.startsWith('UPDATE aircraft SET')) {
+        updates.push({ sql, params });
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  });
+
+  await reconcileAircraftMeterForFlightEdit(makeClient(), 7, 42, {
+    oldHobbsEnd: 101,
+    oldTachEnd: 51,
+    newHobbsEnd: 100.5,
+    newTachEnd: 50.5,
+    source: 'critical_regression',
+  });
+
+  assert.deepStrictEqual(updates[0].params, [100.5, 50.5, 7]);
+  assert.strictEqual(inserts.length, 2, 'meter decrease corrections should be audit logged');
+}
+
+function testHistoryDeleteReversesVoidedCompletedHours() {
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  assert(
+    !historySrc.includes("b.status === 'completed' && !b.billing_voided"),
+    'history delete must reverse cumulative user hours even after billing is voided'
+  );
+  assert(
+    historySrc.includes('total_hobbs_hours = COALESCE(total_hobbs_hours, 0) - $1')
+      && historySrc.includes('total_tach_hours = COALESCE(total_tach_hours, 0) - $2'),
+    'history delete user-hour reversal must tolerate null cumulative fields'
+  );
+}
+
+function testSquawkFullEditRoute() {
+  const maintenanceSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'maintenance.js'), 'utf8');
+  assert(
+    maintenanceSrc.includes("router.put('/squawks/:id'"),
+    'squawk edit modal must have a backend PUT route'
+  );
+  assert(
+    maintenanceSrc.includes('aircraft_id = $1')
+      && maintenanceSrc.includes('severity = $2')
+      && maintenanceSrc.includes('status = $3')
+      && maintenanceSrc.includes('description = $4')
+      && maintenanceSrc.includes('expected_downtime = $5'),
+    'squawk full edit route must persist the fields sent by the frontend edit form'
+  );
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert(
+    appSrc.includes("method: 'PUT'")
+      && appSrc.includes('expected_downtime')
+      && appSrc.includes('resolution_notes'),
+    'squawk edit frontend must send the full edit payload'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -417,6 +513,10 @@ async function main() {
   testHistoryGroundDeleteRoute();
   await testHistoryDeleteMeterRollbackHelper();
   await testApplyMeterReadingsLocksAircraftRow();
+  testSyncFlightRecordLocksRowsAndReconcilesMeters();
+  await testMeterDecreaseEditRollsBackCurrentAircraftMeter();
+  testHistoryDeleteReversesVoidedCompletedHours();
+  testSquawkFullEditRoute();
   console.log('critical bug regressions passed');
 }
 

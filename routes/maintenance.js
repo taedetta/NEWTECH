@@ -7,6 +7,10 @@ const { sendEmail } = require('../email-templates');
 
 const router = express.Router();
 
+const VALID_SQUAWK_STATUSES = ['open', 'reviewed', 'deferred', 'resolved'];
+const VALID_SQUAWK_SEVERITIES = ['minor', 'major', 'grounding'];
+const VALID_SQUAWK_DOWNTIMES = ['1 day', '2 days', '3 days', '4 days', '5 days', '1 week', '2 weeks', 'Unknown/TBD'];
+
 router.get('/squawks', authenticateToken, async (req, res) => {
   try {
     const { aircraft_id, status } = req.query;
@@ -36,9 +40,8 @@ router.post('/squawks', authenticateToken, async (req, res) => {
   try {
     const { aircraft_id, description, severity, expected_downtime } = req.body;
     if (!aircraft_id || !description) return res.status(400).json({ error: 'Aircraft and description are required' });
-    const validSeverity = ['minor', 'major', 'grounding'].includes(severity) ? severity : 'minor';
-    const validDowntimes = ['1 day', '2 days', '3 days', '4 days', '5 days', '1 week', '2 weeks', 'Unknown/TBD'];
-    const downtimeValue = (expected_downtime && validDowntimes.includes(expected_downtime)) ? expected_downtime : null;
+    const validSeverity = VALID_SQUAWK_SEVERITIES.includes(severity) ? severity : 'minor';
+    const downtimeValue = (expected_downtime && VALID_SQUAWK_DOWNTIMES.includes(expected_downtime)) ? expected_downtime : null;
     const result = await pool.query(
       `INSERT INTO squawks (aircraft_id, reported_by, description, severity, expected_downtime) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [aircraft_id, req.user.id, description, validSeverity, downtimeValue]
@@ -78,11 +81,56 @@ router.post('/squawks', authenticateToken, async (req, res) => {
   }
 });
 
+router.put('/squawks/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
+  try {
+    const { aircraft_id, severity, status, description, expected_downtime, resolution_notes } = req.body;
+    const aircraftId = parseInt(aircraft_id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Aircraft is required' });
+    if (!description || !String(description).trim()) return res.status(400).json({ error: 'Description is required' });
+    if (severity && !VALID_SQUAWK_SEVERITIES.includes(severity)) return res.status(400).json({ error: 'Invalid severity' });
+    if (status && !VALID_SQUAWK_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    const downtimeValue = expected_downtime && VALID_SQUAWK_DOWNTIMES.includes(expected_downtime) ? expected_downtime : null;
+
+    const existing = await pool.query('SELECT id FROM squawks WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Squawk not found' });
+    const aircraft = await pool.query('SELECT id FROM aircraft WHERE id = $1', [aircraftId]);
+    if (aircraft.rows.length === 0) return res.status(400).json({ error: 'Aircraft not found' });
+
+    const result = await pool.query(
+      `UPDATE squawks SET
+         aircraft_id = $1,
+         severity = $2,
+         status = $3,
+         description = $4,
+         expected_downtime = $5,
+         resolution_notes = $6,
+         reviewed_by = CASE WHEN $3 != 'open' THEN $7 ELSE reviewed_by END,
+         reviewed_at = CASE WHEN $3 != 'open' THEN COALESCE(reviewed_at, NOW()) ELSE reviewed_at END,
+         updated_at = NOW()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        aircraftId,
+        severity || 'minor',
+        status || 'open',
+        String(description).trim(),
+        downtimeValue,
+        resolution_notes || null,
+        req.user.id,
+        req.params.id,
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Squawk edit error:', err);
+    res.status(500).json({ error: 'Failed to edit squawk' });
+  }
+});
+
 router.patch('/squawks/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { status, resolution_notes } = req.body;
-    const validStatuses = ['open', 'reviewed', 'deferred', 'resolved'];
-    if (status && !validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    if (status && !VALID_SQUAWK_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
     const existing = await pool.query('SELECT * FROM squawks WHERE id = $1', [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Squawk not found' });
     const result = await pool.query(
