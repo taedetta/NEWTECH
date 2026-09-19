@@ -766,8 +766,12 @@ router.post('/', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
-    const selfService = ['student', 'renter', 'instructor'].includes(req.user.role);
-    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+    const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+    if (forceBooking && !['owner', 'admin'].includes(req.user.role)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only owners and admins can override instructor availability' });
+    }
+    if (iid && !forceBooking) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
       if (!availCheck.available) {
@@ -854,6 +858,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     if (status && !isAdmin) return res.status(403).json({ error: 'Only admins can change booking status' });
+    if (status && b.status === 'completed' && status !== 'completed') {
+      return res.status(400).json({ error: 'Completed bookings cannot be reopened through schedule editing' });
+    }
+    if (status && b.status === 'cancelled' && status !== 'cancelled') {
+      return res.status(400).json({ error: 'Cancelled bookings cannot be reopened through schedule editing' });
+    }
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
     const stIso = new Date(start_time !== undefined ? start_time : b.start_time).toISOString();
     const etIso = new Date(end_time !== undefined ? end_time : b.end_time).toISOString();
@@ -958,21 +968,39 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
-    if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    if (!canAccessBooking(req.user, b)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (b.status === 'completed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    }
     const policy = await getPolicySettings();
     const cancelCheck = validateCancellation({ bookingStart: b.start_time, userRole: req.user.role, isAdmin, policy });
-    if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
+    if (!cancelCheck.allowed) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: cancelCheck.error });
+    }
     const reason = req.body?.reason || null;
-    await client.query('BEGIN');
-    await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
+    const updated = await client.query(
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW()
+       WHERE id = $2 AND status != 'completed'
+       RETURNING id`,
       [reason, req.params.id]
     );
+    if (updated.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Booking was changed by another request' });
+    }
     await client.query('COMMIT');
     res.json({ ok: true });
 

@@ -85,6 +85,64 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+// 7. Critical beta regression guards
+console.log('\n=== Critical beta guards ===');
+const authMiddlewareSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+if (!authMiddlewareSrc.includes('FROM users') || !authMiddlewareSrc.includes('approval_status')) {
+  fail('authenticateToken does not revalidate JWT users against DB status');
+} else ok('JWT users revalidated from DB');
+if (!authMiddlewareSrc.includes("req.user.role === 'maintenance'") || !authMiddlewareSrc.includes("permKey === 'can_manage_aircraft'")) {
+  fail('maintenance role can bypass non-aircraft permission checks');
+} else ok('maintenance role limited to aircraft permission bypass');
+
+const authRoutesSrc = fs.readFileSync(path.join(root, 'routes/auth.js'), 'utf8');
+if (authRoutesSrc.includes('deleted_at = NULL, updated_at = NOW() WHERE id = $2')) {
+  fail('reset-password still reactivates deleted accounts');
+} else ok('password reset does not reactivate deleted accounts');
+if (authRoutesSrc.includes('Reactivate soft-deleted account on successful login')) {
+  fail('login still reactivates soft-deleted accounts');
+} else ok('login does not reactivate deleted/rejected accounts');
+
+const bookingCompletionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!bookingCompletionSrc.includes('FOR UPDATE')) fail('booking completion/end-early missing row locks');
+else ok('booking completion/end-early row locks present');
+if (!bookingCompletionSrc.includes("WHERE id = $6 AND status = 'confirmed'")) {
+  fail('booking completion update is not status-guarded');
+} else ok('booking completion update status-guarded');
+
+const bookingsSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
+if (!bookingsSrc.includes('Only owners and admins can override instructor availability')) {
+  fail('force booking override lacks server-side owner/admin guard');
+} else ok('force booking override server-guarded');
+if (!bookingsSrc.includes('FOR UPDATE') || !bookingsSrc.includes("status != 'completed'")) {
+  fail('booking cancellation missing lock/status guard');
+} else ok('booking cancellation lock/status guard present');
+
+const aircraftSrc = fs.readFileSync(path.join(root, 'routes/aircraft.js'), 'utf8');
+if (!aircraftSrc.includes('parseMeterValue') || aircraftSrc.includes('parseFloat(hobbs)')) {
+  fail('manual aircraft meter update lacks strict numeric validation');
+} else ok('manual aircraft meter update strictly validates numbers');
+if (!aircraftSrc.includes('Status must be "available" or "maintenance"')) {
+  fail('aircraft status update lacks validation');
+} else ok('aircraft status update validates allowed values');
+
+const maintenanceSrc = fs.readFileSync(path.join(root, 'routes/maintenance.js'), 'utf8');
+if (!maintenanceSrc.includes("router.put('/squawks/:id'")) {
+  fail('squawk full edit PUT route missing');
+} else ok('squawk full edit PUT route present');
+
+const cmsSrc = fs.readFileSync(path.join(root, 'routes/cms.js'), 'utf8');
+if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
+  fail('website editor image upload route missing');
+} else ok('website editor image upload route present');
+
+if (appHtml.includes('/api/admin/training/programs') || appHtml.includes('/api/admin/training/stages') || appHtml.includes('/api/admin/training/maneuvers')) {
+  fail('Programs admin frontend still uses stale admin training paths');
+} else ok('Programs admin frontend uses mounted admin training paths');
+if (appHtml.includes('function downloadSourceCode()') || appHtml.match(/id=(?:&quot;|")download-source-btn/g)) {
+  fail('source download button/function still duplicated');
+} else ok('source download buttons/functions are distinct');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');

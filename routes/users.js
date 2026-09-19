@@ -374,6 +374,7 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
       return res.status(403).json({ error: 'Only owners and admins can change user roles' });
     }
+    const requesterRole = requester.rows[0].role;
     const targetId = parseInt(req.params.id, 10);
     if (!Number.isFinite(targetId)) {
       return res.status(400).json({ error: 'Invalid user id' });
@@ -396,6 +397,12 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     }
     if (target.role === role) {
       return res.json({ ok: true, id: targetId, role, unchanged: true });
+    }
+    if (role === 'owner' && requesterRole !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can grant owner access' });
+    }
+    if (target.role === 'owner' && role !== 'owner' && requesterRole !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can revoke owner access' });
     }
     // Protect last owner
     if (target.role === 'owner' && role !== 'owner') {

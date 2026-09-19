@@ -111,6 +111,41 @@ router.put('/site-content', authenticateToken, requirePermission('can_edit_websi
   }
 });
 
+router.post('/site-content/upload-image', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
+  try {
+    const { filename, base64, mimeType } = req.body || {};
+    if (!base64 || typeof base64 !== 'string') return res.status(400).json({ error: 'Image data is required' });
+    const safeMime = typeof mimeType === 'string' && /^image\/(png|jpe?g|gif|webp|svg\+xml)$/i.test(mimeType)
+      ? mimeType.toLowerCase()
+      : null;
+    if (!safeMime) return res.status(400).json({ error: 'Unsupported image type' });
+    const data = base64.includes(',') ? base64.split(',').pop() : base64;
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(data)) return res.status(400).json({ error: 'Invalid image data' });
+    const compact = data.replace(/\s/g, '');
+    const buffer = Buffer.from(compact, 'base64');
+    if (!buffer.length) return res.status(400).json({ error: 'Invalid image data' });
+    if (buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: 'Image too large (max 3MB)' });
+    const safeName = String(filename || 'image')
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'image';
+    const key = `editor_upload_${Date.now()}_${safeName}`;
+    const dataUri = `data:${safeMime};base64,${compact}`;
+    await pool.query(
+      `INSERT INTO site_content (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      [key, dataUri]
+    );
+    invalidateCmsCache();
+    res.status(201).json({ key, url: `/api/site-content/image/${encodeURIComponent(key)}` });
+  } catch (err) {
+    console.error('Site content image upload error:', err);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
 router.get('/project-files', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {
     const projectRoot = path.join(__dirname, '..');
