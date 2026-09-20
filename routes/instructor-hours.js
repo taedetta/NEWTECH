@@ -154,7 +154,9 @@ router.post('/', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Students cannot access instructor hours' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const { start_date, end_date, aircraft_id, instructor_id } = req.query;
     const conditions = [];
     const params = [];

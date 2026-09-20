@@ -41,8 +41,9 @@ function instrChargeExpr() {
 
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
-    if (req.user.role === 'renter') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     let extra = '';
     const params = [];
     if (req.user.role === 'instructor') {

@@ -208,7 +208,8 @@ function testNewCriticalSourceGuards() {
   assert(
     aircraftSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE')
       && aircraftSrc.includes('hobbs cannot be less than current aircraft reading')
-      && aircraftSrc.includes('tach cannot be less than current aircraft reading'),
+      && aircraftSrc.includes('tach cannot be less than current aircraft reading')
+      && aircraftSrc.includes("router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft')"),
     'manual aircraft meter edits must lock and reject rollbacks'
   );
 
@@ -240,6 +241,79 @@ function testNewCriticalSourceGuards() {
     /async function sendLeadFollowUp[\s\S]+catch \(err\)[\s\S]+Failed to send follow-up/.test(appFeaturesSrc)
       && /async function convertLead[\s\S]+catch \(err\)[\s\S]+Failed to convert lead/.test(appFeaturesSrc),
     'lead follow-up and conversion failures must be surfaced'
+  );
+}
+
+function testRoleScopedReadGuards() {
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const bookingHistoryRoute = bookingsSrc.slice(bookingsSrc.indexOf("router.get('/history'"), bookingsSrc.indexOf('// Conflict detection'));
+  assert(
+    bookingHistoryRoute.includes("!['owner', 'admin', 'instructor', 'student', 'renter'].includes(req.user.role)")
+      && bookingHistoryRoute.includes("req.user.role === 'instructor'")
+      && bookingHistoryRoute.includes('b.instructor_id = $'),
+    'booking history API must reject maintenance and scope instructors to own history'
+  );
+
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  const historyGetRoute = historySrc.slice(historySrc.indexOf("router.get('/',"), historySrc.indexOf("// PATCH /api/booking-history"));
+  assert(
+    historyGetRoute.includes("!['owner', 'admin', 'instructor', 'student', 'renter'].includes(role)")
+      && historyGetRoute.includes("['student', 'renter'].includes(role)")
+      && historyGetRoute.includes('gs.student_id = $'),
+    'combined booking history must reject maintenance and scope student/renter flight and ground rows'
+  );
+
+  const billingSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'billing.js'), 'utf8');
+  assert(
+    billingSrc.includes("!['owner', 'admin', 'instructor'].includes(req.user.role)"),
+    'billing summary must be limited to owner/admin/instructor'
+  );
+
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    instructorHoursSrc.includes("!['owner', 'admin', 'instructor'].includes(role)"),
+    'instructor hours list must reject student/renter/maintenance roles'
+  );
+
+  const groundSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ground.js'), 'utf8');
+  assert(
+    groundSrc.includes("!['owner', 'admin', 'instructor', 'student', 'renter'].includes(role)")
+      && groundSrc.includes("['student', 'renter'].includes(role)"),
+    'ground sessions list must reject maintenance and scope student/renter roles'
+  );
+}
+
+function testPublicLeadFormsUseCaptcha() {
+  const indexSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert(
+    indexSrc.includes('<script src="/js/captcha.js"></script>')
+      && indexSrc.includes("FSCaptcha.requireToken('journey-captcha')")
+      && indexSrc.includes('captchaToken: captchaToken'),
+    'homepage journey lead form must send captchaToken when captcha is enabled'
+  );
+
+  const pilotSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'become-a-pilot.html'), 'utf8');
+  assert(
+    pilotSrc.includes('<script src="/js/captcha.js"></script>')
+      && pilotSrc.includes('name="phone" placeholder="Phone number" class="journey-input" required')
+      && pilotSrc.includes("FSCaptcha.requireToken('journey-captcha')")
+      && pilotSrc.includes('captchaToken: captchaToken'),
+    'become-a-pilot journey form must require phone and send captchaToken'
+  );
+}
+
+function testRoleNavigationDoesNotExposeForbiddenPages() {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert(
+    appSrc.includes("const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'schedule'])")
+      && !appSrc.includes("const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages', 'schedule'])"),
+    'maintenance role must not be shown the unsupported Messages page'
+  );
+  assert(
+    appSrc.includes("navAtRisk.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role))")
+      && appSrc.includes("navIH.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role))")
+      && appSrc.includes('const canReviewAtRisk = ['),
+    'at-risk and instructor-hours navigation/cards must only appear for roles accepted by the backend'
   );
 }
 
@@ -507,6 +581,9 @@ async function main() {
   testFollowUpSecuritySourceGuards();
   testCompletionUsesLockedBookingRow();
   testNewCriticalSourceGuards();
+  testRoleScopedReadGuards();
+  testPublicLeadFormsUseCaptcha();
+  testRoleNavigationDoesNotExposeForbiddenPages();
   testBookingUpdateStatusRaceGuards();
   testCompletionNoChangeAuthorizationGuard();
   await testSyncFlightRecordStrictNumbers();

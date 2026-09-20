@@ -135,6 +135,9 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/history', authenticateToken, async (req, res) => {
   try {
     const { start, end, instructor_id, student_id, aircraft_id, status } = req.query;
+    if (!['owner', 'admin', 'instructor', 'student', 'renter'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     let query = `
       SELECT b.*,
         s.name as student_name, s.email as student_email,
@@ -178,6 +181,9 @@ router.get('/history', authenticateToken, async (req, res) => {
     if (aircraft_id) { query += ` AND b.aircraft_id = $${paramIdx++}`; params.push(aircraft_id); }
     if (req.user.role === 'student' || req.user.role === 'renter') {
       query += ` AND b.student_id = $${paramIdx++}`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'instructor') {
+      query += ` AND b.instructor_id = $${paramIdx++}`;
       params.push(req.user.id);
     }
     query += ' ORDER BY b.start_time DESC';

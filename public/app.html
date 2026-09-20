@@ -5473,10 +5473,10 @@ function updateMobileChrome(page) {
     if (thirdIcon) thirdIcon.innerHTML = showPortal ? '&#127775;' : '&#128172;';
     if (thirdLabel) thirdLabel.textContent = showPortal ? 'Portal' : 'Messages';
     if (currentUser.role === 'maintenance') {
-      thirdBtn.dataset.page = 'messages';
-      thirdBtn.onclick = function () { navigate('messages'); };
-      if (thirdIcon) thirdIcon.innerHTML = '&#128172;';
-      if (thirdLabel) thirdLabel.textContent = 'Messages';
+      thirdBtn.dataset.page = 'maintenance';
+      thirdBtn.onclick = function () { navigate('maintenance'); };
+      if (thirdIcon) thirdIcon.innerHTML = '&#128295;';
+      if (thirdLabel) thirdLabel.textContent = 'Maintenance';
     }
   }
 
@@ -5981,7 +5981,7 @@ async function enterAppBody() {
 
   // ── Maintenance role: show ONLY 5 tabs, hide everything else ──
   if (currentUser.role === 'maintenance') {
-    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'messages', 'schedule']);
+    const allowed = new Set(['fleet', 'maintenance', 'flight-log', 'tracking', 'phone-app', 'schedule']);
     document.querySelectorAll('.sidebar-nav a[data-page], .sidebar-nav a[id^="nav-"]').forEach(el => {
       const page = el.dataset.page || el.id.replace('nav-', '');
       el.classList.toggle('hidden', !allowed.has(page));
@@ -6059,9 +6059,9 @@ async function enterAppBody() {
     navPeople.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
   }
 
-  // At-Risk: visible to owner, admin, instructor — not students
+  // At-Risk: visible to owner, admin, instructor only
   const navAtRisk = document.getElementById('nav-at-risk');
-  if (navAtRisk) navAtRisk.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
+  if (navAtRisk) navAtRisk.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
 
   // My Portal: visible to students and renters
   const navPortal = document.getElementById('nav-portal');
@@ -6096,10 +6096,10 @@ async function enterAppBody() {
     navPrograms.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
   }
 
-  // Instructor Hours: visible to instructors, admins, owners — NOT students
+  // Instructor Hours: visible to instructors, admins, owners only
   const navIH = document.getElementById('nav-instructor-hours');
   if (navIH) {
-    navIH.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
+    navIH.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
   }
 
   // Booking History: visible to students, renters, instructors, admin, owner
@@ -9354,6 +9354,7 @@ async function loadDashboard() {
   const hobbsHrs = parseFloat(currentUser.total_hobbs_hours || 0).toFixed(1);
   const tachHrs = parseFloat(currentUser.total_tach_hours || 0).toFixed(1);
   const showHours = currentUser.role === 'student' || currentUser.role === 'instructor';
+  const canReviewAtRisk = ['owner', 'admin', 'instructor'].includes(currentUser.role);
 
   const statsEl = document.getElementById('dashboard-stats');
   if (actualStats) actualStats.classList.remove('hidden');
@@ -9387,15 +9388,16 @@ async function loadDashboard() {
       <div class="stat-label">Students</div>
       <div class="stat-value">${studentCount}</div>
     </div>
+    ${canReviewAtRisk ? `
     <div class="stat-card" id="at-risk-dash-card" style="cursor:pointer;border-color:rgba(239,68,68,0.15)" onclick="navigate('at-risk')">
       <div class="stat-label" style="color:var(--red)">At-Risk Students</div>
       <div class="stat-value" id="at-risk-dash-count" style="color:var(--red)">—</div>
       <div class="stat-sub">Click to review</div>
-    </div>`}
+    </div>` : ''}`}
   `;
 
   // Async: fetch at-risk count for owner/admin dashboard card
-  if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+  if (canReviewAtRisk) {
     api('/api/at-risk').then(data => {
       const countEl = document.getElementById('at-risk-dash-count');
       if (countEl) countEl.textContent = (data.students || []).length;

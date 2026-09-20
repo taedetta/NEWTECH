@@ -42,11 +42,14 @@ router.post('/', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
+    if (!['owner', 'admin', 'instructor', 'student', 'renter'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const { student_id, instructor_id, start_date, end_date } = req.query;
     const conditions = [];
     const params = [];
     let pi = 1;
-    if (role === 'student') { conditions.push(`gs.student_id = $${pi++}`); params.push(userId); }
+    if (['student', 'renter'].includes(role)) { conditions.push(`gs.student_id = $${pi++}`); params.push(userId); }
     else {
       if (role === 'instructor') { conditions.push(`gs.instructor_id = $${pi++}`); params.push(userId); }
       else if (instructor_id) { conditions.push(`gs.instructor_id = $${pi++}`); params.push(parseInt(instructor_id)); }

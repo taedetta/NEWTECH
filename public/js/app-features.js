@@ -129,11 +129,16 @@ function populateMessageNewForm() {
 async function loadCfiUtilizationPage() {
   var el = document.getElementById('cfi-util-content');
   if (!el) return;
-  var data = await api('/api/instructor-utilization');
-  el.innerHTML = '<div class="table-card scroll-x-wrap"><table class="data-table"><thead><tr><th>Instructor</th><th>Students</th><th>Booked</th><th>Available</th><th>Util %</th><th>Dual hrs</th><th>Est revenue</th></tr></thead><tbody>' +
-    (data.instructors || []).map(function(i) {
-      return '<tr><td>' + escHtml(i.name) + '</td><td>' + i.assigned_students + '</td><td>' + i.booked_hours + '</td><td>' + i.available_hours + '</td><td>' + i.utilization_pct + '%</td><td>' + i.dual_hobbs_logged + '</td><td>$' + i.est_instruction_revenue.toFixed(2) + '</td></tr>';
-    }).join('') + '</tbody></table></div>';
+  el.innerHTML = '<div style="padding:1rem;color:var(--gray-500)">Loading…</div>';
+  try {
+    var data = await api('/api/instructor-utilization');
+    el.innerHTML = '<div class="table-card scroll-x-wrap"><table class="data-table"><thead><tr><th>Instructor</th><th>Students</th><th>Booked</th><th>Available</th><th>Util %</th><th>Dual hrs</th><th>Est revenue</th></tr></thead><tbody>' +
+      (data.instructors || []).map(function(i) {
+        return '<tr><td>' + escHtml(i.name) + '</td><td>' + i.assigned_students + '</td><td>' + i.booked_hours + '</td><td>' + i.available_hours + '</td><td>' + i.utilization_pct + '%</td><td>' + i.dual_hobbs_logged + '</td><td>$' + i.est_instruction_revenue.toFixed(2) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (err) {
+    el.innerHTML = '<div style="padding:1rem;color:var(--red)">' + escHtml(err.error || err.message || 'Failed to load CFI utilization') + '</div>';
+  }
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -286,7 +291,11 @@ async function loadLocationsAdmin() {
 
 async function addLocation(e) {
   e.preventDefault();
-  await api('/api/locations', { method: 'POST', body: JSON.stringify({ code: document.getElementById('loc-code').value, name: document.getElementById('loc-name').value, weather_station: document.getElementById('loc-wx').value, is_default: document.getElementById('loc-default').checked }) });
-  loadLocationsAdmin();
-  showToast('Location added', 'success');
+  try {
+    await api('/api/locations', { method: 'POST', body: JSON.stringify({ code: document.getElementById('loc-code').value, name: document.getElementById('loc-name').value, weather_station: document.getElementById('loc-wx').value, is_default: document.getElementById('loc-default').checked }) });
+    loadLocationsAdmin();
+    showToast('Location added', 'success');
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to add location', 'error');
+  }
 }

@@ -163,10 +163,7 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
 });
 
 // PATCH /api/aircraft/:id/hobbs
-router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
-  if (!['owner', 'instructor', 'admin', 'maintenance'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Only instructors and above can update aircraft hours' });
-  }
+router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   const { hobbs, tach, note } = req.body;
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
