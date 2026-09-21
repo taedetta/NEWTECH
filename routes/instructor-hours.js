@@ -230,29 +230,47 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
     const entryId = parseInt(req.params.id);
-    const existing = await client.query('SELECT * FROM instructor_hours WHERE id = $1', [entryId]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
+    if (!Number.isFinite(entryId)) return res.status(400).json({ error: 'Invalid entry id' });
     if (role === 'student') return res.status(403).json({ error: 'Access denied' });
-    if (role === 'instructor' && existing.rows[0].instructor_id !== userId) {
-      return res.status(403).json({ error: "Cannot edit another instructor's entry" });
-    }
     if (!['owner', 'admin', 'instructor'].includes(role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM instructor_hours WHERE id = $1 FOR UPDATE', [entryId]);
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    if (role === 'instructor' && existing.rows[0].instructor_id !== userId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: "Cannot edit another instructor's entry" });
+    }
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
-    if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
+    if (instruction_hours === undefined || instruction_hours === null) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'instruction_hours is required' });
+    }
     const row = existing.rows[0];
     const parsedAcHours = aircraft_hours != null && aircraft_hours !== ''
       ? parseStrictNumber(aircraft_hours, 'aircraft_hours')
       : { value: 0 };
-    if (parsedAcHours.error) return res.status(400).json({ error: parsedAcHours.error });
+    if (parsedAcHours.error) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: parsedAcHours.error });
+    }
     const parsedInstrHours = parseStrictNumber(instruction_hours, 'instruction_hours');
-    if (parsedInstrHours.error) return res.status(400).json({ error: parsedInstrHours.error });
+    if (parsedInstrHours.error) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: parsedInstrHours.error });
+    }
     const acHrsVal = parsedAcHours.value || 0;
     const instrHrsVal = parsedInstrHours.value;
     const newDate = entry_date || row.entry_date;
     const nextRates = instructorHourRatesForUpdate(role, row, req.body);
-    if (nextRates.error) return res.status(400).json({ error: nextRates.error });
+    if (nextRates.error) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: nextRates.error });
+    }
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
       entryDate: newDate,
@@ -263,7 +281,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
       bookingId: row.booking_id,
     });
 
-    await client.query('BEGIN');
     const result = await client.query(`
       UPDATE instructor_hours SET entry_date = COALESCE($1, entry_date), aircraft_hours = $2, instruction_hours = $3,
         aircraft_rate = $4, instructor_rate = $5, notes = $6, student_name = $7,

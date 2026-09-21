@@ -4,15 +4,19 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { parsePositiveNumber } = require('../lib/strict-number');
+const { canInstructorAccessStudent } = require('../db/at-risk');
 
 const router = express.Router();
 
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Students cannot submit ground sessions' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) {
+      return res.status(403).json({ error: 'Only admins, owners, and instructors can submit ground sessions' });
+    }
     const { student_id, session_date, ground_hours, notes } = req.body;
-    if (!student_id) return res.status(400).json({ error: 'student_id is required' });
+    const studentId = parseInt(student_id, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'student_id is required' });
     const parsedHours = parsePositiveNumber(ground_hours, 'ground_hours');
     if (parsedHours.error) return res.status(400).json({ error: parsedHours.error });
     let instructorId = userId;
@@ -20,8 +24,11 @@ router.post('/', authenticateToken, async (req, res) => {
     const instructorCheck = await pool.query('SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL', [instructorId]);
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
-    const studentCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL", [parseInt(student_id)]);
+    const studentCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL", [studentId]);
     if (studentCheck.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
+    if (role === 'instructor' && !(await canInstructorAccessStudent(userId, studentId))) {
+      return res.status(403).json({ error: 'Only assigned instructors can create ground sessions for this student' });
+    }
     const instrRate = instructorCheck.rows[0].instructor_rate;
     const hrs = parsedHours.value;
     const rate = instrRate != null ? Number(instrRate) : null;
@@ -29,7 +36,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const result = await pool.query(`
       INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes)
       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [parseInt(student_id), instructorId, session_date || new Date().toISOString().slice(0, 10), hrs,
+      [studentId, instructorId, session_date || new Date().toISOString().slice(0, 10), hrs,
        Number.isFinite(rate) ? rate : null, chargeAmount, notes || null]
     );
     res.status(201).json(result.rows[0]);

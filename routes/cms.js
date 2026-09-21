@@ -112,21 +112,26 @@ router.put('/site-content', authenticateToken, requirePermission('can_edit_websi
     if (!updates || typeof updates !== 'object') return res.status(400).json({ error: 'Request body must be a key-value object' });
     const entries = Object.entries(updates);
     if (entries.length === 0) return res.json({ saved: 0 });
+    const invalidKey = entries.find(([key]) => typeof key !== 'string' || key.length === 0 || key.length > 100);
+    if (invalidKey) {
+      return res.status(400).json({ error: 'Site content keys must be 1-100 characters' });
+    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      let saved = 0;
       for (const [key, value] of entries) {
-        if (typeof key !== 'string' || key.length > 100) continue;
         await client.query(
           `INSERT INTO site_content (key, value, updated_at) VALUES ($1, $2, NOW())
            ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
           [key, value === null ? null : String(value)]
         );
+        saved += 1;
       }
       await client.query('COMMIT');
       invalidateCmsCache();
       _htmlTemplate = null;
-      res.json({ saved: entries.length });
+      res.json({ saved });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

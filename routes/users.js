@@ -293,7 +293,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// PATCH /api/users/:id/privileges — toggle admin/owner access (owners manage both; admins/perm-managers manage admin only)
+// PATCH /api/users/:id/privileges — toggle admin/owner access (owners manage both; admins manage admin only)
 router.patch('/:id/privileges', authenticateToken, async (req, res) => {
   try {
     const requesterResult = await pool.query(
@@ -304,8 +304,7 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized' });
     }
     const requesterRole = requesterResult.rows[0].role;
-    const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
-    const canGrantAdmin = ['owner', 'admin'].includes(requesterRole) || requesterPerms.can_manage_permissions;
+    const canGrantAdmin = ['owner', 'admin'].includes(requesterRole);
     const canGrantOwner = requesterRole === 'owner';
 
     const targetId = parseInt(req.params.id, 10);

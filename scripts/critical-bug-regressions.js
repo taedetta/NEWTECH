@@ -283,6 +283,59 @@ function testRoleScopedReadGuards() {
   );
 }
 
+function testFollowUpAuthorizationAndConsistencyGuards() {
+  const atRiskRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'at-risk.js'), 'utf8');
+  assert(
+    atRiskRouteSrc.includes('getInstructorStudentIds(req.user.id)')
+      && atRiskRouteSrc.includes('canInstructorAccessStudent(req.user.id, studentId)')
+      && atRiskRouteSrc.includes('Only assigned instructors can log interventions for this student'),
+    'at-risk routes must scope instructor list/read/write access to assigned students'
+  );
+
+  const atRiskDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'at-risk.js'), 'utf8');
+  assert(
+    atRiskDbSrc.includes('async function canInstructorAccessStudent')
+      && atRiskDbSrc.includes('FROM student_training')
+      && atRiskDbSrc.includes("status IN ('confirmed', 'completed')"),
+    'at-risk assignment checks must use active training or assigned bookings'
+  );
+
+  const groundSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ground.js'), 'utf8');
+  assert(
+    groundSrc.includes("!['owner', 'admin', 'instructor'].includes(role)")
+      && groundSrc.includes('canInstructorAccessStudent(userId, studentId)')
+      && groundSrc.includes('Only assigned instructors can create ground sessions for this student'),
+    'ground-session creation must reject non-staff and limit instructors to assigned students'
+  );
+
+  const usersSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
+  const privilegesRoute = usersSrc.slice(usersSrc.indexOf("router.patch('/:id/privileges'"), usersSrc.indexOf("// PATCH /api/users/:id/role"));
+  assert(
+    privilegesRoute.includes("const canGrantAdmin = ['owner', 'admin'].includes(requesterRole)")
+      && !privilegesRoute.includes('requesterPerms.can_manage_permissions'),
+    'delegated permission managers must not be able to grant admin access'
+  );
+
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  const updateRoute = instructorHoursSrc.slice(instructorHoursSrc.indexOf("router.put('/:id'"), instructorHoursSrc.indexOf("router.post('/reaudit'"));
+  assert(
+    updateRoute.includes("await client.query('BEGIN')")
+      && updateRoute.includes('SELECT * FROM instructor_hours WHERE id = $1 FOR UPDATE')
+      && updateRoute.indexOf("await client.query('BEGIN')") < updateRoute.indexOf('SELECT * FROM instructor_hours WHERE id = $1 FOR UPDATE'),
+    'instructor-hours edit must lock the source row inside a transaction before syncing linked records'
+  );
+
+  const cmsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'cms.js'), 'utf8');
+  const saveRoute = cmsSrc.slice(cmsSrc.indexOf("router.put('/site-content'"), cmsSrc.indexOf("router.get('/project-files'"));
+  assert(
+    saveRoute.includes('Site content keys must be 1-100 characters')
+      && saveRoute.includes('let saved = 0')
+      && saveRoute.includes('saved += 1')
+      && !saveRoute.includes('continue;'),
+    'CMS site-content saves must reject invalid keys and report actual saved rows'
+  );
+}
+
 function testPublicLeadFormsUseCaptcha() {
   const indexSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert(
@@ -582,6 +635,7 @@ async function main() {
   testCompletionUsesLockedBookingRow();
   testNewCriticalSourceGuards();
   testRoleScopedReadGuards();
+  testFollowUpAuthorizationAndConsistencyGuards();
   testPublicLeadFormsUseCaptcha();
   testRoleNavigationDoesNotExposeForbiddenPages();
   testBookingUpdateStatusRaceGuards();
