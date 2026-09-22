@@ -4,6 +4,8 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'critical-bug-regression-secr
 process.env.APP_URL = process.env.APP_URL || 'https://example.test';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const Module = require('module');
 
 function makeRes() {
@@ -148,10 +150,25 @@ function testPreferenceRowNormalization() {
   assert.strictEqual(prefs.booking_confirmation, false);
 }
 
+function testCfiProfileRouteOrdering() {
+  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const endorsementsMount = "app.use('/api/users/me', endorsementsRoutes)";
+  const profileMount = "app.use('/api/users/me', profileRoutes)";
+  const endorsementsIdx = serverSource.indexOf(endorsementsMount);
+  const profileIdx = serverSource.indexOf(profileMount);
+  assert(endorsementsIdx !== -1, 'Expected /api/users/me endorsements route mount');
+  assert(profileIdx !== -1, 'Expected /api/users/me profile route mount');
+  assert(
+    endorsementsIdx < profileIdx,
+    'CFI profile routes must be mounted before profileRoutes catch-all'
+  );
+}
+
 (async () => {
   await testUnsubscribeRoute();
   await testNotificationPreferenceInvariants();
   testPreferenceRowNormalization();
+  testCfiProfileRouteOrdering();
   console.log('critical bug regressions passed');
 })().catch((err) => {
   console.error(err);
