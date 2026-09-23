@@ -331,14 +331,14 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       }
     }
 
-    const hobbsFlown = hEnd - hStart;
+    const hobbsFlown = parseFloat((hEnd - hStart).toFixed(2));
 
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
       const dualErr = validateHobbsValue(dual_instruction_hours, 'dual_instruction_hours');
       if (dualErr) return abortTransaction(400, { error: dualErr });
     }
-    const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
+    const tachFlown = (tStart != null && tEnd != null) ? parseFloat((tEnd - tStart).toFixed(2)) : null;
     const dualHrs = (dual_instruction_hours != null)
       ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours').value
       : 0;
@@ -411,7 +411,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       const userHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1', [b.student_id]);
       if (userHobbs.rows.length > 0) {
         await client.query(
-          `UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`,
+          `UPDATE users SET
+             total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
+             total_tach_hours = COALESCE(total_tach_hours, 0) + $2
+           WHERE id = $3`,
           [hobbsFlown, tachFlown || 0, b.student_id]
         );
       }
@@ -421,7 +424,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       const instrHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1', [b.instructor_id]);
       if (instrHobbs.rows.length > 0) {
         await client.query(
-          `UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`,
+          `UPDATE users SET
+             total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
+             total_tach_hours = COALESCE(total_tach_hours, 0) + $2
+           WHERE id = $3`,
           [hobbsFlown, tachFlown || 0, b.instructor_id]
         );
       }

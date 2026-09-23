@@ -473,8 +473,8 @@ router.post('/manual', authenticateToken, async (req, res) => {
       const tEnd = parsedTEnd.value;
       const tS = tStart != null ? tStart : null;
       const tE = tEnd != null ? tEnd : null;
-      const hDelta = hEnd - hStart;
-      const tDelta = (tS != null && tE != null) ? (tE - tS) : null;
+      const hDelta = parseFloat((hEnd - hStart).toFixed(2));
+      const tDelta = (tS != null && tE != null) ? parseFloat((tE - tS).toFixed(2)) : null;
       const parsedDualHrs = dual_instruction_hours != null ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours') : { value: 0 };
       if (parsedDualHrs.error) return res.status(400).json({ error: parsedDualHrs.error });
       const dualHrs = parsedDualHrs.value;
@@ -489,9 +489,13 @@ router.post('/manual', authenticateToken, async (req, res) => {
         );
         const bkId = bkResult.rows[0].id;
         await client.query(
-          `INSERT INTO flight_logs (booking_id, flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta, dual_instruction_hours, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [bkId, flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
+          `INSERT INTO flight_logs
+             (booking_id, aircraft_id, student_id, instructor_id, booking_type,
+              flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
+              dual_instruction_hours, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          [bkId, acId, sid, iid, iid ? 'dual' : 'student_solo',
+           flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
         );
         if (acId) {
           await applyAircraftMeterReadings(client, acId, {
@@ -501,7 +505,13 @@ router.post('/manual', authenticateToken, async (req, res) => {
             source: 'manual_entry',
           });
         }
-        await client.query(`UPDATE users SET total_hobbs_hours = total_hobbs_hours + $1, total_tach_hours = total_tach_hours + $2 WHERE id = $3`, [hDelta, tDelta || 0, sid]);
+        await client.query(
+          `UPDATE users SET
+             total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
+             total_tach_hours = COALESCE(total_tach_hours, 0) + $2
+           WHERE id = $3`,
+          [hDelta, tDelta || 0, sid]
+        );
         await client.query('COMMIT');
         res.json({ booking_id: bkId });
       } catch (err) {

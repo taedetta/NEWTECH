@@ -74,9 +74,9 @@ function normBookingUserId(v) {
   return Number.isNaN(n) ? null : n;
 }
 
-/** Who may view/update/cancel a booking (staff or assigned participant). */
+/** Who may update/cancel a booking (admin staff or assigned participant). */
 function canAccessBooking(user, booking) {
-  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  if (['owner', 'admin'].includes(user.role)) return true;
   return user.id === booking.instructor_id || user.id === booking.student_id;
 }
 
@@ -963,7 +963,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
         return abortTransaction(409, { error: 'Booking changed while you were editing. Reload the booking and try again.' });
       }
       const updated = result.rows[0];
-      await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+      await syncCompletedBookingSideEffects(client, updated, effectiveLessonType, b);
       await client.query('COMMIT');
       transactionStarted = false;
       return res.json(updated);
@@ -989,7 +989,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return abortTransaction(409, { error: 'Booking changed while you were editing. Reload the booking and try again.' });
     }
     const updated = result.rows[0];
-    await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+    await syncCompletedBookingSideEffects(client, updated, effectiveLessonType, b);
     await client.query('COMMIT');
     transactionStarted = false;
     res.json(updated);

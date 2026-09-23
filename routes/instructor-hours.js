@@ -97,6 +97,16 @@ router.post('/', authenticateToken, async (req, res) => {
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
     const entryDate = entry_date || new Date().toISOString().slice(0, 10);
+    const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
+    if (parsedBookingId && !isNaN(parsedBookingId)) {
+      const bookingDup = await pool.query(
+        'SELECT id FROM instructor_hours WHERE booking_id = $1 LIMIT 1',
+        [parsedBookingId]
+      );
+      if (bookingDup.rows.length > 0) {
+        return res.status(409).json({ error: 'Instructor hours already exist for this booking. Edit the existing linked entry instead.' });
+      }
+    }
     const dup = await pool.query(
       `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
        AND aircraft_id IS NOT DISTINCT FROM $3 AND ABS(instruction_hours - $4) < 0.01 LIMIT 1`,
@@ -105,7 +115,6 @@ router.post('/', authenticateToken, async (req, res) => {
     if (dup.rows.length > 0) {
       return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
     }
-    const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
     const acHrsVal = parsedAcHours.value || 0;
     const instrHrsVal = parsedInstrHours.value;
     const audit = await auditInstructorHoursEntry({

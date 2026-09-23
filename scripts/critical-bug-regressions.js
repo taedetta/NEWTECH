@@ -548,6 +548,78 @@ function testSyncFlightRecordLocksRowsAndReconcilesMeters() {
   );
 }
 
+function testBookingMutationAndHourSyncRegressionGuards() {
+  const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert(
+    adminSrc.includes("const { getAppEnv, isStaging } = require('../lib/app-env')")
+      && adminSrc.includes('DELETE FROM ${table} WHERE source = $1')
+      && adminSrc.includes('Unsafe reset aborted')
+      && adminSrc.includes('UPDATE users SET total_hobbs_hours = 0, total_tach_hours = 0 WHERE source = $1')
+      && adminSrc.includes('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0 WHERE source = $1'),
+    'reset-all-data must be source-scoped and fail safe for unisolated tables'
+  );
+
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  assert(
+    bookingsSrc.includes("if (['owner', 'admin'].includes(user.role)) return true;")
+      && !bookingsSrc.includes("['owner', 'admin', 'maintenance'].includes(user.role)"),
+    'maintenance must not be allowed to update or cancel arbitrary bookings'
+  );
+  assert(
+    bookingsSrc.includes('syncCompletedBookingSideEffects(client, updated, effectiveLessonType, b)'),
+    'completed booking resync must receive the locked pre-update booking snapshot'
+  );
+
+  const syncCompletedSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-completed-booking.js'), 'utf8');
+  assert(
+    syncCompletedSrc.includes('previous_student_id: previousBooking?.student_id')
+      && syncCompletedSrc.includes('previous_instructor_id: previousBooking?.instructor_id'),
+    'completed booking side-effect sync must pass previous participants for hour transfers'
+  );
+
+  const syncSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-flight-record.js'), 'utf8');
+  assert(
+    syncSrc.includes('const hobbsDelta = !hobbsTouched && oldLog?.hobbs_delta != null')
+      && syncSrc.includes('const tachDelta = !tachTouched && oldLog?.tach_delta != null'),
+    'metadata-only completed booking sync must preserve existing logged deltas'
+  );
+  assert(
+    !syncSrc.includes("booking.status === 'completed' && !booking.billing_voided"),
+    'voided billing rows must still reconcile meters and cumulative hours when edited'
+  );
+
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  assert(
+    completionSrc.includes('parseFloat((hEnd - hStart).toFixed(2))')
+      && completionSrc.includes('parseFloat((tEnd - tStart).toFixed(2))'),
+    'booking completion must store stable rounded deltas'
+  );
+  assert(
+    completionSrc.includes('total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1')
+      && completionSrc.includes('total_tach_hours = COALESCE(total_tach_hours, 0) + $2'),
+    'booking completion cumulative-hour increments must tolerate null totals'
+  );
+
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  assert(
+    historySrc.includes('(booking_id, aircraft_id, student_id, instructor_id, booking_type,')
+      && historySrc.includes("[bkId, acId, sid, iid, iid ? 'dual' : 'student_solo'"),
+    'manual flight history logs must persist participant and aircraft IDs'
+  );
+  assert(
+    historySrc.includes('total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1')
+      && historySrc.includes('total_tach_hours = COALESCE(total_tach_hours, 0) + $2'),
+    'manual flight history cumulative-hour increments must tolerate null totals'
+  );
+
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    instructorHoursSrc.includes('SELECT id FROM instructor_hours WHERE booking_id = $1 LIMIT 1')
+      && instructorHoursSrc.includes('Instructor hours already exist for this booking'),
+    'manual instructor-hour creates must reject duplicate linked booking rows'
+  );
+}
+
 async function testMeterDecreaseEditRollsBackCurrentAircraftMeter() {
   const updates = [];
   const inserts = [];
@@ -645,6 +717,7 @@ async function main() {
   await testHistoryDeleteMeterRollbackHelper();
   await testApplyMeterReadingsLocksAircraftRow();
   testSyncFlightRecordLocksRowsAndReconcilesMeters();
+  testBookingMutationAndHourSyncRegressionGuards();
   await testMeterDecreaseEditRollsBackCurrentAircraftMeter();
   testHistoryDeleteReversesVoidedCompletedHours();
   testSquawkFullEditRoute();
