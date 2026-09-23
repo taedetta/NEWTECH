@@ -211,6 +211,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
     const newDate = entry_date || row.entry_date;
+    const canEditBillingRates = ['owner', 'admin'].includes(role);
+    const aircraftRateVal = canEditBillingRates && aircraft_rate !== undefined
+      ? parseFloat(aircraft_rate)
+      : row.aircraft_rate;
+    const instructorRateVal = canEditBillingRates && instructor_rate !== undefined
+      ? parseFloat(instructor_rate)
+      : row.instructor_rate;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
       entryDate: newDate,
@@ -228,8 +235,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraftRateVal,
+       instructorRateVal,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );

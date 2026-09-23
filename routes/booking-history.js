@@ -188,6 +188,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!canEditBookingHistoryFlight(role, userId, b)) {
       return res.status(403).json({ error: 'You can only edit your own flight records' });
     }
+    const canEditBillingFields = ['owner', 'admin'].includes(role);
 
     const {
       flight_date,
@@ -218,9 +219,6 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     }
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
-    const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
     const effectiveLessonType = inferLessonType(
       lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
@@ -232,18 +230,30 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const syncPatch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
-        lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
         submitted_by: userId,
-      });
+      };
+      if (canEditBillingFields) {
+        if (lesson_type !== undefined && lesson_type !== '' && lesson_type !== null) {
+          syncPatch.lesson_type = effectiveLessonType;
+        }
+        if (aircraft_charge_amount !== undefined) {
+          syncPatch.aircraft_charge_amount = aircraft_charge_amount;
+        }
+        if (instruction_charge_amount !== undefined) {
+          syncPatch.instruction_charge_amount = instruction_charge_amount;
+        }
+      }
+      if (flight_date !== undefined && flight_date !== null && String(flight_date).trim() !== '') {
+        syncPatch.flight_date = String(flight_date).slice(0, 10);
+      }
+
+      const synced = await syncFlightRecord(client, bookingId, syncPatch);
 
       await client.query('COMMIT');
       inTxn = false;
