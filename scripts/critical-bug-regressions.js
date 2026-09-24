@@ -191,22 +191,22 @@ function testCompletionUsesLockedBookingRow() {
   assert(routeStart >= 0 && routeEnd > routeStart, 'completion route not found');
 
   const routeSrc = completionSrc.slice(routeStart, routeEnd);
-  const fullLock = "SELECT * FROM bookings WHERE id = $1 FOR UPDATE";
+  const fullLock = "SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE";
   assert(routeSrc.includes(fullLock), 'completion must lock and read full booking row');
   assert(!routeSrc.includes("const bResult = await client.query('SELECT * FROM bookings WHERE id = $1'"), 'completion must not use stale pre-lock booking row');
   assert(!routeSrc.includes("SELECT status FROM bookings WHERE id = $1 FOR UPDATE"), 'completion must not use status-only booking lock');
   assert(routeSrc.indexOf(fullLock) < routeSrc.indexOf('completionEndTime(b)'), 'completion end time must use locked booking row');
   assert(routeSrc.indexOf(fullLock) < routeSrc.indexOf('const flight_date = new Date(b.start_time)'), 'flight date must use locked booking row');
   assert(
-    routeSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE'),
-    'completion must lock aircraft meter row before validating readings'
+    routeSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE'),
+    'completion must lock source-scoped aircraft meter row before validating readings'
   );
 }
 
 function testNewCriticalSourceGuards() {
   const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
   assert(
-    aircraftSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE')
+    aircraftSrc.includes('SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE')
       && aircraftSrc.includes('hobbs cannot be less than current aircraft reading')
       && aircraftSrc.includes('tach cannot be less than current aircraft reading')
       && aircraftSrc.includes("router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft')"),
@@ -376,10 +376,10 @@ function testBookingUpdateStatusRaceGuards() {
   const routeEnd = bookingsSrc.indexOf("router.delete('/:id'", routeStart);
   assert(routeStart >= 0 && routeEnd > routeStart, 'booking update route not found');
   const routeSrc = bookingsSrc.slice(routeStart, routeEnd);
-  assert(routeSrc.includes('SELECT * FROM bookings WHERE id = $1 FOR UPDATE'), 'booking update must lock the booking row before validation');
+  assert(routeSrc.includes('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE'), 'booking update must lock the source-scoped booking row before validation');
   assert(routeSrc.includes('expected_status'), 'booking update must reject stale edit forms');
   assert(routeSrc.includes('Booking status changes must use the complete or cancel workflow'), 'generic booking update must not rewrite status');
-  assert(/WHERE id = \$10 AND status = \$11 RETURNING \*/.test(routeSrc), 'booking update must guard UPDATE with locked status');
+  assert(/WHERE id = \$10 AND status = \$11 AND source = \$12 RETURNING \*/.test(routeSrc), 'booking update must guard UPDATE with locked status and source');
 
   const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert(appSrc.includes('payload.expected_status = bookingEditStatus'), 'booking edit payload must include expected_status');
@@ -449,7 +449,7 @@ async function testHistoryDeleteMeterRollbackHelper() {
   const updates = [];
   const makeClient = (aircraft) => ({
     async query(sql, params) {
-      if (sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE')) {
+      if (sql.includes('FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE')) {
         return { rows: [aircraft] };
       }
       if (sql.includes('FROM aircraft_hours_history') && sql.includes('ORDER BY created_at DESC')) {
@@ -482,7 +482,7 @@ async function testHistoryDeleteMeterRollbackHelper() {
     tach_start: 50,
     tach_end: 51,
   });
-  assert.deepStrictEqual(updates[0].params, [100, 50, 7]);
+  assert.deepStrictEqual(updates[0].params, [100, 50, 7, 'production']);
 
   updates.length = 0;
   await rollbackAircraftMeterForDeletedBooking(makeClient({
@@ -504,7 +504,7 @@ async function testApplyMeterReadingsLocksAircraftRow() {
   const makeClient = (aircraft) => ({
     async query(sql, params) {
       queries.push({ sql, params });
-      if (sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE')) {
+      if (sql.includes('FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE')) {
         return { rows: [aircraft] };
       }
       if (sql.startsWith('UPDATE aircraft SET')) return { rows: [] };
@@ -526,16 +526,16 @@ async function testApplyMeterReadingsLocksAircraftRow() {
   });
 
   assert(
-    queries[0]?.sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE'),
-    'applying aircraft meter readings must lock the aircraft row before computing next meter values'
+    queries[0]?.sql.includes('FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE'),
+    'applying aircraft meter readings must lock the source-scoped aircraft row before computing next meter values'
   );
 }
 
 function testSyncFlightRecordLocksRowsAndReconcilesMeters() {
   const syncSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-flight-record.js'), 'utf8');
   assert(
-    syncSrc.includes('SELECT * FROM bookings WHERE id = $1 FOR UPDATE'),
-    'syncFlightRecord must lock booking row before reading old hour totals'
+    syncSrc.includes('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE'),
+    'syncFlightRecord must lock the source-scoped booking row before reading old hour totals'
   );
   assert(
     syncSrc.includes('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE'),
@@ -603,7 +603,7 @@ function testBookingMutationAndHourSyncRegressionGuards() {
   const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
   assert(
     historySrc.includes('(booking_id, aircraft_id, student_id, instructor_id, booking_type,')
-      && historySrc.includes("[bkId, acId, sid, iid, iid ? 'dual' : 'student_solo'"),
+      && historySrc.includes('[bkId, acId, sid, iid, bookingType'),
     'manual flight history logs must persist participant and aircraft IDs'
   );
   assert(
@@ -625,7 +625,7 @@ async function testMeterDecreaseEditRollsBackCurrentAircraftMeter() {
   const inserts = [];
   const makeClient = () => ({
     async query(sql, params) {
-      if (sql.includes('FROM aircraft WHERE id = $1 FOR UPDATE')) {
+      if (sql.includes('FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE')) {
         return { rows: [{
           current_hobbs: 101,
           current_tach: 51,
@@ -655,7 +655,7 @@ async function testMeterDecreaseEditRollsBackCurrentAircraftMeter() {
     source: 'critical_regression',
   });
 
-  assert.deepStrictEqual(updates[0].params, [100.5, 50.5, 7]);
+  assert.deepStrictEqual(updates[0].params, [100.5, 50.5, 7, 'production']);
   assert.strictEqual(inserts.length, 2, 'meter decrease corrections should be audit logged');
 }
 
@@ -695,6 +695,67 @@ function testSquawkFullEditRoute() {
   );
 }
 
+function testSubagentFollowUpGuards() {
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    /router\.post\('\/reaudit'[\s\S]+!\['owner', 'admin', 'instructor'\]\.includes\(role\)/.test(instructorHoursSrc)
+      && /router\.get\('\/prefill'[\s\S]+!\['owner', 'admin', 'instructor'\]\.includes\(role\)/.test(instructorHoursSrc),
+    'instructor-hours reaudit and prefill must be owner/admin/instructor only'
+  );
+
+  const trackSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'track-flights.js'), 'utf8');
+  assert(
+    trackSrc.includes('function flightScopeForUser')
+      && trackSrc.includes("['owner', 'admin', 'maintenance'].includes(user.role)")
+      && trackSrc.includes('b.instructor_id = $')
+      && trackSrc.includes('b.student_id = $')
+      && trackSrc.includes('AND b.source = $1'),
+    'track-flights live/recent queries must be role- and source-scoped'
+  );
+
+  const downtimeSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'downtime.js'), 'utf8');
+  assert(
+    !downtimeSrc.includes("UPDATE aircraft SET status = 'available'")
+      && downtimeSrc.includes('(aircraft_id, start_date, end_date, start_time, end_time, all_day, reason, created_by, source)')
+      && downtimeSrc.includes('WHERE d.source = $1'),
+    'downtime creation must not clear maintenance status and downtime reads/writes must be source-scoped'
+  );
+
+  const discrepanciesSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'discrepancies.js'), 'utf8');
+  assert(
+    discrepanciesSrc.includes("const { syncFlightRecord } = require('../lib/sync-flight-record')")
+      && discrepanciesSrc.includes('SELECT * FROM flight_discrepancies WHERE id = $1 FOR UPDATE')
+      && discrepanciesSrc.includes('await syncFlightRecord(client, discrepancy.booking_id'),
+    'discrepancy resolution must sync the selected reading into authoritative flight records in a transaction'
+  );
+
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  assert(
+    historySrc.includes("const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours')")
+      && historySrc.includes("const { resolveFlightCharges } = require('../lib/flight-charges')")
+      && historySrc.includes('await syncInstructorHoursFromFlight(client, {')
+      && historySrc.includes('aircraft_charge_amount, instruction_charge_amount, source)'),
+    'manual dual-flight history must create charges, instructor hours, and source-tagged flight logs'
+  );
+
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  assert(
+    bookingsSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && bookingsSrc.includes('booking_type, source)')
+      && bookingsSrc.includes('AND b.source = $1')
+      && bookingsSrc.includes('AND source = $4'),
+    'booking creation, list, and conflict checks must use APP_ENV source isolation'
+  );
+
+  const billingSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'billing.js'), 'utf8');
+  assert(
+    billingSrc.includes('AND b.source = $SOURCE_PLACEHOLDER')
+      && billingSrc.includes("BILLABLE_FLIGHT_SQL.replace('$SOURCE_PLACEHOLDER', '$1')")
+      && billingSrc.includes("BILLABLE_FLIGHT_SQL.replace('$SOURCE_PLACEHOLDER', '$2')"),
+    'billing summaries/details must filter billable flights by current source'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -721,6 +782,7 @@ async function main() {
   await testMeterDecreaseEditRollsBackCurrentAircraftMeter();
   testHistoryDeleteReversesVoidedCompletedHours();
   testSquawkFullEditRoute();
+  testSubagentFollowUpGuards();
   console.log('critical bug regressions passed');
 }
 

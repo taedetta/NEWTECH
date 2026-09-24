@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -62,8 +63,8 @@ async function findOverlappingDowntime(client, aircraftId, bookingStart, booking
   const result = await db.query(
     `SELECT id, reason, start_date, end_date, start_time, end_time, all_day
      FROM aircraft_downtime
-     WHERE aircraft_id = $1 AND start_date <= $3::date AND end_date >= $2::date`,
-    [aircraftId, startDate, endDate]
+     WHERE aircraft_id = $1 AND source = $4 AND start_date <= $3::date AND end_date >= $2::date`,
+    [aircraftId, startDate, endDate, getAppEnv()]
   );
   return result.rows.find((row) => downtimeOverlapsBooking(row, bookingStart, bookingEnd)) || null;
 }
@@ -103,9 +104,10 @@ router.get('/', authenticateToken, async (req, res) => {
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
       WHERE b.status NOT IN ('cancelled', 'completed')
+        AND b.source = $1
     `;
-    const params = [];
-    let paramIdx = 1;
+    const params = [getAppEnv()];
+    let paramIdx = 2;
     if (start && end) {
       query += ` AND ${overlapWhere('b', '$' + paramIdx, '$' + (paramIdx + 1))}`;
       params.push(start, end);
@@ -162,9 +164,10 @@ router.get('/history', authenticateToken, async (req, res) => {
       JOIN aircraft a ON b.aircraft_id = a.id
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
       WHERE b.status = $1
+        AND b.source = $2
     `;
-    const params = [status || 'completed'];
-    let paramIdx = 2;
+    const params = [status || 'completed', getAppEnv()];
+    let paramIdx = 3;
     if (start && end) {
       query += ` AND ${overlapWhere('b', '$' + paramIdx, '$' + (paramIdx + 1))}`;
       params.push(start, end);
@@ -207,8 +210,9 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
   const sid = student_id != null ? parseInt(student_id, 10) : null;
   const st = new Date(start_time).toISOString();
   const et = new Date(end_time).toISOString();
+  const source = getAppEnv();
   if (Number.isFinite(acId)) {
-    const params = [st, et, acId];
+    const params = [st, et, acId, source];
     if (excludeId) params.push(excludeId);
     const result = await client.query(
       `SELECT b.id, a.tail_number, b.start_time, b.end_time,
@@ -217,8 +221,9 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
        LEFT JOIN users s ON b.student_id = s.id
        LEFT JOIN users i ON b.instructor_id = i.id
        WHERE b.aircraft_id = $3 AND ${ACTIVE_BOOKING_SQL}
+         AND b.source = $4
          AND b.start_time < $2 AND b.end_time > $1
-         ${excludeId ? 'AND b.id != $4' : ''}
+         ${excludeId ? 'AND b.id != $5' : ''}
        LIMIT 1`,
       params
     );
@@ -228,14 +233,15 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
     }
   }
   if (Number.isFinite(iid)) {
-    const params = [st, et, iid];
+    const params = [st, et, iid, source];
     if (excludeId) params.push(excludeId);
     const result = await client.query(
       `SELECT b.id, u.name as instructor_name, b.start_time, b.end_time
        FROM bookings b JOIN users u ON b.instructor_id = u.id
        WHERE b.instructor_id = $3 AND ${ACTIVE_BOOKING_SQL}
+         AND b.source = $4
          AND b.start_time < $2 AND b.end_time > $1
-         ${excludeId ? 'AND b.id != $4' : ''}
+         ${excludeId ? 'AND b.id != $5' : ''}
        LIMIT 1`,
       params
     );
@@ -245,14 +251,15 @@ async function checkConflicts(client, { aircraft_id, instructor_id, student_id, 
     }
   }
   if (Number.isFinite(sid)) {
-    const params = [st, et, sid];
+    const params = [st, et, sid, source];
     if (excludeId) params.push(excludeId);
     const result = await client.query(
       `SELECT b.id, u.name as student_name, b.start_time, b.end_time
        FROM bookings b JOIN users u ON b.student_id = u.id
        WHERE b.student_id = $3 AND ${ACTIVE_BOOKING_SQL}
+         AND b.source = $4
          AND b.start_time < $2 AND b.end_time > $1
-         ${excludeId ? 'AND b.id != $4' : ''}
+         ${excludeId ? 'AND b.id != $5' : ''}
        LIMIT 1`,
       params
     );
@@ -301,8 +308,8 @@ async function findNextAvailableSlots(client, instructorId, afterTime, durationM
         if (slotEnd > winEnd) break;
         const conflict = await client.query(
           `SELECT 1 FROM bookings WHERE instructor_id = $1 AND ${ACTIVE_BOOKING_SQL_NO_ALIAS}
-           AND start_time < $2 AND end_time > $3 LIMIT 1`,
-          [instructorId, slotEnd.toISOString(), slotStart.toISOString()]
+           AND source = $4 AND start_time < $2 AND end_time > $3 LIMIT 1`,
+          [instructorId, slotEnd.toISOString(), slotStart.toISOString(), getAppEnv()]
         );
         if (conflict.rows.length === 0) {
           slots.push({
@@ -434,11 +441,12 @@ router.get('/roster', authenticateToken, async (req, res) => {
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
       WHERE b.status NOT IN ('cancelled')
+        AND b.source = $3
         AND ${overlapWhere('b', '$1', '$2')}
     `;
-    const params = [dayStart, dayEnd];
+    const params = [dayStart, dayEnd, getAppEnv()];
     if (req.user.role === 'instructor') {
-      query += ' AND b.instructor_id = $3';
+      query += ' AND b.instructor_id = $4';
       params.push(req.user.id);
     }
     query += ' ORDER BY b.start_time';
@@ -542,7 +550,7 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
     if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Only staff can duplicate bookings' });
     }
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     if (b.status === 'cancelled') return res.status(400).json({ error: 'Cannot duplicate cancelled booking' });
@@ -581,10 +589,10 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
     const ins = await client.query(
-      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [b.student_id, b.instructor_id, b.aircraft_id, start_time, end_time, b.lesson_type,
-        b.notes ? `(Copy) ${b.notes}` : 'Duplicated booking', req.user.id, b.booking_type]
+        b.notes ? `(Copy) ${b.notes}` : 'Duplicated booking', req.user.id, b.booking_type, getAppEnv()]
     );
     await client.query('COMMIT');
     res.status(201).json(ins.rows[0]);
@@ -701,9 +709,9 @@ async function createBookingInternal(client, req) {
       }
     }
     const result = await client.query(
-      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [sid, iid, acId, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [sid, iid, acId, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type, getAppEnv()]
     );
     await client.query('COMMIT');
     sendBookingConfirmationEmails(result.rows[0].id, client).catch((err) => console.error('[booking-email] create:', err.message));
@@ -810,8 +818,8 @@ router.post('/', authenticateToken, async (req, res) => {
           const { available: altAvail } = await isInstructorAvailable(client, inst.id, start_time, end_time, localOpts);
           if (altAvail) {
             const conf = await client.query(
-              `SELECT id FROM bookings WHERE instructor_id=$1 AND ${ACTIVE_BOOKING_SQL_NO_ALIAS} AND start_time<$2 AND end_time>$3 LIMIT 1`,
-              [inst.id, end_time, start_time]
+              `SELECT id FROM bookings WHERE instructor_id=$1 AND ${ACTIVE_BOOKING_SQL_NO_ALIAS} AND source=$4 AND start_time<$2 AND end_time>$3 LIMIT 1`,
+              [inst.id, end_time, start_time, getAppEnv()]
             );
             if (conf.rows.length === 0) alternatives.push(inst);
           }
@@ -829,9 +837,9 @@ router.post('/', authenticateToken, async (req, res) => {
       }
     }
     const result = await client.query(
-      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [sid, iid, acId, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type]
+      `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [sid, iid, acId, start_time, end_time, lesson_type || null, notes || null, req.user.id, booking_type, getAppEnv()]
     );
     await client.query('COMMIT');
     const booking = await pool.query(
@@ -840,8 +848,8 @@ router.post('/', authenticateToken, async (req, res) => {
        LEFT JOIN users s ON b.student_id = s.id
        LEFT JOIN users i ON b.instructor_id = i.id
        JOIN aircraft a ON b.aircraft_id = a.id
-       WHERE b.id = $1`,
-      [result.rows[0].id]
+       WHERE b.id = $1 AND b.source = $2`,
+      [result.rows[0].id, getAppEnv()]
     );
     res.status(201).json(booking.rows[0]);
     sendBookingConfirmationEmails(result.rows[0].id).catch((err) => console.error('[booking-email] error:', err.message));
@@ -872,7 +880,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
     await client.query('BEGIN');
     transactionStarted = true;
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE', [bookingId, getAppEnv()]);
     if (existing.rows.length === 0) return abortTransaction(404, { error: 'Booking not found' });
     const b = existing.rows[0];
     if (expected_status && expected_status !== b.status) {
@@ -956,8 +964,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
          booking_type = $9,
          reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
          updated_at = NOW()
-         WHERE id = $10 AND status = $11 RETURNING *`,
-        [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId, b.status]
+         WHERE id = $10 AND status = $11 AND source = $12 RETURNING *`,
+        [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId, b.status, getAppEnv()]
       );
       if (result.rows.length === 0) {
         return abortTransaction(409, { error: 'Booking changed while you were editing. Reload the booking and try again.' });
@@ -982,8 +990,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
        booking_type = $9,
        reminder_sent = ${timeChanged ? 'false' : 'reminder_sent'},
        updated_at = NOW()
-     WHERE id = $10 AND status = $11 RETURNING *`,
-      [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId, b.status]
+     WHERE id = $10 AND status = $11 AND source = $12 RETURNING *`,
+      [sid, iid, acId, stIso, etIso, lesson_type, notes, statusForUpdate, booking_type, bookingId, b.status, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return abortTransaction(409, { error: 'Booking changed while you were editing. Reload the booking and try again.' });
@@ -1007,7 +1015,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE', [req.params.id, getAppEnv()]);
     if (existing.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Booking not found' });
@@ -1030,8 +1038,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
     const reason = req.body?.reason || null;
     const updated = await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
-      [reason, req.params.id]
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed' AND source = $3`,
+      [reason, req.params.id, getAppEnv()]
     );
     if (updated.rowCount !== 1) {
       await client.query('ROLLBACK');

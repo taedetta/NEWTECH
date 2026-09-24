@@ -15,6 +15,7 @@ const { computeFlightCharges } = require('../lib/flight-charges');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { parseStrictNumber } = require('../lib/strict-number');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -90,7 +91,7 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     const endTime = new Date(actual_end_time);
     if (isNaN(endTime.getTime())) return res.status(400).json({ error: 'Invalid actual_end_time' });
     await client.query('BEGIN');
-    const result = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const result = await client.query('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE', [req.params.id, getAppEnv()]);
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Booking not found' });
@@ -117,8 +118,8 @@ router.patch('/:id/end-early', authenticateToken, async (req, res) => {
     }
     const newEndIso = endTime.toISOString();
     const updated = await client.query(
-      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [newEndIso, req.params.id]
+      `UPDATE bookings SET end_time = $1, updated_at = NOW() WHERE id = $2 AND source = $3 RETURNING *`,
+      [newEndIso, req.params.id, getAppEnv()]
     );
     await client.query('COMMIT');
     res.json({ ok: true, new_end_time: newEndIso, booking: updated.rows[0] });
@@ -136,7 +137,7 @@ router.patch('/:id/hours', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const bookingId = parseInt(req.params.id, 10);
-    const existing = await client.query('SELECT id, status, instructor_id FROM bookings WHERE id = $1', [bookingId]);
+    const existing = await client.query('SELECT id, status, instructor_id FROM bookings WHERE id = $1 AND source = $2', [bookingId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const bookingRow = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
@@ -205,7 +206,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
 
     await client.query('BEGIN');
     transactionStarted = true;
-    const bResult = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const bResult = await client.query('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE', [req.params.id, getAppEnv()]);
     if (bResult.rows.length === 0) return abortTransaction(404, { error: 'Booking not found' });
     const b = bResult.rows[0];
     if (b.status !== 'confirmed') return abortTransaction(400, { error: 'Only confirmed bookings can be completed' });
@@ -230,12 +231,12 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       }
       const finishedEnd = completionEndTime(b);
       await client.query(
-        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
-        [finishedEnd, req.params.id]
+        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed' AND source = $3`,
+        [finishedEnd, req.params.id, getAppEnv()]
       );
       await client.query('COMMIT');
       transactionStarted = false;
-      const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+      const updated = await pool.query('SELECT * FROM bookings WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
       res.json({ booking: updated.rows[0], log_id: null });
 
       // Send flight completed email (no_change — no hobbs/tach data)
@@ -284,8 +285,8 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // ── Server-side meter validation: start cannot be before aircraft current reading ──
     if (b.aircraft_id) {
       const acResult = await client.query(
-        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE',
-        [b.aircraft_id]
+        'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE',
+        [b.aircraft_id, getAppEnv()]
       );
       if (acResult.rows.length > 0) {
         const acRow = acResult.rows[0];
@@ -436,8 +437,8 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Update booking — persist hobbs/tach on booking row for billing queries
     await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW() WHERE id = $6`,
-      [hStart, hEnd, tStart, tEnd, finishedEnd, req.params.id]
+       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW() WHERE id = $6 AND source = $7`,
+      [hStart, hEnd, tStart, tEnd, finishedEnd, req.params.id, getAppEnv()]
     );
 
     // Auto-sync instructor hours log from completed flight
@@ -470,7 +471,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     recordHobbsReading(parseInt(req.params.id), req.user.id, hobbsRole, hStart, hEnd)
       .catch(e => console.error('[bookings-completion] hobbs reading error:', e.message));
 
-    const updated = await pool.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+    const updated = await pool.query('SELECT * FROM bookings WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     res.json({ booking: updated.rows[0], log_id: logId });
 
     // Send flight completed email to student + instructor (fire-and-forget)

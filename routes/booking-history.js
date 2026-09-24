@@ -7,8 +7,11 @@ const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings, rollbackAircraftMeterForDeletedBooking } = require('../lib/aircraft-meter');
 const { syncFlightRecord, dateOnly } = require('../lib/sync-flight-record');
+const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
+const { resolveFlightCharges } = require('../lib/flight-charges');
 const { inferLessonType } = require('../lib/booking-rules');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -102,9 +105,10 @@ router.get('/', authenticateToken, async (req, res) => {
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
-      WHERE b.status IN ('completed', 'cancelled')`;
-    const fp = [];
-    let fi = 1;
+      WHERE b.status IN ('completed', 'cancelled')
+        AND b.source = $1`;
+    const fp = [getAppEnv()];
+    let fi = 2;
     // Apply status filter — default to all (completed + cancelled)
     const statusFilter = status || 'all';
     if (statusFilter !== 'all') { fq += ` AND b.status = $${fi++}`; fp.push(statusFilter); }
@@ -139,9 +143,9 @@ router.get('/', authenticateToken, async (req, res) => {
       FROM ground_sessions gs
       LEFT JOIN users s ON gs.student_id = s.id
       LEFT JOIN users i ON gs.instructor_id = i.id
-      WHERE 1=1`;
-    const gp = [];
-    let gi = 1;
+      WHERE gs.source = $1`;
+    const gp = [getAppEnv()];
+    let gi = 2;
     if (startDate) { gq += ` AND gs.session_date >= $${gi++}`; gp.push(startDate); }
     if (endDate) { gq += ` AND gs.session_date <= $${gi++}`; gp.push(endDate); }
     if (student_id) { gq += ` AND gs.student_id = $${gi++}`; gp.push(parseInt(student_id)); }
@@ -189,8 +193,8 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
        FROM bookings b
        JOIN aircraft a ON b.aircraft_id = a.id
        LEFT JOIN flight_logs fl ON fl.booking_id = b.id
-       WHERE b.id = $1`,
-      [bookingId]
+       WHERE b.id = $1 AND b.source = $2`,
+      [bookingId, getAppEnv()]
     );
     if (bkResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = bkResult.rows[0];
@@ -317,7 +321,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
 
-    const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1', [sessionId]);
+    const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1 AND source = $2', [sessionId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     const gs = existing.rows[0];
     if (!canEditGroundSessionHistory(role, userId, gs)) {
@@ -343,8 +347,8 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
         : gs.instruction_charge_amount);
 
     await pool.query(
-      `UPDATE ground_sessions SET session_date = $1, ground_hours = $2, instruction_charge_amount = $3 WHERE id = $4`,
-      [sessionDate, groundHours, instrCharge, sessionId]
+      `UPDATE ground_sessions SET session_date = $1, ground_hours = $2, instruction_charge_amount = $3 WHERE id = $4 AND source = $5`,
+      [sessionDate, groundHours, instrCharge, sessionId, getAppEnv()]
     );
     res.json({ ok: true, ground_session_id: sessionId });
   } catch (err) {
@@ -359,12 +363,12 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
     const { role } = req.user;
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can delete booking history records' });
     const bookingId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT id FROM bookings WHERE id = $1', [bookingId]);
+    const existing = await pool.query('SELECT id FROM bookings WHERE id = $1 AND source = $2', [bookingId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const locked = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+      const locked = await client.query('SELECT * FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE', [bookingId, getAppEnv()]);
       if (locked.rows.length === 0) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'Booking not found' });
@@ -413,7 +417,7 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
       await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
       await client.query('UPDATE training_progress SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
-      await client.query('DELETE FROM bookings WHERE id = $1', [bookingId]);
+      await client.query('DELETE FROM bookings WHERE id = $1 AND source = $2', [bookingId, getAppEnv()]);
       await client.query('COMMIT');
       res.json({ ok: true });
     } catch (err) {
@@ -434,9 +438,9 @@ router.delete('/ground-sessions/:id', authenticateToken, async (req, res) => {
     const { role } = req.user;
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can delete ground session records' });
     const sessionId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT id FROM ground_sessions WHERE id = $1', [sessionId]);
+    const existing = await pool.query('SELECT id FROM ground_sessions WHERE id = $1 AND source = $2', [sessionId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
-    await pool.query('DELETE FROM ground_sessions WHERE id = $1', [sessionId]);
+    await pool.query('DELETE FROM ground_sessions WHERE id = $1 AND source = $2', [sessionId, getAppEnv()]);
     res.json({ ok: true });
   } catch (err) {
     console.error('Ground session history delete error:', err);
@@ -479,23 +483,37 @@ router.post('/manual', authenticateToken, async (req, res) => {
       if (parsedDualHrs.error) return res.status(400).json({ error: parsedDualHrs.error });
       const dualHrs = parsedDualHrs.value;
       const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+      const bookingType = iid ? 'dual' : 'student_solo';
+      const resolvedLessonType = inferLessonType(lesson_type, { booking_type: bookingType, instructor_id: iid });
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        const acRate = (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [acId])).rows[0];
+        const instrRate = iid
+          ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1', [iid])).rows[0]
+          : null;
+        const { aircraftChargeAmount, instructionChargeAmount } = resolveFlightCharges({
+          lessonType: resolvedLessonType,
+          hobbsDelta: hDelta,
+          dualHrs,
+          hourlyRate: acRate?.hourly_rate,
+          instructorRate: instrRate?.instructor_rate,
+        });
         const bkResult = await client.query(
-          `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, lesson_type, notes, created_by, booking_type, hobbs_start, hobbs_end)
-           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11) RETURNING id`,
-          [sid, iid, acId, startTime.toISOString(), endTime.toISOString(), lesson_type || null, notes || null, userId, iid ? 'dual' : 'student_solo', hStart, hEnd]
+          `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, lesson_type, notes, created_by, booking_type, hobbs_start, hobbs_end, source)
+           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+          [sid, iid, acId, startTime.toISOString(), endTime.toISOString(), lesson_type || null, notes || null, userId, bookingType, hStart, hEnd, getAppEnv()]
         );
         const bkId = bkResult.rows[0].id;
         await client.query(
           `INSERT INTO flight_logs
              (booking_id, aircraft_id, student_id, instructor_id, booking_type,
               flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
-              dual_instruction_hours, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-          [bkId, acId, sid, iid, iid ? 'dual' : 'student_solo',
-           flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null]
+              dual_instruction_hours, notes, aircraft_charge_amount, instruction_charge_amount, source)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [bkId, acId, sid, iid, bookingType,
+           flight_date, hStart, hEnd, hDelta, tS, tE, tDelta, dualHrs, notes || null,
+           aircraftChargeAmount, instructionChargeAmount, getAppEnv()]
         );
         if (acId) {
           await applyAircraftMeterReadings(client, acId, {
@@ -512,6 +530,29 @@ router.post('/manual', authenticateToken, async (req, res) => {
            WHERE id = $3`,
           [hDelta, tDelta || 0, sid]
         );
+        if (iid) {
+          await client.query(
+            `UPDATE users SET
+               total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
+               total_tach_hours = COALESCE(total_tach_hours, 0) + $2
+             WHERE id = $3`,
+            [hDelta, tDelta || 0, iid]
+          );
+          const studentName = (await client.query('SELECT name FROM users WHERE id = $1', [sid])).rows[0]?.name || null;
+          await syncInstructorHoursFromFlight(client, {
+            booking: {
+              id: bkId,
+              instructor_id: iid,
+              aircraft_id: acId,
+              booking_type: bookingType,
+              lesson_type: resolvedLessonType,
+            },
+            hobbsFlown: hDelta,
+            dualHrs,
+            flightDate: flight_date,
+            studentName,
+          });
+        }
         await client.query('COMMIT');
         res.json({ booking_id: bkId });
       } catch (err) {
@@ -529,8 +570,8 @@ router.post('/manual', authenticateToken, async (req, res) => {
       const rate = instrRate != null ? Number(instrRate) : null;
       const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
       const gsResult = await pool.query(
-        `INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [sid, iid, flight_date, hrs, Number.isFinite(rate) ? rate : null, chargeAmount, notes || null]
+        `INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [sid, iid, flight_date, hrs, Number.isFinite(rate) ? rate : null, chargeAmount, notes || null, getAppEnv()]
       );
       res.json({ ground_session_id: gsResult.rows[0].id });
     }

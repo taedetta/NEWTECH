@@ -5,6 +5,7 @@ const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { listHoursAuditFlags } = require('../lib/hours-audit');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -17,6 +18,7 @@ const BILLABLE_FLIGHT_SQL = `
   WHERE b.status = 'completed'
     AND COALESCE(b.billing_voided, FALSE) = FALSE
     AND b.student_id IS NOT NULL
+    AND b.source = $SOURCE_PLACEHOLDER
 `;
 
 function hobbsExpr() {
@@ -45,9 +47,9 @@ router.get('/summary', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
     let extra = '';
-    const params = [];
+    const params = [getAppEnv()];
     if (req.user.role === 'instructor') {
-      extra = ' AND b.instructor_id = $1';
+      extra = ' AND b.instructor_id = $2';
       params.push(req.user.id);
     }
 
@@ -57,7 +59,7 @@ router.get('/summary', authenticateToken, async (req, res) => {
         COALESCE(SUM(${hobbsExpr()}), 0) AS total_hours,
         COALESCE(SUM(${acChargeExpr()}), 0) AS total_rental,
         COALESCE(SUM(${instrChargeExpr()}), 0) AS total_instruction
-      ${BILLABLE_FLIGHT_SQL}
+      ${BILLABLE_FLIGHT_SQL.replace('$SOURCE_PLACEHOLDER', '$1')}
       ${extra}
       GROUP BY u.id, u.name, u.role
       HAVING COUNT(DISTINCT b.id) > 0
@@ -95,13 +97,14 @@ router.get('/my-activity', authenticateToken, async (req, res) => {
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
       WHERE b.status = 'completed'
         AND COALESCE(b.billing_voided, FALSE) = FALSE
+        AND b.source = $2
         AND (
           b.student_id = $1
           OR (b.instructor_id = $1 AND b.student_id IS NULL)
         )
       ORDER BY b.start_time DESC
     `;
-    const result = await pool.query(sql, [uid]);
+    const result = await pool.query(sql, [uid, getAppEnv()]);
     res.json(result.rows);
   } catch (err) {
     console.error('Billing my-activity error:', err);
@@ -133,9 +136,9 @@ router.get('/:studentId', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
     let extra = '';
-    const params = [studentId];
+    const params = [studentId, getAppEnv()];
     if (req.user.role === 'instructor') {
-      extra = ' AND b.instructor_id = $2';
+      extra = ' AND b.instructor_id = $3';
       params.push(req.user.id);
     }
 
@@ -153,17 +156,17 @@ router.get('/:studentId', authenticateToken, async (req, res) => {
         inst.name AS instructor_name,
         ${acChargeExpr()} AS aircraft_charge_amount,
         ${instrChargeExpr()} AS instruction_charge_amount
-      ${BILLABLE_FLIGHT_SQL}
+      ${BILLABLE_FLIGHT_SQL.replace('$SOURCE_PLACEHOLDER', '$2')}
         AND b.student_id = $1
         ${extra}
       ORDER BY b.start_time DESC
     `;
     const result = await pool.query(sql, params);
 
-    const gsParams = [studentId];
+    const gsParams = [studentId, getAppEnv()];
     let gsExtra = '';
     if (req.user.role === 'instructor') {
-      gsExtra = ' AND gs.instructor_id = $2';
+      gsExtra = ' AND gs.instructor_id = $3';
       gsParams.push(req.user.id);
     }
     const gsResult = await pool.query(`
@@ -171,7 +174,7 @@ router.get('/:studentId', authenticateToken, async (req, res) => {
         gs.instruction_charge_amount, gs.notes, inst.id AS instructor_id, inst.name AS instructor_name
       FROM ground_sessions gs
       JOIN users inst ON inst.id = gs.instructor_id
-      WHERE gs.student_id = $1 ${gsExtra}
+      WHERE gs.student_id = $1 AND gs.source = $2 ${gsExtra}
       ORDER BY gs.session_date DESC
     `, gsParams);
 
@@ -189,7 +192,7 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
     const bookingId = parseInt(req.params.bookingId, 10);
     if (!Number.isFinite(bookingId)) return res.status(400).json({ error: 'Invalid booking id' });
     await client.query('BEGIN');
-    const locked = await client.query('SELECT id, billing_voided FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    const locked = await client.query('SELECT id, billing_voided FROM bookings WHERE id = $1 AND source = $2 FOR UPDATE', [bookingId, getAppEnv()]);
     if (locked.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Booking not found' });
@@ -198,7 +201,7 @@ router.delete('/flights/:bookingId', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Already voided' });
     }
-    await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1`, [bookingId]);
+    await client.query(`UPDATE bookings SET billing_voided = TRUE, updated_at = NOW() WHERE id = $1 AND source = $2`, [bookingId, getAppEnv()]);
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
@@ -214,7 +217,7 @@ router.delete('/ground/:gsId', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can delete ground sessions' });
     const gsId = parseInt(req.params.gsId);
-    const result = await pool.query(`DELETE FROM ground_sessions WHERE id = $1 RETURNING id`, [gsId]);
+    const result = await pool.query(`DELETE FROM ground_sessions WHERE id = $1 AND source = $2 RETURNING id`, [gsId, getAppEnv()]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     res.json({ ok: true });
   } catch (err) {

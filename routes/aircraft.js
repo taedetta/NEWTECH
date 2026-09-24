@@ -7,6 +7,7 @@ const { uploadBuffer } = require('../lib/r2-storage');
 const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
 const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ function parseOptionalNumber(value, fieldName, { max = 99999 } = {}) {
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM aircraft ORDER BY tail_number');
+    const result = await pool.query('SELECT * FROM aircraft WHERE source = $1 ORDER BY tail_number', [getAppEnv()]);
     res.json(result.rows);
   } catch (err) {
     console.error('Aircraft list error:', err);
@@ -39,9 +40,9 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     const rate = parseOptionalNumber(hourly_rate, 'hourly_rate');
     if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
-      `INSERT INTO aircraft (tail_number, make_model, type, year, hourly_rate, notes)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, rate.value, notes]
+      `INSERT INTO aircraft (tail_number, make_model, type, year, hourly_rate, notes, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, rate.value, notes, getAppEnv()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -62,8 +63,8 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
       `UPDATE aircraft SET tail_number = COALESCE($1, tail_number), make_model = COALESCE($2, make_model),
        type = COALESCE($3, type), year = COALESCE($4, year), hourly_rate = COALESCE($5, hourly_rate),
        status = COALESCE($6, status), notes = COALESCE($7, notes), updated_at = NOW()
-       WHERE id = $8 RETURNING *`,
-      [tail_number?.toUpperCase(), make_model, type, year, rate.value, status, notes, req.params.id]
+       WHERE id = $8 AND source = $9 RETURNING *`,
+      [tail_number?.toUpperCase(), make_model, type, year, rate.value, status, notes, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     res.json(result.rows[0]);
@@ -77,7 +78,7 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
-    const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);
+    const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     if (aircraft.rows.length === 0) {
       return res.status(404).json({ error: 'Aircraft not found' });
     }
@@ -87,22 +88,22 @@ router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (r
 
     // Cancel future uncancelled bookings with reason — aircraft_id scoping is sufficient
     const cancelBookingsSql = `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW()
-       WHERE aircraft_id = $2 AND end_time > NOW() AND status NOT IN ('cancelled', 'completed')`;
-    await client.query(cancelBookingsSql, ['Aircraft removed from fleet', req.params.id]);
+       WHERE aircraft_id = $2 AND source = $3 AND end_time > NOW() AND status NOT IN ('cancelled', 'completed')`;
+    await client.query(cancelBookingsSql, ['Aircraft removed from fleet', req.params.id, getAppEnv()]);
 
     // Count affected bookings for response
     const cancelledBookings = await client.query(
-      `SELECT COUNT(*) FROM bookings WHERE aircraft_id = $1 AND end_time > NOW() AND status = 'cancelled' AND cancellation_reason = 'Aircraft removed from fleet'`,
-      [req.params.id]
+      `SELECT COUNT(*) FROM bookings WHERE aircraft_id = $1 AND source = $2 AND end_time > NOW() AND status = 'cancelled' AND cancellation_reason = 'Aircraft removed from fleet'`,
+      [req.params.id, getAppEnv()]
     );
 
     // Delete related downtime records — aircraft_id scoping is sufficient
-    await client.query('DELETE FROM aircraft_downtime WHERE aircraft_id = $1', [req.params.id]);
+    await client.query('DELETE FROM aircraft_downtime WHERE aircraft_id = $1 AND source = $2', [req.params.id, getAppEnv()]);
 
-    // Delete related squawk records — aircraft_id scoping is sufficient
-    await client.query('DELETE FROM squawks WHERE aircraft_id = $1', [req.params.id]);
+    // Delete related squawk records in the current source only.
+    await client.query('DELETE FROM squawks WHERE aircraft_id = $1 AND source = $2', [req.params.id, getAppEnv()]);
 
-    await client.query('DELETE FROM aircraft WHERE id = $1', [req.params.id]);
+    await client.query('DELETE FROM aircraft WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
 
     await client.query('COMMIT');
 
@@ -129,8 +130,8 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
     }
     const result = await pool.query(
       `UPDATE aircraft SET status = $1, maintenance_reason = $2, updated_at = NOW()
-       WHERE id = $3 RETURNING *`,
-      [status, status === 'maintenance' ? (reason || null) : null, req.params.id]
+       WHERE id = $3 AND source = $4 RETURNING *`,
+      [status, status === 'maintenance' ? (reason || null) : null, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
 
@@ -176,8 +177,8 @@ router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_airc
   try {
     await client.query('BEGIN');
     const current = await client.query(
-      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE',
+      [req.params.id, getAppEnv()]
     );
     if (current.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -209,8 +210,9 @@ router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_airc
     }
     sets.push('updated_at = NOW()');
     vals.push(req.params.id);
+    vals.push(getAppEnv());
     const result = await client.query(
-      `UPDATE aircraft SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE aircraft SET ${sets.join(', ')} WHERE id = $${idx} AND source = $${idx + 1} RETURNING *`,
       vals
     );
     if (hobbs != null) {
@@ -268,11 +270,12 @@ router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_
     const result = await pool.query(
       `UPDATE aircraft
        SET next_100hr_due = $1, next_annual_due = $2, updated_at = NOW()
-       WHERE id = $3 RETURNING *`,
+       WHERE id = $3 AND source = $4 RETURNING *`,
       [
         due.value,
         next_annual_due || null,
-        req.params.id
+        req.params.id,
+        getAppEnv()
       ]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });

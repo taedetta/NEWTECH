@@ -15,6 +15,7 @@ const {
   formatDowntimeLabel,
   findBookingsOverlappingDowntime,
 } = require('../lib/downtime-overlap');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -40,10 +41,10 @@ function downtimeListQuery(aircraft_id) {
     JOIN aircraft a ON d.aircraft_id = a.id
     LEFT JOIN users u ON d.created_by = u.id
   `;
-  const params = [];
-  let where = '';
+  const params = [getAppEnv()];
+  let where = ' WHERE d.source = $1';
   if (aircraft_id) {
-    where = ' WHERE d.aircraft_id = $1';
+    where += ' AND d.aircraft_id = $2';
     params.push(parseInt(aircraft_id, 10));
   }
   return { base, where, params };
@@ -135,8 +136,8 @@ router.get('/check', authenticateToken, async (req, res) => {
     }
     const result = await pool.query(
       `SELECT * FROM aircraft_downtime
-       WHERE aircraft_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
-      [parseInt(aircraft_id, 10), normalizeDateInput(date)]
+       WHERE aircraft_id = $1 AND source = $3 AND start_date <= $2::date AND end_date >= $2::date`,
+      [parseInt(aircraft_id, 10), normalizeDateInput(date), getAppEnv()]
     );
     const dateStr = normalizeDateInput(date);
     const rows = result.rows.filter((r) => downtimeTouchesDate(r, dateStr));
@@ -165,9 +166,9 @@ router.get('/by-date', authenticateToken, async (req, res) => {
       `SELECT d.*, a.tail_number, a.make_model
        FROM aircraft_downtime d
        JOIN aircraft a ON d.aircraft_id = a.id
-       WHERE d.start_date <= $1::date AND d.end_date >= $1::date
+       WHERE d.source = $2 AND d.start_date <= $1::date AND d.end_date >= $1::date
        ORDER BY d.aircraft_id, d.start_date`,
-      [date]
+      [date, getAppEnv()]
     );
     res.json(mapDowntimeRows(result.rows));
   } catch (err) {
@@ -187,9 +188,9 @@ router.get('/range', authenticateToken, async (req, res) => {
       `SELECT d.*, a.tail_number, a.make_model
        FROM aircraft_downtime d
        JOIN aircraft a ON d.aircraft_id = a.id
-       WHERE d.start_date <= $2::date AND d.end_date >= $1::date
+       WHERE d.source = $3 AND d.start_date <= $2::date AND d.end_date >= $1::date
        ORDER BY d.start_date, d.aircraft_id, d.start_time NULLS FIRST`,
-      [start, end]
+      [start, end, getAppEnv()]
     );
     res.json(mapDowntimeRows(result.rows));
   } catch (err) {
@@ -213,8 +214,8 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     try {
       result = await pool.query(
         `INSERT INTO aircraft_downtime
-           (aircraft_id, start_date, end_date, start_time, end_time, all_day, reason, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+           (aircraft_id, start_date, end_date, start_time, end_time, all_day, reason, created_by, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
         [
           parseInt(aircraft_id, 10),
           parsed.start_date,
@@ -224,14 +225,15 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
           parsed.all_day,
           reason || null,
           req.user.id,
+          getAppEnv(),
         ]
       );
     } catch (err) {
       if (!/start_time|end_time|all_day/i.test(err.message)) throw err;
       result = await pool.query(
-        `INSERT INTO aircraft_downtime (aircraft_id, start_date, end_date, reason, created_by)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [parseInt(aircraft_id, 10), parsed.start_date, parsed.end_date, reason || null, req.user.id]
+        `INSERT INTO aircraft_downtime (aircraft_id, start_date, end_date, reason, created_by, source)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [parseInt(aircraft_id, 10), parsed.start_date, parsed.end_date, reason || null, req.user.id, getAppEnv()]
       );
     }
 
@@ -244,13 +246,6 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     }
 
     const overlapping_bookings = await findBookingsOverlappingDowntime(pool, parseInt(aircraft_id, 10), result.rows[0]);
-
-    // Timed/scheduled downtime — clear global maintenance flag so aircraft stays bookable outside the window
-    await pool.query(
-      `UPDATE aircraft SET status = 'available', maintenance_reason = NULL, updated_at = NOW()
-       WHERE id = $1 AND status = 'maintenance'`,
-      [parseInt(aircraft_id, 10)]
-    );
 
     res.status(201).json({
       ...normalizeDowntimeRow(result.rows[0]),
@@ -267,8 +262,8 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 router.delete('/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const result = await pool.query(
-      'DELETE FROM aircraft_downtime WHERE id = $1 RETURNING id',
-      [parseInt(req.params.id, 10)]
+      'DELETE FROM aircraft_downtime WHERE id = $1 AND source = $2 RETURNING id',
+      [parseInt(req.params.id, 10), getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Downtime record not found' });
     res.json({ ok: true });

@@ -320,7 +320,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.post('/reaudit', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const { start_date, end_date, instructor_id } = req.body || {};
     const conditions = [];
     const params = [];
@@ -384,7 +386,9 @@ router.post('/reaudit', authenticateToken, async (req, res) => {
 router.get('/prefill', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     let instructorId = userId;
     if ((role === 'owner' || role === 'admin') && req.query.instructor_id) instructorId = parseInt(req.query.instructor_id);
     const instrResult = await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [instructorId]);

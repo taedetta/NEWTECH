@@ -7,6 +7,7 @@
 const pool = require('./index');
 const { sendEmail } = require('../email-templates');
 const { formatDate } = require('../lib/school-timezone');
+const { syncFlightRecord } = require('../lib/sync-flight-record');
 
 const DISCREPANCY_THRESHOLD = 0.1; // hours — flag if delta exceeds this
 const OWNER_EMAIL = 'blankthe97@gmail.com';
@@ -241,15 +242,44 @@ async function listHoursAuditDiscrepancies({ status } = {}) {
  * Resolve a discrepancy. resolvedBy = userId, reading = 'student'|'instructor', note = optional string.
  */
 async function resolveDiscrepancy(id, resolvedBy, reading, note) {
-  const result = await pool.query(`
-    UPDATE flight_discrepancies
-    SET status = 'resolved', resolved_by = $2, resolved_at = NOW(),
-        resolution_reading = $3, resolution_note = $4
-    WHERE id = $1
-    RETURNING *
-  `, [id, resolvedBy, reading, note || null]);
-  if (result.rows.length === 0) throw Object.assign(new Error('Not found'), { statusCode: 404 });
-  return result.rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM flight_discrepancies WHERE id = $1 FOR UPDATE', [id]);
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    }
+    const discrepancy = existing.rows[0];
+    const prefix = reading === 'student' ? 'student' : 'instructor';
+    const hobbsStart = discrepancy[`${prefix}_hobbs_start`];
+    const hobbsEnd = discrepancy[`${prefix}_hobbs_end`];
+    if (hobbsStart == null || hobbsEnd == null) {
+      await client.query('ROLLBACK');
+      throw Object.assign(new Error('Selected reading is incomplete'), { statusCode: 400 });
+    }
+
+    await syncFlightRecord(client, discrepancy.booking_id, {
+      hobbs_start: hobbsStart,
+      hobbs_end: hobbsEnd,
+      preserve_instructor_hours_rates: true,
+    });
+
+    const result = await client.query(`
+      UPDATE flight_discrepancies
+      SET status = 'resolved', resolved_by = $2, resolved_at = NOW(),
+          resolution_reading = $3, resolution_note = $4
+      WHERE id = $1
+      RETURNING *
+    `, [id, resolvedBy, reading, note || null]);
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
