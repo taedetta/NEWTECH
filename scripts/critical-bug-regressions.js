@@ -725,9 +725,13 @@ function testSubagentFollowUpGuards() {
   assert(
     discrepanciesSrc.includes("const { syncFlightRecord } = require('../lib/sync-flight-record')")
       && discrepanciesSrc.includes('JOIN bookings b ON b.id = d.booking_id')
+      && discrepanciesSrc.includes('LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id')
       && discrepanciesSrc.includes('WHERE d.id = $1 AND b.source = $2')
+      && discrepanciesSrc.includes('existing_aircraft_charge_amount')
+      && discrepanciesSrc.includes('syncPatch.aircraft_charge_amount = discrepancy.existing_aircraft_charge_amount')
+      && discrepanciesSrc.includes('syncPatch.instruction_charge_amount = discrepancy.existing_instruction_charge_amount')
       && discrepanciesSrc.includes('await syncFlightRecord(client, discrepancy.booking_id'),
-    'discrepancy resolution must sync the selected reading into authoritative flight records in a transaction'
+    'discrepancy resolution must sync selected readings without recomputing existing flight-log charges'
   );
 
   const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
