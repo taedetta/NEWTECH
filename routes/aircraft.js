@@ -144,10 +144,11 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
          LEFT JOIN users s ON s.id = b.student_id
          LEFT JOIN users i ON i.id = b.instructor_id
          WHERE b.aircraft_id = $1
+           AND b.source = $2
            AND b.status NOT IN ('cancelled', 'completed')
            AND b.end_time > NOW()
          ORDER BY b.start_time ASC`,
-        [req.params.id]
+        [req.params.id, getAppEnv()]
       );
       overlapping_bookings = future.rows;
     }

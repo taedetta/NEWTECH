@@ -4,6 +4,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const trainingDb = require('../db/training');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -421,7 +422,11 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
       ORDER BY st.started_at
     `, [studentId]);
     if (enrollResult.rows.length === 0) return res.json({ programs: [] });
-    const flightResult = await pool.query(`SELECT hobbs_delta, is_night, is_xc, is_instrument, is_solo, flight_date FROM flight_logs WHERE student_id = $1`, [studentId]);
+    const flightResult = await pool.query(
+      `SELECT hobbs_delta, is_night, is_xc, is_instrument, is_solo, flight_date
+       FROM flight_logs WHERE student_id = $1 AND source = $2`,
+      [studentId, getAppEnv()]
+    );
     const flights = flightResult.rows;
     const toHrs = (f) => parseFloat(f.hobbs_delta) || 0;
     const hoursMap = {
@@ -516,8 +521,8 @@ router.get('/cohort-stats/:programCode', authenticateToken, async (req, res) => 
     const programId = progResult.rows[0].id;
     const studentsResult = await pool.query(`
       SELECT st.student_id, COALESCE(SUM(fl.hobbs_delta), 0) as total_hours
-      FROM student_training st LEFT JOIN flight_logs fl ON fl.student_id = st.student_id
-      WHERE st.program_id = $1 AND st.status = 'active' GROUP BY st.student_id`, [programId]);
+      FROM student_training st LEFT JOIN flight_logs fl ON fl.student_id = st.student_id AND fl.source = $2
+      WHERE st.program_id = $1 AND st.status = 'active' GROUP BY st.student_id`, [programId, getAppEnv()]);
     const cohort = studentsResult.rows;
     if (cohort.length < 2) return res.json({ cohort_size: cohort.length, enough_data: false });
     const hours = cohort.map(s => parseFloat(s.total_hours) || 0).sort((a, b) => a - b);
@@ -595,7 +600,7 @@ router.get('/students', authenticateToken, async (req, res) => {
     const result = await pool.query(`
       SELECT
         u.id, u.name, u.phone_number,
-        (SELECT MAX(flight_date) FROM flight_logs WHERE student_id = u.id) AS last_flight_date,
+        (SELECT MAX(flight_date) FROM flight_logs WHERE student_id = u.id AND source = $${canViewAll ? 1 : 2}) AS last_flight_date,
         COALESCE(json_agg(DISTINCT jsonb_build_object(
           'id', st.id,
           'program_code', tp.code,
@@ -616,7 +621,7 @@ router.get('/students', authenticateToken, async (req, res) => {
       WHERE u.role = 'student' AND u.deleted_at IS NULL${instructorFilter}
       GROUP BY u.id, u.name, u.phone_number, last_flight_date
       ORDER BY u.name
-    `, params);
+    `, [...params, getAppEnv()]);
     res.json(result.rows);
   } catch (err) {
     console.error('[training] GET /students error:', err.message);

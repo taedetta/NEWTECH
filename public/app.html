@@ -9196,6 +9196,8 @@ function findCachedBooking(bookingId) {
     b = _dashboardBookingsCache.bookings.find(bk => bk.id === id);
     if (b) return b;
   }
+  b = completableBookings.find(bk => bk.id === id);
+  if (b) return b;
   return null;
 }
 

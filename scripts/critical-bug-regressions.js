@@ -320,8 +320,8 @@ function testFollowUpAuthorizationAndConsistencyGuards() {
   const updateRoute = instructorHoursSrc.slice(instructorHoursSrc.indexOf("router.put('/:id'"), instructorHoursSrc.indexOf("router.post('/reaudit'"));
   assert(
     updateRoute.includes("await client.query('BEGIN')")
-      && updateRoute.includes('SELECT * FROM instructor_hours WHERE id = $1 FOR UPDATE')
-      && updateRoute.indexOf("await client.query('BEGIN')") < updateRoute.indexOf('SELECT * FROM instructor_hours WHERE id = $1 FOR UPDATE'),
+      && updateRoute.includes('SELECT * FROM instructor_hours WHERE id = $1 AND source = $2 FOR UPDATE')
+      && updateRoute.indexOf("await client.query('BEGIN')") < updateRoute.indexOf('SELECT * FROM instructor_hours WHERE id = $1 AND source = $2 FOR UPDATE'),
     'instructor-hours edit must lock the source row inside a transaction before syncing linked records'
   );
 
@@ -538,7 +538,7 @@ function testSyncFlightRecordLocksRowsAndReconcilesMeters() {
     'syncFlightRecord must lock the source-scoped booking row before reading old hour totals'
   );
   assert(
-    syncSrc.includes('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE'),
+    syncSrc.includes('SELECT * FROM flight_logs WHERE booking_id = $1 AND source = $2 FOR UPDATE'),
     'syncFlightRecord must lock flight log row before adjusting cumulative hours'
   );
   assert(
@@ -614,7 +614,7 @@ function testBookingMutationAndHourSyncRegressionGuards() {
 
   const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
   assert(
-    instructorHoursSrc.includes('SELECT id FROM instructor_hours WHERE booking_id = $1 LIMIT 1')
+    instructorHoursSrc.includes('SELECT id FROM instructor_hours WHERE booking_id = $1 AND source = $2 LIMIT 1')
       && instructorHoursSrc.includes('Instructor hours already exist for this booking'),
     'manual instructor-hour creates must reject duplicate linked booking rows'
   );
@@ -748,7 +748,7 @@ function testSubagentFollowUpGuards() {
   assert(
     discrepanciesSrc.includes("const { syncFlightRecord } = require('../lib/sync-flight-record')")
       && discrepanciesSrc.includes('JOIN bookings b ON b.id = d.booking_id')
-      && discrepanciesSrc.includes('LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id')
+      && discrepanciesSrc.includes('LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id AND fl.source = b.source')
       && discrepanciesSrc.includes('WHERE d.id = $1 AND b.source = $2')
       && discrepanciesSrc.includes('existing_aircraft_charge_amount')
       && discrepanciesSrc.includes('syncPatch.aircraft_charge_amount = discrepancy.existing_aircraft_charge_amount')
@@ -841,6 +841,78 @@ function testSharedDatabaseReadSourceGuards() {
   );
 }
 
+function testBetaSweepRegressionGuards() {
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const createRolesStart = bookingsSrc.indexOf('const BOOKING_CREATE_ROLES');
+  const createRolesEnd = bookingsSrc.indexOf(';', createRolesStart);
+  const createRolesDecl = bookingsSrc.slice(createRolesStart, createRolesEnd);
+  assert(
+    createRolesDecl.includes("'owner'")
+      && createRolesDecl.includes("'admin'")
+      && createRolesDecl.includes("'instructor'")
+      && createRolesDecl.includes("'student'")
+      && createRolesDecl.includes("'renter'")
+      && !createRolesDecl.includes("'maintenance'")
+      && bookingsSrc.includes('!BOOKING_CREATE_ROLES.has(req.user.role)')
+      && createRolesStart >= 0,
+    'maintenance and other non-booking roles must not be allowed to create flight bookings'
+  );
+
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  assert(
+    completionSrc.includes('SELECT id FROM flight_logs WHERE booking_id = $1 AND source = $2')
+      && completionSrc.includes('aircraft_charge_amount, instruction_charge_amount, source)')
+      && completionSrc.includes('WHERE booking_id = $17 AND source = $16')
+      && completionSrc.includes('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1 AND source = $2'),
+    'flight completion must source-scope flight logs and cumulative user-hour updates'
+  );
+
+  const syncSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-flight-record.js'), 'utf8');
+  assert(
+    syncSrc.includes('WHERE id = $3 AND source = $4')
+      && syncSrc.includes('SELECT * FROM flight_logs WHERE booking_id = $1 AND source = $2 FOR UPDATE')
+      && syncSrc.includes('source = $15, updated_at = NOW()')
+      && syncSrc.includes('aircraft_charge_amount, instruction_charge_amount, source)'),
+    'completed-flight sync must source-scope flight logs and user-hour deltas'
+  );
+
+  const syncInstructorSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-instructor-hours.js'), 'utf8');
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    syncInstructorSrc.includes('SELECT id FROM instructor_hours WHERE booking_id = $1 AND source = $2')
+      && syncInstructorSrc.includes('audit_status = $11, audit_message = $12, source = $13')
+      && syncInstructorSrc.includes('audit_status, audit_message, source)')
+      && instructorHoursSrc.includes('DELETE FROM instructor_hours WHERE instructor_id = $1 AND source = $2')
+      && instructorHoursSrc.includes('const conditions = [`ih.source = $1`]')
+      && instructorHoursSrc.includes('LEFT JOIN flight_logs fl ON fl.booking_id = ih.booking_id AND fl.source = ih.source'),
+    'instructor-hours create/list/sync/delete paths must be source-scoped'
+  );
+
+  const flightLogsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'flight-logs.js'), 'utf8');
+  assert(
+    flightLogsSrc.includes("let where = ['fl.source = $1']")
+      && flightLogsSrc.includes('SELECT * FROM flight_logs WHERE id = $1 AND source = $2')
+      && flightLogsSrc.includes('DELETE FROM flight_logs WHERE id = $1 AND source = $2'),
+    'flight-log API reads and mutations must be source-scoped'
+  );
+
+  const downtimeOverlapSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'downtime-overlap.js'), 'utf8');
+  const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
+  assert(
+    downtimeOverlapSrc.includes('AND b.source = $4')
+      && aircraftSrc.includes('AND b.source = $2')
+      && aircraftSrc.includes('[req.params.id, getAppEnv()]'),
+    'downtime/maintenance overlap previews must only show bookings from the current source'
+  );
+
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert(
+    appSrc.includes('b = completableBookings.find(bk => bk.id === id);')
+      && appSrc.includes('if (b) return b;'),
+    'Flight Log missing-hours completion must use completableBookings cache before opening the post-flight wizard'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -869,6 +941,7 @@ async function main() {
   testSquawkFullEditRoute();
   testSubagentFollowUpGuards();
   testSharedDatabaseReadSourceGuards();
+  testBetaSweepRegressionGuards();
   console.log('critical bug regressions passed');
 }
 

@@ -265,7 +265,7 @@ async function resolveDiscrepancy(id, resolvedBy, reading, note) {
               fl.instruction_charge_amount AS existing_instruction_charge_amount
        FROM flight_discrepancies d
        JOIN bookings b ON b.id = d.booking_id
-       LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id
+       LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id AND fl.source = b.source
        WHERE d.id = $1 AND b.source = $2
        FOR UPDATE OF d`,
       [id, getAppEnv()]

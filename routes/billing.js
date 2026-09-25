@@ -14,7 +14,7 @@ const BILLABLE_FLIGHT_SQL = `
   INNER JOIN users u ON u.id = b.student_id AND u.deleted_at IS NULL
   LEFT JOIN aircraft a ON a.id = b.aircraft_id
   LEFT JOIN users inst ON inst.id = b.instructor_id
-  LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+  LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
   WHERE b.status = 'completed'
     AND COALESCE(b.billing_voided, FALSE) = FALSE
     AND b.student_id IS NOT NULL
@@ -94,7 +94,7 @@ router.get('/my-activity', authenticateToken, async (req, res) => {
       LEFT JOIN users s ON s.id = b.student_id AND s.deleted_at IS NULL
       LEFT JOIN aircraft a ON a.id = b.aircraft_id
       LEFT JOIN users inst ON inst.id = b.instructor_id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
       WHERE b.status = 'completed'
         AND COALESCE(b.billing_voided, FALSE) = FALSE
         AND b.source = $2

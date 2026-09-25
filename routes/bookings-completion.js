@@ -364,7 +364,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       instructorRate: instrRate?.instructor_rate,
     });
     // Upsert flight_log — aircraft_id, student_id, instructor_id, booking_type are required
-    const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1', [req.params.id]);
+    const existingLog = await client.query('SELECT id FROM flight_logs WHERE booking_id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     let logId;
     if (existingLog.rows.length > 0) {
       await client.query(
@@ -374,10 +374,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
           dual_instruction_hours = $8, notes = $9,
           is_night = $10, is_xc = $11, is_instrument = $12, is_solo = $13,
           aircraft_charge_amount = $14, instruction_charge_amount = $15,
-          updated_at = NOW()
-         WHERE booking_id = $16`,
+          source = $16, updated_at = NOW()
+         WHERE booking_id = $17 AND source = $16`,
         [flight_date, hStart, hEnd, hobbsFlown, tStart, tEnd, tachFlown, dualHrs, notes || null,
-         nightFlag, xcFlag, instrumentFlag, soloFlag, aircraftChargeAmt, instrChargeAmt, req.params.id]
+         nightFlag, xcFlag, instrumentFlag, soloFlag, aircraftChargeAmt, instrChargeAmt, getAppEnv(), req.params.id]
       );
       logId = existingLog.rows[0].id;
     } else {
@@ -387,14 +387,14 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
             flight_date, hobbs_start, hobbs_end, hobbs_delta, tach_start, tach_end, tach_delta,
             dual_instruction_hours, notes, submitted_by,
             is_night, is_xc, is_instrument, is_solo,
-            aircraft_charge_amount, instruction_charge_amount)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+            aircraft_charge_amount, instruction_charge_amount, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
          RETURNING id`,
         [req.params.id, b.aircraft_id, b.student_id, b.instructor_id, b.booking_type || 'dual',
          flight_date, hStart, hEnd, hobbsFlown, tStart, tEnd, tachFlown,
          dualHrs, notes || null, req.user.id,
          nightFlag, xcFlag, instrumentFlag, soloFlag,
-         aircraftChargeAmt, instrChargeAmt]
+         aircraftChargeAmt, instrChargeAmt, getAppEnv()]
       );
       logId = logResult.rows[0].id;
     }
@@ -409,27 +409,27 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
     // Update student cumulative hours
     if (b.student_id) {
-      const userHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1', [b.student_id]);
+      const userHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1 AND source = $2', [b.student_id, getAppEnv()]);
       if (userHobbs.rows.length > 0) {
         await client.query(
           `UPDATE users SET
              total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
              total_tach_hours = COALESCE(total_tach_hours, 0) + $2
-           WHERE id = $3`,
-          [hobbsFlown, tachFlown || 0, b.student_id]
+           WHERE id = $3 AND source = $4`,
+          [hobbsFlown, tachFlown || 0, b.student_id, getAppEnv()]
         );
       }
     }
     // Update instructor cumulative hours
     if (b.instructor_id) {
-      const instrHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1', [b.instructor_id]);
+      const instrHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1 AND source = $2', [b.instructor_id, getAppEnv()]);
       if (instrHobbs.rows.length > 0) {
         await client.query(
           `UPDATE users SET
              total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
              total_tach_hours = COALESCE(total_tach_hours, 0) + $2
-           WHERE id = $3`,
-          [hobbsFlown, tachFlown || 0, b.instructor_id]
+           WHERE id = $3 AND source = $4`,
+          [hobbsFlown, tachFlown || 0, b.instructor_id, getAppEnv()]
         );
       }
     }
@@ -569,7 +569,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
       WHERE b.id = $1 AND b.source = $2
     `, [req.params.id, getAppEnv()]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });

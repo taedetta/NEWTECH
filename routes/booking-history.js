@@ -104,7 +104,7 @@ router.get('/', authenticateToken, async (req, res) => {
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
       WHERE b.status IN ('completed', 'cancelled')
         AND b.source = $1`;
     const fp = [getAppEnv()];
@@ -192,7 +192,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       `SELECT b.*, a.hourly_rate, fl.flight_date AS existing_flight_date
        FROM bookings b
        JOIN aircraft a ON b.aircraft_id = a.id
-       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+       LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
        WHERE b.id = $1 AND b.source = $2`,
       [bookingId, getAppEnv()]
     );
@@ -374,7 +374,7 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
         return res.status(404).json({ error: 'Booking not found' });
       }
       const b = locked.rows[0];
-      const logResult = await client.query('SELECT * FROM flight_logs WHERE booking_id = $1 FOR UPDATE', [bookingId]);
+      const logResult = await client.query('SELECT * FROM flight_logs WHERE booking_id = $1 AND source = $2 FOR UPDATE', [bookingId, getAppEnv()]);
       const log = logResult.rows[0] || null;
       if (b.status === 'completed') {
         const hobbsDelta = log?.hobbs_delta != null
@@ -389,8 +389,8 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
               `UPDATE users SET
                  total_hobbs_hours = COALESCE(total_hobbs_hours, 0) - $1,
                  total_tach_hours = COALESCE(total_tach_hours, 0) - $2
-               WHERE id = $3`,
-              [hobbsDelta, tachDelta, b.student_id]
+               WHERE id = $3 AND source = $4`,
+              [hobbsDelta, tachDelta, b.student_id, getAppEnv()]
             );
           }
           if (b.instructor_id) {
@@ -398,8 +398,8 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
               `UPDATE users SET
                  total_hobbs_hours = COALESCE(total_hobbs_hours, 0) - $1,
                  total_tach_hours = COALESCE(total_tach_hours, 0) - $2
-               WHERE id = $3`,
-              [hobbsDelta, tachDelta, b.instructor_id]
+               WHERE id = $3 AND source = $4`,
+              [hobbsDelta, tachDelta, b.instructor_id, getAppEnv()]
             );
           }
         }
@@ -408,11 +408,11 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
         await rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log);
       }
       // Clean up related rows first; several booking_id FKs are RESTRICT by default.
-      await client.query('DELETE FROM flight_logs WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM flight_logs WHERE booking_id = $1 AND source = $2', [bookingId, getAppEnv()]);
       await client.query('DELETE FROM aircraft_hours_history WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM flight_discrepancies WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM flight_hobbs_readings WHERE booking_id = $1', [bookingId]);
-      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1', [bookingId]);
+      await client.query('DELETE FROM instructor_hours WHERE booking_id = $1 AND source = $2', [bookingId, getAppEnv()]);
       await client.query('DELETE FROM billing_entries WHERE booking_id = $1', [bookingId]);
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
       await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
@@ -527,16 +527,16 @@ router.post('/manual', authenticateToken, async (req, res) => {
           `UPDATE users SET
              total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
              total_tach_hours = COALESCE(total_tach_hours, 0) + $2
-           WHERE id = $3`,
-          [hDelta, tDelta || 0, sid]
+           WHERE id = $3 AND source = $4`,
+          [hDelta, tDelta || 0, sid, getAppEnv()]
         );
         if (iid) {
           await client.query(
             `UPDATE users SET
                total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
                total_tach_hours = COALESCE(total_tach_hours, 0) + $2
-             WHERE id = $3`,
-            [hDelta, tDelta || 0, iid]
+             WHERE id = $3 AND source = $4`,
+            [hDelta, tDelta || 0, iid, getAppEnv()]
           );
           const studentName = (await client.query('SELECT name FROM users WHERE id = $1', [sid])).rows[0]?.name || null;
           await syncInstructorHoursFromFlight(client, {

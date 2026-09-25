@@ -5,6 +5,7 @@
 // Does NOT own: users, bookings, flight_logs.
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 /** Ensure upsert target exists (Railway DB may predate schema patch). */
 async function ensureAtRiskUniqueIndex() {
@@ -67,8 +68,8 @@ async function computeAtRiskStudents() {
         u.id AS student_id,
         u.name AS student_name,
         GREATEST(
-          (SELECT MAX(b.start_time) FROM bookings b WHERE b.student_id = u.id AND b.status = 'completed'),
-          (SELECT MAX(fl.flight_date) FROM flight_logs fl WHERE fl.student_id = u.id)
+          (SELECT MAX(b.start_time) FROM bookings b WHERE b.student_id = u.id AND b.status = 'completed' AND b.source = $1),
+          (SELECT MAX(fl.flight_date) FROM flight_logs fl WHERE fl.student_id = u.id AND fl.source = $1)
         ) AS last_flight_date
       FROM users u
       WHERE u.role = 'student' AND u.deleted_at IS NULL
@@ -80,7 +81,7 @@ async function computeAtRiskStudents() {
         i.name AS instructor_name
       FROM bookings b
       JOIN users i ON i.id = b.instructor_id
-      WHERE b.status IN ('confirmed', 'completed')
+      WHERE b.status IN ('confirmed', 'completed') AND b.source = $1
       ORDER BY b.student_id, b.start_time DESC
     )
     SELECT
@@ -94,7 +95,7 @@ async function computeAtRiskStudents() {
     FROM last_activity la
     LEFT JOIN assigned_instructor ai ON ai.student_id = la.student_id
     LEFT JOIN at_risk_assessments ara ON ara.student_id = la.student_id
-  `);
+  `, [getAppEnv()]);
 
   const students = [];
 

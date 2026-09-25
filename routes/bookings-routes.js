@@ -33,6 +33,7 @@ const { getAppEnv } = require('../lib/app-env');
 const router = express.Router();
 
 const MAX_BOOKING_DURATION_HOURS = 168; // allow multi-day / overnight rentals (up to 7 days)
+const BOOKING_CREATE_ROLES = new Set(['owner', 'admin', 'instructor', 'student', 'renter']);
 
 // Any non-cancelled, non-completed booking blocks the schedule (matches calendar visibility).
 const ACTIVE_BOOKING_SQL = "b.status NOT IN ('cancelled', 'completed')";
@@ -162,7 +163,7 @@ router.get('/history', authenticateToken, async (req, res) => {
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
       WHERE b.status = $1
         AND b.source = $2
     `;
@@ -469,7 +470,7 @@ router.get('/completable', authenticateToken, async (req, res) => {
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
-      LEFT JOIN flight_logs fl ON fl.booking_id = b.id
+      LEFT JOIN flight_logs fl ON fl.booking_id = b.id AND fl.source = b.source
       WHERE b.status = 'confirmed'
         AND b.end_time < NOW()
         AND fl.id IS NULL
@@ -661,6 +662,7 @@ router.post('/recurring', authenticateToken, async (req, res) => {
 
 async function createBookingInternal(client, req) {
   const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
+  if (!BOOKING_CREATE_ROLES.has(req.user.role)) return { error: 'Your role cannot create flight bookings' };
   let sid = student_id ? parseInt(student_id, 10) : null;
   const iid = instructor_id ? parseInt(instructor_id, 10) : null;
   if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
@@ -727,6 +729,9 @@ async function createBookingInternal(client, req) {
 router.post('/', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!BOOKING_CREATE_ROLES.has(req.user.role)) {
+      return res.status(403).json({ error: 'Your role cannot create flight bookings' });
+    }
     const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
     let sid = student_id ? parseInt(student_id) : null;
     const iid = instructor_id ? parseInt(instructor_id) : null;
