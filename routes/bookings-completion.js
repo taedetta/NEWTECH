@@ -500,8 +500,8 @@ async function sendFlightCompletedEmail(bookingId, completedById, completedByRol
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
-      WHERE b.id = $1
-    `, [bookingId]);
+      WHERE b.id = $1 AND b.source = $2
+    `, [bookingId, getAppEnv()]);
     if (result.rows.length === 0) return;
     const b = result.rows[0];
     if (!b.student_email) return;
@@ -570,8 +570,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
       LEFT JOIN users i ON b.instructor_id = i.id
       JOIN aircraft a ON b.aircraft_id = a.id
       LEFT JOIN flight_logs fl ON fl.booking_id = b.id
-      WHERE b.id = $1
-    `, [req.params.id]);
+      WHERE b.id = $1 AND b.source = $2
+    `, [req.params.id, getAppEnv()]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     if (!canAccessBooking(req.user, result.rows[0])) return res.status(403).json({ error: 'Access denied' });
     res.json(result.rows[0]);

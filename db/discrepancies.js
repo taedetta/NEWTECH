@@ -8,6 +8,7 @@ const pool = require('./index');
 const { sendEmail } = require('../email-templates');
 const { formatDate } = require('../lib/school-timezone');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { getAppEnv } = require('../lib/app-env');
 
 const DISCREPANCY_THRESHOLD = 0.1; // hours — flag if delta exceeds this
 const OWNER_EMAIL = 'blankthe97@gmail.com';
@@ -128,8 +129,8 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
         LEFT JOIN users s ON s.id = b.student_id
         LEFT JOIN users i ON i.id = b.instructor_id
         LEFT JOIN aircraft a ON a.id = b.aircraft_id
-        WHERE b.id = $1
-      `, [bookingId]);
+        WHERE b.id = $1 AND b.source = $2
+      `, [bookingId, getAppEnv()]);
       const bk = bookingInfo.rows[0] || {};
       sendDiscrepancyEmail(bk, discrepancy).catch(e => console.error('[discrepancies] email error:', e.message));
     }
@@ -152,6 +153,12 @@ async function purgeStaleDiscrepancies() {
     WHERE d.status = 'pending'
       AND EXISTS (
         SELECT 1
+        FROM bookings b
+        WHERE b.id = d.booking_id
+          AND b.source = $2
+      )
+      AND EXISTS (
+        SELECT 1
         FROM flight_hobbs_readings s
         JOIN flight_hobbs_readings i ON i.booking_id = s.booking_id
         WHERE s.booking_id = d.booking_id
@@ -160,7 +167,7 @@ async function purgeStaleDiscrepancies() {
           AND ABS(COALESCE(s.hobbs_delta, s.hobbs_end - s.hobbs_start)
                 - COALESCE(i.hobbs_delta, i.hobbs_end - i.hobbs_start)) <= $1
       )
-  `, [DISCREPANCY_THRESHOLD]);
+  `, [DISCREPANCY_THRESHOLD, getAppEnv()]);
 }
 
 /**
@@ -168,8 +175,8 @@ async function purgeStaleDiscrepancies() {
  */
 async function listDiscrepancies({ status } = {}) {
   await purgeStaleDiscrepancies();
-  const conditions = [];
-  const params = [];
+  const conditions = ['b.source = $1'];
+  const params = [getAppEnv()];
   if (status && status !== 'all') {
     conditions.push(`d.status = $${params.length + 1}`);
     params.push(status);
@@ -202,7 +209,13 @@ async function listDiscrepancies({ status } = {}) {
  * Count pending (unresolved) discrepancies — used for notification badge.
  */
 async function countPendingDiscrepancies() {
-  const result = await pool.query(`SELECT COUNT(*) AS count FROM flight_discrepancies WHERE status = 'pending'`);
+  const result = await pool.query(`
+    SELECT COUNT(*) AS count
+    FROM flight_discrepancies d
+    JOIN bookings b ON b.id = d.booking_id
+    WHERE d.status = 'pending'
+      AND b.source = $1
+  `, [getAppEnv()]);
   return parseInt(result.rows[0].count, 10);
 }
 
@@ -218,8 +231,9 @@ async function listHoursAuditDiscrepancies({ status } = {}) {
     JOIN users u ON u.id = ih.instructor_id
     LEFT JOIN aircraft a ON a.id = ih.aircraft_id
     WHERE ih.audit_status IN ('flagged', 'unmatched')
+      AND ih.source = $1
     ORDER BY ih.entry_date DESC, ih.id DESC
-  `);
+  `, [getAppEnv()]);
   return result.rows.map((r) => ({
     id: `ih-${r.id}`,
     source: 'hours_audit',
@@ -245,7 +259,14 @@ async function resolveDiscrepancy(id, resolvedBy, reading, note) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const existing = await client.query('SELECT * FROM flight_discrepancies WHERE id = $1 FOR UPDATE', [id]);
+    const existing = await client.query(
+      `SELECT d.*
+       FROM flight_discrepancies d
+       JOIN bookings b ON b.id = d.booking_id
+       WHERE d.id = $1 AND b.source = $2
+       FOR UPDATE OF d`,
+      [id, getAppEnv()]
+    );
     if (existing.rows.length === 0) {
       await client.query('ROLLBACK');
       throw Object.assign(new Error('Not found'), { statusCode: 404 });
@@ -287,8 +308,13 @@ async function resolveDiscrepancy(id, resolvedBy, reading, note) {
  */
 async function deleteDiscrepancy(id) {
   const result = await pool.query(
-    'DELETE FROM flight_discrepancies WHERE id = $1 RETURNING id',
-    [id]
+    `DELETE FROM flight_discrepancies d
+     USING bookings b
+     WHERE d.id = $1
+       AND b.id = d.booking_id
+       AND b.source = $2
+     RETURNING d.id`,
+    [id, getAppEnv()]
   );
   if (result.rows.length === 0) throw Object.assign(new Error('Not found'), { statusCode: 404 });
   return { ok: true };
@@ -298,7 +324,14 @@ async function deleteDiscrepancy(id) {
  * Check if a booking has an unresolved discrepancy (billing gate).
  */
 async function hasUnresolvedDiscrepancy(bookingId) {
-  const r = await pool.query(`SELECT id FROM flight_discrepancies WHERE booking_id = $1 AND status = 'pending'`, [bookingId]);
+  const r = await pool.query(`
+    SELECT d.id
+    FROM flight_discrepancies d
+    JOIN bookings b ON b.id = d.booking_id
+    WHERE d.booking_id = $1
+      AND d.status = 'pending'
+      AND b.source = $2
+  `, [bookingId, getAppEnv()]);
   return r.rows.length > 0;
 }
 

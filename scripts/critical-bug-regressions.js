@@ -724,7 +724,8 @@ function testSubagentFollowUpGuards() {
   const discrepanciesSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'discrepancies.js'), 'utf8');
   assert(
     discrepanciesSrc.includes("const { syncFlightRecord } = require('../lib/sync-flight-record')")
-      && discrepanciesSrc.includes('SELECT * FROM flight_discrepancies WHERE id = $1 FOR UPDATE')
+      && discrepanciesSrc.includes('JOIN bookings b ON b.id = d.booking_id')
+      && discrepanciesSrc.includes('WHERE d.id = $1 AND b.source = $2')
       && discrepanciesSrc.includes('await syncFlightRecord(client, discrepancy.booking_id'),
     'discrepancy resolution must sync the selected reading into authoritative flight records in a transaction'
   );
@@ -756,6 +757,63 @@ function testSubagentFollowUpGuards() {
   );
 }
 
+function testSharedDatabaseReadSourceGuards() {
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const completableStart = bookingsSrc.indexOf("router.get('/completable'");
+  const completableEnd = bookingsSrc.indexOf("router.get('/ical/me'", completableStart);
+  assert(completableStart >= 0 && completableEnd > completableStart, 'completable route not found');
+  const completableRoute = bookingsSrc.slice(completableStart, completableEnd);
+  assert(
+    completableRoute.includes('AND b.source = $1')
+      && completableRoute.includes('const params = [getAppEnv()]')
+      && completableRoute.includes('let idx = 2'),
+    'completable bookings must be source-scoped before role filters'
+  );
+
+  const icalStart = bookingsSrc.indexOf("router.get('/ical/me'");
+  const icalEnd = bookingsSrc.indexOf("// ─── Duplicate booking", icalStart);
+  assert(icalStart >= 0 && icalEnd > icalStart, 'ical route not found');
+  const icalRoute = bookingsSrc.slice(icalStart, icalEnd);
+  assert(
+    icalRoute.includes('AND b.source = $1')
+      && icalRoute.includes('const params = [getAppEnv()]')
+      && icalRoute.includes("query += ' AND b.student_id = $2'")
+      && icalRoute.includes("query += ' AND b.instructor_id = $2'"),
+    'personal iCal export must be source-scoped without breaking role filters'
+  );
+
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  const emailStart = completionSrc.indexOf('async function sendFlightCompletedEmail');
+  const emailEnd = completionSrc.indexOf("router.get('/:id'", emailStart);
+  assert(emailStart >= 0 && emailEnd > emailStart, 'completion email helper not found');
+  const emailHelper = completionSrc.slice(emailStart, emailEnd);
+  assert(
+    emailHelper.includes('WHERE b.id = $1 AND b.source = $2')
+      && emailHelper.includes('[bookingId, getAppEnv()]'),
+    'flight completion email lookup must not read bookings from another source'
+  );
+
+  const detailStart = completionSrc.indexOf("router.get('/:id'");
+  const detailRoute = completionSrc.slice(detailStart);
+  assert(
+    detailRoute.includes('WHERE b.id = $1 AND b.source = $2')
+      && detailRoute.includes('[req.params.id, getAppEnv()]'),
+    'single booking completion detail must be source-scoped'
+  );
+
+  const discrepanciesSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'discrepancies.js'), 'utf8');
+  assert(
+    discrepanciesSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && discrepanciesSrc.includes("const conditions = ['b.source = $1']")
+      && discrepanciesSrc.includes('JOIN bookings b ON b.id = d.booking_id')
+      && discrepanciesSrc.includes('AND b.source = $1')
+      && discrepanciesSrc.includes('WHERE d.id = $1 AND b.source = $2')
+      && discrepanciesSrc.includes('DELETE FROM flight_discrepancies d')
+      && discrepanciesSrc.includes('AND b.source = $2'),
+    'discrepancy list/count/resolve/delete helpers must be source-scoped'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -783,6 +841,7 @@ async function main() {
   testHistoryDeleteReversesVoidedCompletedHours();
   testSquawkFullEditRoute();
   testSubagentFollowUpGuards();
+  testSharedDatabaseReadSourceGuards();
   console.log('critical bug regressions passed');
 }
 

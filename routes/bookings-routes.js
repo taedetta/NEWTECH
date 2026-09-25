@@ -473,9 +473,10 @@ router.get('/completable', authenticateToken, async (req, res) => {
       WHERE b.status = 'confirmed'
         AND b.end_time < NOW()
         AND fl.id IS NULL
+        AND b.source = $1
     `;
-    const params = [];
-    let idx = 1;
+    const params = [getAppEnv()];
+    let idx = 2;
     const role = req.user.role;
     if (role === 'student') {
       query += ` AND b.student_id = $${idx++} AND b.instructor_id IS NULL`;
@@ -508,13 +509,14 @@ router.get('/ical/me', authenticateToken, async (req, res) => {
       LEFT JOIN users s ON b.student_id = s.id
       LEFT JOIN users i ON b.instructor_id = i.id
       WHERE b.status = 'confirmed' AND b.end_time >= NOW()
+        AND b.source = $1
     `;
-    const params = [];
+    const params = [getAppEnv()];
     if (req.user.role === 'student' || req.user.role === 'renter') {
-      query += ' AND b.student_id = $1';
+      query += ' AND b.student_id = $2';
       params.push(req.user.id);
     } else if (req.user.role === 'instructor') {
-      query += ' AND b.instructor_id = $1';
+      query += ' AND b.instructor_id = $2';
       params.push(req.user.id);
     }
     query += ' ORDER BY b.start_time LIMIT 200';
