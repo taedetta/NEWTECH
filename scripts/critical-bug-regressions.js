@@ -716,9 +716,32 @@ function testSubagentFollowUpGuards() {
   const downtimeSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'downtime.js'), 'utf8');
   assert(
     !downtimeSrc.includes("UPDATE aircraft SET status = 'available'")
+      && downtimeSrc.includes('SELECT id FROM aircraft WHERE id = $1 AND source = $2')
       && downtimeSrc.includes('(aircraft_id, start_date, end_date, start_time, end_time, all_day, reason, created_by, source)')
-      && downtimeSrc.includes('WHERE d.source = $1'),
-    'downtime creation must not clear maintenance status and downtime reads/writes must be source-scoped'
+      && downtimeSrc.includes('WHERE d.source = $1')
+      && downtimeSrc.includes('INSERT INTO squawks (aircraft_id, description, severity, status, expected_downtime, reported_by, source)')
+      && downtimeSrc.includes('formatDowntimeLabel(result.rows[0]), req.user.id, getAppEnv()'),
+    'downtime creation must not clear maintenance status and downtime reads/writes/squawks must be source-scoped'
+  );
+
+  const maintenanceSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'maintenance.js'), 'utf8');
+  assert(
+    maintenanceSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && maintenanceSrc.includes('WHERE sq.source = $1')
+      && maintenanceSrc.includes('INSERT INTO squawks (aircraft_id, reported_by, description, severity, expected_downtime, source)')
+      && maintenanceSrc.includes('SELECT id FROM squawks WHERE id = $1 AND source = $2')
+      && maintenanceSrc.includes('WHERE id = $8 AND source = $9')
+      && maintenanceSrc.includes('WHERE id = $4 AND source = $5')
+      && maintenanceSrc.includes('DELETE FROM squawks WHERE id = $1 AND source = $2'),
+    'maintenance squawk list/create/update/delete must be source-scoped'
+  );
+
+  const bookingRulesSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'booking-rules.js'), 'utf8');
+  assert(
+    bookingRulesSrc.includes("const { getAppEnv } = require('./app-env')")
+      && bookingRulesSrc.includes("WHERE aircraft_id = $1 AND source = $2 AND status IN ('open','reviewed') AND severity = 'grounding'")
+      && bookingRulesSrc.includes('[aircraftId, getAppEnv()]'),
+    'booking grounding checks must not read squawks from another source'
   );
 
   const discrepanciesSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'discrepancies.js'), 'utf8');

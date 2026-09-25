@@ -207,7 +207,7 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     if (!aircraft_id) return res.status(400).json({ error: 'aircraft_id is required' });
 
-    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1', [parseInt(aircraft_id, 10)]);
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [parseInt(aircraft_id, 10), getAppEnv()]);
     if (ac.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
 
     let result;
@@ -239,9 +239,9 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 
     if (reason && create_squawk) {
       await pool.query(
-        `INSERT INTO squawks (aircraft_id, description, severity, status, expected_downtime, reported_by)
-         VALUES ($1, $2, 'minor', 'scheduled', $3, $4)`,
-        [parseInt(aircraft_id, 10), reason, formatDowntimeLabel(result.rows[0]), req.user.id]
+        `INSERT INTO squawks (aircraft_id, description, severity, status, expected_downtime, reported_by, source)
+         VALUES ($1, $2, 'minor', 'scheduled', $3, $4, $5)`,
+        [parseInt(aircraft_id, 10), reason, formatDowntimeLabel(result.rows[0]), req.user.id, getAppEnv()]
       );
     }
 
