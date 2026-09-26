@@ -1,24 +1,11 @@
 'use strict';
 
 const pool = require('./index');
+const { OPTIONAL_EMAIL_TYPES } = require('../lib/email-types');
 
-const DEFAULT_PREFS = {
+const DEFAULT_PREFS = Object.assign({
   email_all_off: false,
-  booking_confirmation: true,
-  booking_cancelled: true,
-  preflight_reminder: true,
-  flight_completed: true,
-  instructor_briefing: true,
-  endorsement_expiry: true,
-  maintenance_alert: true,
-  password_reset: true,
-  account_approved: true,
-  account_rejected: true,
-  signup_pending: true,
-  account_invite: true,
-  profile_change: true,
-  welcome: true,
-};
+}, Object.fromEntries(Object.keys(OPTIONAL_EMAIL_TYPES).map((key) => [key, true])));
 
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
 
@@ -40,13 +27,6 @@ async function ensureEmailPrefsSchema(db = pool) {
           instructor_briefing BOOLEAN NOT NULL DEFAULT TRUE,
           endorsement_expiry BOOLEAN NOT NULL DEFAULT TRUE,
           maintenance_alert BOOLEAN NOT NULL DEFAULT TRUE,
-          password_reset BOOLEAN NOT NULL DEFAULT TRUE,
-          account_approved BOOLEAN NOT NULL DEFAULT TRUE,
-          account_rejected BOOLEAN NOT NULL DEFAULT TRUE,
-          signup_pending BOOLEAN NOT NULL DEFAULT TRUE,
-          account_invite BOOLEAN NOT NULL DEFAULT TRUE,
-          profile_change BOOLEAN NOT NULL DEFAULT TRUE,
-          welcome BOOLEAN NOT NULL DEFAULT TRUE,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
       `);
