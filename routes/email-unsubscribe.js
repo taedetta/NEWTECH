@@ -3,12 +3,12 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
+const { OPTIONAL_EMAIL_TYPES } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
 
-function renderPage({ title, message, ok }) {
+function renderPage({ title, message, ok, actionHtml = '' }) {
   const color = ok ? '#059669' : '#DC2626';
   const manageUrl = buildManagePrefsUrl();
   const appUrl = `${getAppUrl()}/app`;
@@ -31,6 +31,7 @@ function renderPage({ title, message, ok }) {
   <div class="card">
     <h1>${title}</h1>
     <p>${message}</p>
+    ${actionHtml}
     <a class="btn" href="${manageUrl}">Manage email preferences</a>
     <p style="margin-top:20px"><a class="link" href="${appUrl}">Open FlightSlate</a></p>
   </div>
@@ -38,53 +39,113 @@ function renderPage({ title, message, ok }) {
 </html>`;
 }
 
-router.get('/unsubscribe', async (req, res) => {
-  try {
-    const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
-    if (!token) {
-      return res.status(400).send(renderPage({
-        ok: false,
+function validateUnsubscribeRequest(req) {
+  const token = req.query.token || req.body?.token;
+  const rawType = String(req.query.type || req.body?.type || 'all').trim();
+  if (!token) {
+    return {
+      error: {
+        status: 400,
         title: 'Invalid link',
         message: 'This unsubscribe link is missing required information. Sign in and open My Account to manage email preferences.',
-      }));
-    }
+      },
+    };
+  }
 
-    const verified = verifyUnsubscribeToken(token);
-    if (!verified) {
-      return res.status(400).send(renderPage({
-        ok: false,
+  const verified = verifyUnsubscribeToken(token);
+  if (!verified) {
+    return {
+      error: {
+        status: 400,
         title: 'Link expired or invalid',
         message: 'This unsubscribe link is no longer valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
+      },
+    };
+  }
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
-      return res.status(400).send(renderPage({
-        ok: false,
+  if (rawType !== 'all' && !OPTIONAL_EMAIL_TYPES[rawType]) {
+    return {
+      error: {
+        status: 400,
         title: 'Invalid preference type',
         message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
+      },
+    };
+  }
 
-    await ensureDefaultPrefs(verified.userId);
+  if (rawType !== verified.type) {
+    return {
+      error: {
+        status: 400,
+        title: 'Invalid preference type',
+        message: 'This unsubscribe link does not match the requested email preference. Sign in and open My Account to manage your email preferences.',
+      },
+    };
+  }
+
+  return { token, type: rawType, userId: verified.userId };
+}
+
+function sendValidationError(res, error) {
+  return res.status(error.status).send(renderPage({
+    ok: false,
+    title: error.title,
+    message: error.message,
+  }));
+}
+
+router.get('/unsubscribe', async (req, res) => {
+  try {
+    const validated = validateUnsubscribeRequest(req);
+    if (validated.error) return sendValidationError(res, validated.error);
+
+    const label = typeLabel(validated.type);
+    const actionHtml = `
+      <form method="POST" action="/api/email/unsubscribe?token=${encodeURIComponent(validated.token)}&type=${encodeURIComponent(validated.type)}" style="margin:0 0 16px;">
+        <button class="btn" type="submit" style="border:0;cursor:pointer;background:#DC2626;">Confirm unsubscribe</button>
+      </form>`;
+    return res.send(renderPage({
+      ok: true,
+      title: 'Confirm unsubscribe',
+      message: validated.type === 'all'
+        ? 'Confirm that you want to stop optional email notifications from New Tech Aviation.'
+        : `Confirm that you want to unsubscribe from <strong>${label}</strong>.`,
+      actionHtml,
+    }));
+  } catch (err) {
+    console.error('[email-unsubscribe] GET error:', err.message);
+    res.status(500).send(renderPage({
+      ok: false,
+      title: 'Something went wrong',
+      message: 'We could not process your unsubscribe request. Please try again or manage preferences in My Account.',
+    }));
+  }
+});
+
+router.post('/unsubscribe', async (req, res) => {
+  try {
+    const validated = validateUnsubscribeRequest(req);
+    if (validated.error) return sendValidationError(res, validated.error);
+
+    const rawType = validated.type;
+    const label = typeLabel(rawType);
+    await ensureDefaultPrefs(validated.userId);
 
     if (rawType === 'all') {
-      await updatePrefs(verified.userId, { email_all_off: true });
+      await updatePrefs(validated.userId, { email_all_off: true });
     } else {
-      await updatePrefs(verified.userId, { [rawType]: false });
+      await updatePrefs(validated.userId, { [rawType]: false });
     }
 
-    const label = typeLabel(rawType);
     return res.send(renderPage({
       ok: true,
       title: 'Unsubscribed',
       message: rawType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
-        : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
+        ? 'You will no longer receive optional email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+        : `You have been unsubscribed from <strong>${label}</strong>. Other optional notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
-    console.error('[email-unsubscribe] error:', err.message);
+    console.error('[email-unsubscribe] POST error:', err.message);
     res.status(500).send(renderPage({
       ok: false,
       title: 'Something went wrong',
