@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 const DOC_TYPES = ['medical', 'student_pilot_cert', 'id', 'tsa', 'insurance', 'renter_agreement', 'other'];
 
@@ -27,8 +28,8 @@ async function createDocument({ studentId, docType, fileUrl, fileName, expiryDat
 
   if (docType === 'medical' && expiryDate) {
     await pool.query(
-      `UPDATE users SET medical_certificate_expiry = $1, updated_at = NOW() WHERE id = $2`,
-      [expiryDate, studentId]
+      `UPDATE users SET medical_certificate_expiry = $1, updated_at = NOW() WHERE id = $2 AND source = $3`,
+      [expiryDate, studentId, getAppEnv()]
     );
   }
   return doc;

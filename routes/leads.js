@@ -10,6 +10,7 @@ const { createLead, createManualLead, listLeads, countNewLeads, getLeadById, get
 const { enforceCaptcha } = require('../lib/captcha');
 const { sendEmail } = require('../email-templates');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const { getAppEnv } = require('../lib/app-env');
 
 // In-memory IP rate limiter: 5 submissions per IP per hour
 const ipSubmissions = new Map();
@@ -304,8 +305,8 @@ router.post('/:id/convert', authenticateToken, requireRole(...LEADS_STAFF_ROLES)
 
     const pool = require('../db/index');
     const userMatch = await pool.query(
-      'SELECT id, name FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
-      [lead.email]
+      'SELECT id, name FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2',
+      [lead.email, getAppEnv()]
     );
     const convertedUserId = userMatch.rows[0]?.id || null;
     const updated = await markLeadConverted(id, req.user.id, convertedUserId);

@@ -685,11 +685,11 @@ async function createBookingInternal(client, req) {
 
   let booking_type = 'dual';
   if (sid && !iid) {
-    const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
+    const roleRes = await client.query('SELECT role FROM users WHERE id = $1 AND source = $2', [sid, getAppEnv()]);
     booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
   } else if (!sid && iid) booking_type = 'instructor_solo';
 
-  const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
+  const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1 AND source = $2', [aircraft_id, getAppEnv()]);
   if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
   if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
 
@@ -761,7 +761,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     let booking_type = 'dual';
     if (sid && !iid) {
-      const roleRes = await client.query('SELECT role FROM users WHERE id = $1', [sid]);
+      const roleRes = await client.query('SELECT role FROM users WHERE id = $1 AND source = $2', [sid, getAppEnv()]);
       booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
     } else if (!sid && iid) booking_type = 'instructor_solo';
 
@@ -795,7 +795,7 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!preflight.ok) {
       return res.status(409).json({ error: preflight.errors[0], errors: preflight.errors, warnings: preflight.warnings });
     }
-    const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1', [aircraft_id]);
+    const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1 AND source = $2', [aircraft_id, getAppEnv()]);
     if (aircraft.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     if (aircraft.rows[0].status !== 'available') {
       return res.status(409).json({ error: `Aircraft is currently ${aircraft.rows[0].status}` });

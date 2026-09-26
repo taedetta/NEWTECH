@@ -252,8 +252,8 @@ async function enrollStudent(studentId, programId, instructorId) {
 
   // Verify student exists and is a student
   const studentCheck = await pool.query(
-    "SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL",
-    [studentId]
+    "SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2",
+    [studentId, getAppEnv()]
   );
   if (studentCheck.rows.length === 0) {
     const err = new Error('Student not found');
@@ -269,8 +269,8 @@ async function enrollStudent(studentId, programId, instructorId) {
   // Verify instructor exists if provided
   if (instructorId) {
     const instrCheck = await pool.query(
-      "SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL AND role IN ('instructor','admin','owner')",
-      [instructorId]
+      "SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL AND role IN ('instructor','admin','owner') AND source = $2",
+      [instructorId, getAppEnv()]
     );
     if (instrCheck.rows.length === 0) {
       const err = new Error('Instructor not found');
@@ -287,10 +287,10 @@ async function enrollStudent(studentId, programId, instructorId) {
   const firstStageId = firstStage.rows.length > 0 ? firstStage.rows[0].id : null;
 
   const result = await pool.query(
-    `INSERT INTO student_training (student_id, program_id, instructor_id, current_stage_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO student_training (student_id, program_id, instructor_id, current_stage_id, source)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [studentId, programId, instructorId || null, firstStageId]
+    [studentId, programId, instructorId || null, firstStageId, getAppEnv()]
   );
   return result.rows[0];
 }
@@ -302,8 +302,8 @@ async function enrollStudent(studentId, programId, instructorId) {
 async function reassignInstructor(enrollmentId, instructorId) {
   // Verify enrollment exists
   const enrollCheck = await pool.query(
-    'SELECT id, student_id FROM student_training WHERE id = $1',
-    [enrollmentId]
+    'SELECT id, student_id FROM student_training WHERE id = $1 AND source = $2',
+    [enrollmentId, getAppEnv()]
   );
   if (enrollCheck.rows.length === 0) {
     const err = new Error('Enrollment not found');
@@ -314,8 +314,8 @@ async function reassignInstructor(enrollmentId, instructorId) {
   // Verify instructor exists if provided
   if (instructorId) {
     const instrCheck = await pool.query(
-      "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND role IN ('instructor','admin','owner')",
-      [instructorId]
+      "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND role IN ('instructor','admin','owner') AND source = $2",
+      [instructorId, getAppEnv()]
     );
     if (instrCheck.rows.length === 0) {
       const err = new Error('Instructor not found');
@@ -325,8 +325,8 @@ async function reassignInstructor(enrollmentId, instructorId) {
   }
 
   const result = await pool.query(
-    'UPDATE student_training SET instructor_id = $1 WHERE id = $2 RETURNING *',
-    [instructorId || null, enrollmentId]
+    'UPDATE student_training SET instructor_id = $1 WHERE id = $2 AND source = $3 RETURNING *',
+    [instructorId || null, enrollmentId, getAppEnv()]
   );
   return result.rows[0];
 }

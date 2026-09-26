@@ -5,6 +5,7 @@ const pool = require('../db/index');
 const documentsDb = require('../db/documents');
 const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -84,8 +85,8 @@ router.post('/student/:studentId', authenticateToken, requireRole('owner', 'admi
 
     if (doc_type === 'medical' && expiry_date && medical_class) {
       await pool.query(
-        `UPDATE users SET medical_certificate_class = $1, medical_certificate_expiry = $2, updated_at = NOW() WHERE id = $3`,
-        [medical_class, expiry_date, studentId]
+        `UPDATE users SET medical_certificate_class = $1, medical_certificate_expiry = $2, updated_at = NOW() WHERE id = $3 AND source = $4`,
+        [medical_class, expiry_date, studentId, getAppEnv()]
       );
     }
 

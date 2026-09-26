@@ -16,6 +16,7 @@ const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { enforceCaptcha } = require('../lib/captcha');
 const { getJwtSecret } = require('../lib/jwt-secret');
 const { isPlatformAdminEmail } = require('../lib/platform-admin');
+const { getAppEnv } = require('../lib/app-env');
 
 const JWT_SECRET = getJwtSecret();
 
@@ -81,15 +82,26 @@ router.post('/register', async (req, res) => {
     if (existingDeleted.rows.length > 0) {
       const oldUser = existingDeleted.rows[0];
       const passwordHash = await bcrypt.hash(password, 12);
-      await purgeUserPersonalData(pool, oldUser.id);
-      await pool.query(
-        `UPDATE users SET deleted_at = NULL, password_hash = $1, name = $2, phone_number = $3,
-         role = $4, approval_status = 'pending',
-         is_instructor = CASE WHEN $4 = 'instructor' THEN TRUE ELSE FALSE END,
-         terms_accepted_at = NOW(), terms_version = $6,
-         updated_at = NOW() WHERE id = $5`,
-        [passwordHash, name, formattedPhone, userRole, oldUser.id, acceptedVersion]
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await purgeUserPersonalData(client, oldUser.id, getAppEnv());
+        await client.query(
+          `UPDATE users SET deleted_at = NULL, password_hash = $1, name = $2, phone_number = $3,
+           role = $4, approval_status = 'pending',
+           is_instructor = CASE WHEN $4 = 'instructor' THEN TRUE ELSE FALSE END,
+           terms_accepted_at = NOW(), terms_version = $6,
+           source = $7,
+           updated_at = NOW() WHERE id = $5`,
+          [passwordHash, name, formattedPhone, userRole, oldUser.id, acceptedVersion, getAppEnv()]
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
       res.json({
         user: { id: oldUser.id, email: oldUser.email, name, role: userRole, approval_status: 'pending' },
         pending: true,
@@ -102,10 +114,10 @@ router.post('/register', async (req, res) => {
     }
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (email, name, password_hash, role, phone_number, approval_status, is_instructor, terms_accepted_at, terms_version)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7)
+      `INSERT INTO users (email, name, password_hash, role, phone_number, approval_status, is_instructor, terms_accepted_at, terms_version, source)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7, $8)
        RETURNING id, email, name, role, phone_number, approval_status, terms_accepted_at, terms_version`,
-      [email.toLowerCase(), name, passwordHash, userRole, formattedPhone, userRole === 'instructor', acceptedVersion]
+      [email.toLowerCase(), name, passwordHash, userRole, formattedPhone, userRole === 'instructor', acceptedVersion, getAppEnv()]
     );
     const user = result.rows[0];
     // New users land on pending-approval screen — no token issued, no app access

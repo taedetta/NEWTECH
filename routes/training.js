@@ -23,9 +23,9 @@ async function isAssignedTrainingInstructor(user, studentId) {
   if (!isTrainingStaff(user)) return false;
   const result = await pool.query(
     `SELECT 1 FROM student_training
-     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'
+     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active' AND source = $3
      LIMIT 1`,
-    [studentId, user.id]
+    [studentId, user.id, getAppEnv()]
   );
   return result.rows.length > 0;
 }
@@ -204,8 +204,8 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
     if (!Number.isFinite(enrollmentId)) return res.status(400).json({ error: 'Invalid enrollment ID' });
     const { current_stage_id } = req.body;
     const enrollmentResult = await pool.query(
-      'SELECT id, student_id, instructor_id, program_id FROM student_training WHERE id = $1',
-      [enrollmentId]
+      'SELECT id, student_id, instructor_id, program_id FROM student_training WHERE id = $1 AND source = $2',
+      [enrollmentId, getAppEnv()]
     );
     if (enrollmentResult.rows.length === 0) return res.status(404).json({ error: 'Enrollment not found' });
     const enrollment = enrollmentResult.rows[0];
@@ -216,8 +216,8 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
       if (stageResult.rows.length === 0) return res.status(400).json({ error: 'Stage not found in this program' });
     }
     const result = await pool.query(
-      `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [stageId, enrollmentId]
+      `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2 AND source = $3 RETURNING *`,
+      [stageId, enrollmentId, getAppEnv()]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -264,6 +264,14 @@ router.delete(['/admin/programs/:id', '/programs/:id'], authenticateToken, requi
   try {
     const id = parseInt(req.params.id);
     await client.query('BEGIN');
+    const enrollments = await client.query(
+      'SELECT 1 FROM student_training WHERE program_id = $1 AND source = $2 LIMIT 1',
+      [id, getAppEnv()]
+    );
+    if (enrollments.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Cannot delete a program while students are enrolled' });
+    }
     // Cascade delete: maneuvers → stages → program
     await client.query(`DELETE FROM stage_maneuvers WHERE stage_id IN (SELECT id FROM program_stages WHERE program_id = $1)`, [id]);
     await client.query(`DELETE FROM program_stages WHERE program_id = $1`, [id]);
@@ -317,7 +325,7 @@ router.put(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole(
 
 router.delete(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
-    const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1`, [req.params.id]);
+    const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1 AND source = $2`, [req.params.id, getAppEnv()]);
     if (parseInt(inUse.rows[0].cnt) > 0) {
       return res.status(409).json({ error: 'Cannot delete: students are currently in this stage. Reassign them first.' });
     }
@@ -522,7 +530,7 @@ router.get('/cohort-stats/:programCode', authenticateToken, async (req, res) => 
     const studentsResult = await pool.query(`
       SELECT st.student_id, COALESCE(SUM(fl.hobbs_delta), 0) as total_hours
       FROM student_training st LEFT JOIN flight_logs fl ON fl.student_id = st.student_id AND fl.source = $2
-      WHERE st.program_id = $1 AND st.status = 'active' GROUP BY st.student_id`, [programId, getAppEnv()]);
+      WHERE st.program_id = $1 AND st.status = 'active' AND st.source = $2 GROUP BY st.student_id`, [programId, getAppEnv()]);
     const cohort = studentsResult.rows;
     if (cohort.length < 2) return res.json({ cohort_size: cohort.length, enough_data: false });
     const hours = cohort.map(s => parseFloat(s.total_hours) || 0).sort((a, b) => a - b);
@@ -614,11 +622,11 @@ router.get('/students', authenticateToken, async (req, res) => {
             WHERE ps3.program_id = st.program_id AND smp.status IN ('proficient','completed'))
         )) FILTER (WHERE st.id IS NOT NULL), '[]') AS enrollments
       FROM users u
-      JOIN student_training st ON st.student_id = u.id AND st.status = 'active'
+      JOIN student_training st ON st.student_id = u.id AND st.status = 'active' AND st.source = $${canViewAll ? 1 : 2}
       LEFT JOIN training_programs tp ON tp.id = st.program_id
       LEFT JOIN users instructor ON instructor.id = st.instructor_id
       LEFT JOIN program_stages ps ON ps.id = st.current_stage_id
-      WHERE u.role = 'student' AND u.deleted_at IS NULL${instructorFilter}
+      WHERE u.role = 'student' AND u.deleted_at IS NULL AND u.source = $${canViewAll ? 1 : 2}${instructorFilter}
       GROUP BY u.id, u.name, u.phone_number, last_flight_date
       ORDER BY u.name
     `, [...params, getAppEnv()]);
@@ -637,8 +645,8 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
     if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
 
     const studentResult = await pool.query(
-      'SELECT id, name, email, phone_number FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [studentId]
+      'SELECT id, name, email, phone_number FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [studentId, getAppEnv()]
     );
     if (studentResult.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
 
@@ -653,9 +661,9 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
       JOIN training_programs tp ON tp.id = st.program_id
       LEFT JOIN users instructor ON instructor.id = st.instructor_id
       LEFT JOIN program_stages ps ON ps.id = st.current_stage_id
-      WHERE st.student_id = $1 AND st.status = 'active'
+      WHERE st.student_id = $1 AND st.status = 'active' AND st.source = $2
       ORDER BY st.started_at DESC
-    `, [studentId]);
+    `, [studentId, getAppEnv()]);
 
     const debriefsResult = await pool.query(`
       SELECT fd.id, fd.flight_date, fd.notes, fd.overall_performance, fd.recommendations,
@@ -832,11 +840,11 @@ router.get('/instructors', authenticateToken, async (req, res) => {
     const result = await pool.query(`
       SELECT u.id, u.name, COUNT(DISTINCT st.student_id) AS student_count
       FROM users u
-      LEFT JOIN student_training st ON st.instructor_id = u.id AND st.status = 'active'
-      WHERE u.is_instructor = true AND u.deleted_at IS NULL
+      LEFT JOIN student_training st ON st.instructor_id = u.id AND st.status = 'active' AND st.source = $1
+      WHERE u.is_instructor = true AND u.deleted_at IS NULL AND u.source = $1
       GROUP BY u.id, u.name
       ORDER BY u.name
-    `);
+    `, [getAppEnv()]);
     res.json(result.rows);
   } catch (err) {
     console.error('[training] GET /instructors error:', err.message);

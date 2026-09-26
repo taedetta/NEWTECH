@@ -307,7 +307,8 @@ CREATE TABLE IF NOT EXISTS student_maneuver_progress (
   status VARCHAR(20),
   notes TEXT,
   proficient_date DATE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
 
@@ -322,7 +323,8 @@ CREATE TABLE IF NOT EXISTS flight_debriefs (
   overall_performance INTEGER,
   flight_date DATE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS debrief_grades (
@@ -383,7 +385,8 @@ CREATE TABLE IF NOT EXISTS at_risk_assessments (
   days_since_last_flight INTEGER,
   last_flight_date DATE,
   manual_override VARCHAR(20),
-  assessed_at TIMESTAMPTZ DEFAULT NOW()
+  assessed_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS student_interventions (
@@ -397,7 +400,8 @@ CREATE TABLE IF NOT EXISTS student_interventions (
   action_date DATE,
   notes TEXT,
   occurred_at TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS school_settings (
@@ -485,5 +489,6 @@ CREATE TABLE IF NOT EXISTS feedback (
   user_id INTEGER REFERENCES users(id),
   rating INTEGER,
   comment TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );

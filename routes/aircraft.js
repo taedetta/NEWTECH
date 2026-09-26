@@ -370,7 +370,7 @@ router.get('/:id/documents', authenticateToken, async (req, res) => {
   try {
     const aircraftId = parseInt(req.params.id, 10);
     if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
-    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [aircraftId]);
+    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
     if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const documents = await aircraftDocsDb.listByAircraft(aircraftId);
     res.json({ aircraft: ac.rows[0], documents, labels: aircraftDocsDb.DOC_LABELS });
@@ -384,7 +384,7 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
   try {
     const aircraftId = parseInt(req.params.id, 10);
     if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
-    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [aircraftId]);
+    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
     if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
 
     const { doc_type, title, file_data, file_name, expiry_date, notes } = req.body;
@@ -431,6 +431,8 @@ router.delete('/:id/documents/:docId', authenticateToken, requireRole('owner', '
     if (!Number.isFinite(aircraftId) || !Number.isFinite(docId)) {
       return res.status(400).json({ error: 'Invalid id' });
     }
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const doc = await aircraftDocsDb.deleteDocument(docId, aircraftId);
     if (!doc) return res.status(404).json({ error: 'Document not found' });
     res.json({ ok: true, document: doc });

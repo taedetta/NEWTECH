@@ -11,6 +11,7 @@ const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
 const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -199,9 +200,9 @@ router.post('/invite', authenticateToken, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const isInstructorRole = targetRole === 'instructor';
     const result = await pool.query(
-      `INSERT INTO users (email, name, password_hash, role, is_instructor, approval_status)
-       VALUES ($1, $2, $3, $4, $5, 'approved') RETURNING id, email, name, role, created_at`,
-      [email.toLowerCase(), name, passwordHash, targetRole, isInstructorRole]
+      `INSERT INTO users (email, name, password_hash, role, is_instructor, approval_status, source)
+       VALUES ($1, $2, $3, $4, $5, 'approved', $6) RETURNING id, email, name, role, created_at`,
+      [email.toLowerCase(), name, passwordHash, targetRole, isInstructorRole, getAppEnv()]
     );
     const newUser = result.rows[0];
     res.status(201).json(newUser);
@@ -244,11 +245,12 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
 
 // DELETE /api/users/:id
 router.delete('/:id', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
     const targetId = parseInt(req.params.id);
     if (targetId === req.user.id) return res.status(403).json({ error: 'Cannot delete your own account' });
-    const targetResult = await pool.query(
-      'SELECT id, role, name, email, deleted_at FROM users WHERE id = $1', [targetId]
+    const targetResult = await client.query(
+      'SELECT id, role, name, email, deleted_at FROM users WHERE id = $1 AND source = $2', [targetId, getAppEnv()]
     );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (targetResult.rows[0].deleted_at) return res.status(404).json({ error: 'User not found' });
@@ -256,8 +258,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     if (isPlatformAdminEmail(target.email)) {
       return res.status(403).json({ error: 'Cannot remove the platform administrator account' });
     }
-    const requesterResult = await pool.query(
-      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL', [req.user.id]
+    const requesterResult = await client.query(
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [req.user.id, getAppEnv()]
     );
     const requesterRole = requesterResult.rows[0]?.role;
     if (target.role === 'owner' && !['owner', 'admin'].includes(requesterRole)) {
@@ -268,28 +270,38 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       (target.role === 'instructor' && requesterPerms.can_manage_instructors) ||
       (target.role === 'student' && requesterPerms.can_manage_students);
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to remove this user' });
-    const futureBookings = await pool.query(
-      `SELECT COUNT(*) FROM bookings WHERE (student_id = $1 OR instructor_id = $1) AND end_time > NOW() AND status != 'cancelled'`,
-      [targetId]
+    await client.query('BEGIN');
+    const futureBookings = await client.query(
+      `SELECT COUNT(*) FROM bookings
+       WHERE (student_id = $1 OR instructor_id = $1)
+         AND end_time > NOW()
+         AND status != 'cancelled'
+         AND source = $2`,
+      [targetId, getAppEnv()]
     );
     if (parseInt(futureBookings.rows[0].count) > 0) {
-      await pool.query(
+      await client.query(
         `UPDATE bookings SET status = 'cancelled', updated_at = NOW()
          WHERE (student_id = $1 OR instructor_id = $1)
            AND end_time > NOW()
-           AND status != 'cancelled'`,
-        [targetId]
+           AND status != 'cancelled'
+           AND source = $2`,
+        [targetId, getAppEnv()]
       );
     }
-    await purgeUserPersonalData(pool, targetId);
-    await pool.query(
-      `UPDATE users SET deleted_at = NOW(), password_hash = NULL, updated_at = NOW() WHERE id = $1`,
-      [targetId]
+    await purgeUserPersonalData(client, targetId, getAppEnv());
+    await client.query(
+      `UPDATE users SET deleted_at = NOW(), password_hash = NULL, updated_at = NOW() WHERE id = $1 AND source = $2`,
+      [targetId, getAppEnv()]
     );
+    await client.query('COMMIT');
     res.json({ ok: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Delete user error:', err);
     res.status(500).json({ error: 'Failed to remove user' });
+  } finally {
+    client.release();
   }
 });
 
@@ -297,8 +309,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 router.patch('/:id/privileges', authenticateToken, async (req, res) => {
   try {
     const requesterResult = await pool.query(
-      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [req.user.id]
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     if (!requesterResult.rows.length) {
       return res.status(403).json({ error: 'Not authorized' });
@@ -327,8 +339,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
     }
 
     const targetResult = await pool.query(
-      'SELECT id, role, name, email, is_instructor FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [targetId]
+      'SELECT id, role, name, email, is_instructor FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [targetId, getAppEnv()]
     );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const target = targetResult.rows[0];
@@ -343,7 +355,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
       newRole = 'owner';
     } else if (owner_access === false && target.role === 'owner') {
       const ownerCount = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
+        [getAppEnv()]
       );
       if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
         return res.status(403).json({ error: 'Cannot remove the last owner' });
@@ -368,7 +381,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
 
     if (target.role === 'owner' && newRole !== 'owner') {
       const ownerCount = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
+        [getAppEnv()]
       );
       if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
         return res.status(403).json({ error: 'Cannot remove the last owner' });
@@ -380,8 +394,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
       `UPDATE users SET role = $1,
         is_instructor = CASE WHEN $3 THEN TRUE ELSE is_instructor END,
         updated_at = NOW()
-       WHERE id = $2`,
-      [newRole, targetId, setInstructor]
+       WHERE id = $2 AND source = $4`,
+      [newRole, targetId, setInstructor, getAppEnv()]
     );
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
@@ -412,8 +426,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
 router.patch('/:id/role', authenticateToken, async (req, res) => {
   try {
     const requester = await pool.query(
-      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [req.user.id]
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
       return res.status(403).json({ error: 'Only owners and admins can change user roles' });
@@ -430,8 +444,11 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     if (!role || !validRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
     }
+    if (role === 'owner' && requester.rows[0].role !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can grant owner access' });
+    }
     const targetResult = await pool.query(
-      'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL', [targetId]
+      'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [targetId, getAppEnv()]
     );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const target = targetResult.rows[0];
@@ -444,7 +461,8 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     // Protect last owner
     if (target.role === 'owner' && role !== 'owner') {
       const ownerCount = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL"
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
+        [getAppEnv()]
       );
       if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
         return res.status(403).json({ error: 'Cannot change the last owner\'s role' });
@@ -455,8 +473,8 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
       `UPDATE users SET role = $1,
         is_instructor = CASE WHEN $3 THEN TRUE ELSE is_instructor END,
         updated_at = NOW()
-       WHERE id = $2`,
-      [role, targetId, setInstructor]
+       WHERE id = $2 AND source = $4`,
+      [role, targetId, setInstructor, getAppEnv()]
     );
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,

@@ -34,17 +34,25 @@ ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_level V
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_notes TEXT;
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_by INTEGER REFERENCES users(id);
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_at TIMESTAMPTZ;
+ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE at_risk_assessments SET source = 'production' WHERE source IS NULL;
 UPDATE at_risk_assessments SET manual_override_level = manual_override WHERE manual_override_level IS NULL AND manual_override IS NOT NULL;
 -- Dedupe before unique index (clone/migration may insert duplicates)
 DELETE FROM at_risk_assessments a
 USING at_risk_assessments b
-WHERE a.student_id IS NOT NULL AND a.student_id = b.student_id AND a.id > b.id;
-CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_id_unique ON at_risk_assessments(student_id);
+WHERE a.student_id IS NOT NULL
+  AND a.student_id = b.student_id
+  AND COALESCE(a.source, 'production') = COALESCE(b.source, 'production')
+  AND a.id > b.id;
+DROP INDEX IF EXISTS at_risk_assessments_student_id_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_source_unique ON at_risk_assessments(student_id, source);
 
 -- ── Student interventions ──
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS instructor_id INTEGER REFERENCES users(id);
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS action_taken TEXT;
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS action_date DATE;
+ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE student_interventions SET source = 'production' WHERE source IS NULL;
 
 -- ── Instructor hours (expanded from legacy period-based table) ──
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS entry_date DATE;
@@ -176,12 +184,20 @@ ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS module_number INTEGER;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS reading_assignment TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS lesson_tasks JSONB DEFAULT '[]';
 ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE student_maneuver_progress SET source = 'production' WHERE source IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
 CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);
 
 -- ── At-risk interventions ──
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ DEFAULT NOW();
 UPDATE student_interventions SET occurred_at = COALESCE(occurred_at, created_at, NOW()) WHERE occurred_at IS NULL;
+
+-- ── Source isolation for legacy student progress/debrief tables ──
+ALTER TABLE flight_debriefs ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE flight_debriefs SET source = 'production' WHERE source IS NULL;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE feedback SET source = 'production' WHERE source IS NULL;
 
 -- ── Ground sessions ──
 ALTER TABLE ground_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();

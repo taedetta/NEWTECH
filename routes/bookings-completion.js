@@ -288,46 +288,47 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
         'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE',
         [b.aircraft_id, getAppEnv()]
       );
-      if (acResult.rows.length > 0) {
-        const acRow = acResult.rows[0];
-        const currentHobbs = getMeterHobbs(acRow);
-        if (currentHobbs != null && currentHobbs > 0) {
-          if (hStart < currentHobbs - 0.1) {
-            recordHobbsFail(req.user.id);
-            return abortTransaction(400, {
-              error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
-            });
-          }
-          if (hEnd < currentHobbs) {
-            recordHobbsFail(req.user.id);
-            return abortTransaction(400, {
-              error: `Hobbs end (${hEnd.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
-            });
-          }
-          if (hStart > currentHobbs + 5) {
-            recordHobbsFail(req.user.id);
-            return abortTransaction(400, {
-              error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
-            });
-          }
+      if (acResult.rows.length === 0) {
+        return abortTransaction(404, { error: 'Aircraft not found in this environment' });
+      }
+      const acRow = acResult.rows[0];
+      const currentHobbs = getMeterHobbs(acRow);
+      if (currentHobbs != null && currentHobbs > 0) {
+        if (hStart < currentHobbs - 0.1) {
+          recordHobbsFail(req.user.id);
+          return abortTransaction(400, {
+            error: `Hobbs start (${hStart.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
+          });
         }
-        const currentTach = getMeterTach(acRow);
-        if (tStart != null && currentTach != null && currentTach > 0) {
-          if (tStart < currentTach - 0.1) {
-            return abortTransaction(400, {
-              error: `Tach start (${tStart.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
-            });
-          }
-          if (tEnd < currentTach) {
-            return abortTransaction(400, {
-              error: `Tach end (${tEnd.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
-            });
-          }
-          if (tStart > currentTach + 5) {
-            return abortTransaction(400, {
-              error: `Tach start (${tStart.toFixed(1)}) is unusually high vs aircraft reading (${currentTach.toFixed(1)}). Verify the meter.`,
-            });
-          }
+        if (hEnd < currentHobbs) {
+          recordHobbsFail(req.user.id);
+          return abortTransaction(400, {
+            error: `Hobbs end (${hEnd.toFixed(1)}) cannot be before aircraft current reading (${currentHobbs.toFixed(1)})`,
+          });
+        }
+        if (hStart > currentHobbs + 5) {
+          recordHobbsFail(req.user.id);
+          return abortTransaction(400, {
+            error: `Hobbs start (${hStart.toFixed(1)}) is unusually high vs aircraft reading (${currentHobbs.toFixed(1)}). Verify the meter.`,
+          });
+        }
+      }
+      const currentTach = getMeterTach(acRow);
+      if (tStart != null && currentTach != null && currentTach > 0) {
+        if (tStart < currentTach - 0.1) {
+          return abortTransaction(400, {
+            error: `Tach start (${tStart.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
+          });
+        }
+        if (tEnd < currentTach) {
+          return abortTransaction(400, {
+            error: `Tach end (${tEnd.toFixed(1)}) cannot be before aircraft current reading (${currentTach.toFixed(1)})`,
+          });
+        }
+        if (tStart > currentTach + 5) {
+          return abortTransaction(400, {
+            error: `Tach start (${tStart.toFixed(1)}) is unusually high vs aircraft reading (${currentTach.toFixed(1)}). Verify the meter.`,
+          });
         }
       }
     }
@@ -351,10 +352,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const soloFlag = !!is_solo || b.booking_type === 'student_solo';
     // Look up rates for billing calculation
     const acRate = b.aircraft_id
-      ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [b.aircraft_id])).rows[0]
+      ? (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1 AND source = $2', [b.aircraft_id, getAppEnv()])).rows[0]
       : null;
     const instrRate = b.instructor_id
-      ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1', [b.instructor_id])).rows[0]
+      ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1 AND source = $2', [b.instructor_id, getAppEnv()])).rows[0]
       : null;
     const { aircraftChargeAmount: aircraftChargeAmt, instructionChargeAmount: instrChargeAmt } = computeFlightCharges({
       lessonType: b.lesson_type,
@@ -410,42 +411,48 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Update student cumulative hours
     if (b.student_id) {
       const userHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1 AND source = $2', [b.student_id, getAppEnv()]);
-      if (userHobbs.rows.length > 0) {
-        await client.query(
-          `UPDATE users SET
-             total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
-             total_tach_hours = COALESCE(total_tach_hours, 0) + $2
-           WHERE id = $3 AND source = $4`,
-          [hobbsFlown, tachFlown || 0, b.student_id, getAppEnv()]
-        );
+      if (userHobbs.rows.length === 0) {
+        return abortTransaction(404, { error: 'Student not found in this environment' });
       }
+      await client.query(
+        `UPDATE users SET
+           total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
+           total_tach_hours = COALESCE(total_tach_hours, 0) + $2
+         WHERE id = $3 AND source = $4`,
+        [hobbsFlown, tachFlown || 0, b.student_id, getAppEnv()]
+      );
     }
     // Update instructor cumulative hours
     if (b.instructor_id) {
       const instrHobbs = await client.query('SELECT total_hobbs_hours, total_tach_hours FROM users WHERE id = $1 AND source = $2', [b.instructor_id, getAppEnv()]);
-      if (instrHobbs.rows.length > 0) {
-        await client.query(
-          `UPDATE users SET
-             total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
-             total_tach_hours = COALESCE(total_tach_hours, 0) + $2
-           WHERE id = $3 AND source = $4`,
-          [hobbsFlown, tachFlown || 0, b.instructor_id, getAppEnv()]
-        );
+      if (instrHobbs.rows.length === 0) {
+        return abortTransaction(404, { error: 'Instructor not found in this environment' });
       }
+      await client.query(
+        `UPDATE users SET
+           total_hobbs_hours = COALESCE(total_hobbs_hours, 0) + $1,
+           total_tach_hours = COALESCE(total_tach_hours, 0) + $2
+         WHERE id = $3 AND source = $4`,
+        [hobbsFlown, tachFlown || 0, b.instructor_id, getAppEnv()]
+      );
     }
     const finishedEnd = completionEndTime(b);
     // Update booking — persist hobbs/tach on booking row for billing queries
-    await client.query(
+    const completeResult = await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW() WHERE id = $6 AND source = $7`,
+       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW()
+       WHERE id = $6 AND status = 'confirmed' AND source = $7`,
       [hStart, hEnd, tStart, tEnd, finishedEnd, req.params.id, getAppEnv()]
     );
+    if (completeResult.rowCount === 0) {
+      return abortTransaction(409, { error: 'Booking is no longer confirmed' });
+    }
 
     // Auto-sync instructor hours log from completed flight
     if (b.instructor_id && (hobbsFlown > 0 || dualHrs > 0)) {
       let studentName = null;
       if (b.student_id) {
-        const sn = await client.query('SELECT name FROM users WHERE id = $1', [b.student_id]);
+        const sn = await client.query('SELECT name FROM users WHERE id = $1 AND source = $2', [b.student_id, getAppEnv()]);
         studentName = sn.rows[0]?.name || null;
       }
       await syncInstructorHoursFromFlight(client, {

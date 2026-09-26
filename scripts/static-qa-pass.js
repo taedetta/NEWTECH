@@ -233,11 +233,24 @@ if (!permissionsSrc.includes('targetId === req.user.id')
   || !permissionsSrc.includes('Only owners and admins can grant website editor access')) {
   fail('Delegated permission managers can still self-grant dangerous permissions');
 } else ok('Delegated permission manager self-escalation is blocked');
+if (!usersSrc.includes("role === 'owner' && requester.rows[0].role !== 'owner'")
+  || !usersSrc.includes('Only owners can grant owner access')) {
+  fail('Role endpoint can grant owner access without owner role');
+} else ok('Role endpoint owner grants are owner-only');
+const userLifecycleSrc = fs.readFileSync(path.join(root, 'lib', 'user-lifecycle.js'), 'utf8');
+if (!userLifecycleSrc.includes('sourceClause')
+  || !userLifecycleSrc.includes('DELETE FROM flight_logs WHERE student_id = $1${sourceClause}')) {
+  fail('User lifecycle purge is not source-scoped');
+} else ok('User lifecycle purge is source-scoped');
 const endorsementsSrc = fs.readFileSync(path.join(root, 'routes/endorsements.js'), 'utf8');
 if (!endorsementsSrc.includes('canCreateEndorsementForStudent')
   || !endorsementsSrc.includes('Only assigned instructors or admins can endorse this student')) {
   fail('Endorsement creation missing assigned-instructor/admin guard');
 } else ok('Endorsement creation is scoped');
+if (!endorsementsSrc.includes('WHERE e.source = $1')
+  || !endorsementsSrc.includes('metadata, source)')) {
+  fail('Endorsements are not source-scoped on read/write');
+} else ok('Endorsements are source-scoped');
 const documentsSrc = fs.readFileSync(path.join(root, 'routes/documents.js'), 'utf8');
 if (!documentsSrc.includes('async function canManageStudentDocuments')
   || !documentsSrc.includes('student_training')
@@ -363,6 +376,24 @@ if (!aircraftMeterSrc.includes('async function rollbackAircraftMeterForDeletedBo
   || !bookingHistorySrc.includes('rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log)')) {
   fail('Completed history deletion does not reconcile aircraft meters');
 } else ok('Completed history deletion reconciles aircraft meters');
+const maxRemainingSource = aircraftMeterSrc.slice(
+  aircraftMeterSrc.indexOf('async function maxRemainingMeterValue'),
+  aircraftMeterSrc.indexOf('async function rollbackMeterFieldForDeletedBooking')
+);
+const historyFloorQuery = maxRemainingSource.slice(0, maxRemainingSource.indexOf('const logColumn'));
+if (historyFloorQuery.includes('source =') || historyFloorQuery.includes('getAppEnv()')) {
+  fail('Aircraft meter floor treats aircraft_hours_history.source as environment');
+} else ok('Aircraft meter floor preserves event-type history rows');
+const bookingCompletionSrc = fs.readFileSync(path.join(root, 'routes', 'bookings-completion.js'), 'utf8');
+if (!bookingCompletionSrc.includes('Aircraft not found in this environment')
+  || !bookingCompletionSrc.includes('Student not found in this environment')
+  || !bookingCompletionSrc.includes("WHERE id = $6 AND status = 'confirmed' AND source = $7")) {
+  fail('Booking completion can silently skip source-scoped aircraft/user updates');
+} else ok('Booking completion fails on cross-source aircraft/users');
+const bookingRulesSrc = fs.readFileSync(path.join(root, 'lib', 'booking-rules.js'), 'utf8');
+if (!bookingRulesSrc.includes('FROM aircraft WHERE id = $1 AND source = $2')) {
+  fail('Booking preflight aircraft validation is not source-scoped');
+} else ok('Booking preflight aircraft validation is source-scoped');
 
 if (/onclick='openDiscrepancyResolve\([^']+JSON\.stringify\(d\)/.test(appHtml)
   || !appHtml.includes('discrepancyRowsById')) {

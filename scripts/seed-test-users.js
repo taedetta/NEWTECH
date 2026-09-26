@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
+const { getAppEnv } = require('../lib/app-env');
 
 try {
   const envPath = path.join(__dirname, '..', '.env');
@@ -40,15 +41,15 @@ async function upsertUser(pool, user, hash) {
     id = existing.rows[0].id;
     await pool.query(
       `UPDATE users SET password_hash = $1, name = $2, role = $3, is_instructor = $4,
-       approval_status = 'approved', deleted_at = NULL, updated_at = NOW() WHERE id = $5`,
-      [hash, user.name, user.role, !!user.is_instructor, id]
+       approval_status = 'approved', deleted_at = NULL, source = $5, updated_at = NOW() WHERE id = $6`,
+      [hash, user.name, user.role, !!user.is_instructor, getAppEnv(), id]
     );
   } else {
     const next = await pool.query('SELECT COALESCE(MAX(id), 0) + 1 AS nid FROM users');
     const ins = await pool.query(
-      `INSERT INTO users (id, email, name, password_hash, role, is_instructor, approval_status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'approved') RETURNING id`,
-      [next.rows[0].nid, user.email.toLowerCase(), user.name, hash, user.role, !!user.is_instructor]
+      `INSERT INTO users (id, email, name, password_hash, role, is_instructor, approval_status, source)
+       VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7) RETURNING id`,
+      [next.rows[0].nid, user.email.toLowerCase(), user.name, hash, user.role, !!user.is_instructor, getAppEnv()]
     );
     id = ins.rows[0].id;
   }
