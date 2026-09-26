@@ -36,7 +36,7 @@ const ROLES = [
     pages: [
       'dashboard', 'schedule', 'history', 'fleet', 'tracking', 'maintenance',
       'people', 'progress', 'at-risk', 'billing', 'instructor-hours', 'flight-log',
-      'endorsements', 'availability', 'approvals',
+      'endorsements', 'availability',
     ],
   },
   {

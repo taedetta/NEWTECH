@@ -374,6 +374,34 @@ if (!stagingQaSrc.includes("localStorage.setItem('fs_token', t)")) {
   fail('Staging authenticated browser QA seeds the wrong token key');
 } else ok('Staging authenticated browser QA seeds SPA token key');
 
+const bootstrapSchema = fs.readFileSync(path.join(root, 'scripts', 'bootstrap-schema.sql'), 'utf8');
+const schemaPatches = fs.readFileSync(path.join(root, 'scripts', 'schema-patches.sql'), 'utf8');
+const instructorHoursStart = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS instructor_hours');
+const nextCreateAfterInstructorHours = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS', instructorHoursStart + 1);
+const instructorHoursSchema = instructorHoursStart >= 0
+  ? bootstrapSchema.slice(instructorHoursStart, nextCreateAfterInstructorHours)
+  : '';
+if (!instructorHoursSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+  || !schemaPatches.includes('ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS source')) {
+  fail('Local schema setup does not create instructor_hours.source');
+} else ok('Local schema setup creates instructor_hours.source');
+
+const seedUsersSrc = fs.readFileSync(path.join(root, 'scripts', 'seed-test-users.js'), 'utf8');
+if (!/for \(const user of TEST_USERS\)[\s\S]*await ensureUserSequence\(pool\);[\s\S]*await ensureSampleAircraft/.test(seedUsersSrc)) {
+  fail('QA user seeding does not reset users sequence after explicit IDs');
+} else ok('QA user seeding resets users sequence after inserts');
+
+const fullBetaSrc = fs.readFileSync(path.join(root, 'scripts', 'full-beta-qa.js'), 'utf8');
+if (!fullBetaSrc.includes('Math.ceil(tach + 100)')
+  || !fullBetaSrc.includes('due100 <= tach')) {
+  fail('Full beta QA can leave aircraft past due for 100-hour inspection');
+} else ok('Full beta QA makes aircraft 100-hour inspections bookable');
+
+if (appHtml.includes("['owner', 'admin', 'instructor'].includes(currentUser.role)) {\n      loadApprovalsBadge")
+  || appHtml.includes("!['owner', 'admin', 'instructor'].includes(currentUser.role)) return")) {
+  fail('Instructor UI still exposes owner/admin-only approvals');
+} else ok('Approvals UI is owner/admin-only');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');

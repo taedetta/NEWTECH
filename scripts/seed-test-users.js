@@ -103,6 +103,7 @@ async function main() {
       const id = await upsertUser(pool, user, hash);
       console.log(`Seeded ${user.role}: ${user.email} (id=${id})`);
     }
+    await ensureUserSequence(pool);
     await ensureSampleAircraft(pool);
     console.log(`\nAll test users use password: ${PASSWORD}`);
   } finally {

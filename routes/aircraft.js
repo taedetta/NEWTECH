@@ -402,6 +402,7 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
 
     const fileUrl = await uploadBuffer(buffer, file_name, {
       folder: `aircraft-docs/${aircraftId}`,
+      allowLocalDevUrl: true,
     });
     if (!fileUrl) return res.status(500).json({ error: 'Upload failed' });
 

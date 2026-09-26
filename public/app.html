@@ -6028,11 +6028,11 @@ async function enterAppBody() {
       if (el) { el.classList.add('hidden'); el.style.display = 'none'; }
     });
 
-  // Show approvals nav for owner/admin/instructor
+  // Account approvals are owner/admin-only; instructors should not see a tab that the API forbids.
   const navApprovals = document.getElementById('nav-approvals');
   if (navApprovals) {
-    navApprovals.classList.toggle('hidden', !['owner', 'admin', 'instructor'].includes(currentUser.role));
-    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+    navApprovals.classList.toggle('hidden', !['owner', 'admin'].includes(currentUser.role));
+    if (['owner', 'admin'].includes(currentUser.role)) {
       loadApprovalsBadge();
     }
   }
@@ -6206,7 +6206,7 @@ function startAppPolling() {
   if (appPollTimer) clearInterval(appPollTimer);
   appPollTimer = setInterval(function() {
     if (!token || !currentUser) return;
-    if (['owner', 'admin', 'instructor'].includes(currentUser.role)) {
+    if (['owner', 'admin'].includes(currentUser.role)) {
       loadApprovalsBadge();
       if (['owner', 'admin'].includes(currentUser.role)) {
         loadLeadsBadge();
@@ -8545,7 +8545,7 @@ async function rejectUser(id) {
 async function loadApprovalsBadge() {
   const badge = document.getElementById('approvals-badge');
   if (!badge) return;
-  if (!currentUser || !['owner', 'admin', 'instructor'].includes(currentUser.role)) return;
+  if (!currentUser || !['owner', 'admin'].includes(currentUser.role)) return;
   try {
     const data = await api('/api/approvals/count');
     setInboxBadge(badge, data.count || 0);

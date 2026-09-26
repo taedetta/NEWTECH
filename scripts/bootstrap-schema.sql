@@ -179,7 +179,8 @@ CREATE TABLE IF NOT EXISTS instructor_hours (
   period_start DATE,
   period_end DATE,
   total_hours DECIMAL(10,2),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS squawks (
