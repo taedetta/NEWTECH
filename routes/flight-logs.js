@@ -6,6 +6,7 @@ const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -15,9 +16,9 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { aircraft_id, person_id, start_date, end_date } = req.query;
     const { role, id: userId } = req.user;
-    const params = [];
-    let idx = 1;
-    let where = [];
+    const params = [getAppEnv()];
+    let idx = 2;
+    let where = ['fl.source = $1'];
 
     // Scope by role — non-admin users only see their own logs
     if (!['owner', 'admin'].includes(role)) {
@@ -58,7 +59,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can edit flight log entries' });
     const logId = parseInt(req.params.id, 10);
-    const existing = await client.query('SELECT * FROM flight_logs WHERE id = $1', [logId]);
+    const existing = await client.query('SELECT * FROM flight_logs WHERE id = $1 AND source = $2', [logId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
     if (!existing.rows[0].booking_id) return res.status(400).json({ error: 'Flight log is not linked to a booking' });
 
@@ -78,14 +79,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
       submitted_by: req.user.id,
     });
     if (notes !== undefined) {
-      await client.query('UPDATE flight_logs SET notes = $1, updated_at = NOW() WHERE id = $2', [notes || null, logId]);
+      await client.query('UPDATE flight_logs SET notes = $1, updated_at = NOW() WHERE id = $2 AND source = $3', [notes || null, logId, getAppEnv()]);
     }
     await client.query('COMMIT');
     res.json(synced.flightLog || synced.booking);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Flight log update error:', err);
-    res.status(500).json({ error: err.message || 'Failed to update flight log entry' });
+    res.status(err.status || 500).json({ error: err.message || 'Failed to update flight log entry' });
   } finally {
     client.release();
   }
@@ -96,8 +97,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only owners and admins can delete flight log entries' });
     const logId = parseInt(req.params.id);
-    const result = await pool.query('DELETE FROM flight_logs WHERE id = $1 RETURNING id', [logId]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
+    const existing = await pool.query('SELECT id, booking_id FROM flight_logs WHERE id = $1 AND source = $2', [logId, getAppEnv()]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Flight log entry not found' });
+    if (existing.rows[0].booking_id) {
+      return res.status(409).json({ error: 'Linked flight logs must be voided or deleted from booking history to keep billing and hours consistent' });
+    }
+    await pool.query('DELETE FROM flight_logs WHERE id = $1 AND source = $2', [logId, getAppEnv()]);
     res.json({ ok: true });
   } catch (err) {
     console.error('Flight log delete error:', err);

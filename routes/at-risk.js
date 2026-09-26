@@ -17,7 +17,11 @@ router.use(authenticateToken, requireRole('owner', 'admin', 'instructor'));
 // GET / — compute and return at-risk students
 router.get('/', async (req, res) => {
   try {
-    const students = await atRiskDb.computeAtRiskStudents();
+    let students = await atRiskDb.computeAtRiskStudents();
+    if (req.user.role === 'instructor') {
+      const allowedStudentIds = new Set(await atRiskDb.getInstructorStudentIds(req.user.id));
+      students = students.filter((student) => allowedStudentIds.has(student.student_id));
+    }
     res.json({ students });
   } catch (err) {
     console.error(`[at-risk] GET / error: ${err.message}`);
@@ -71,7 +75,12 @@ router.patch('/:studentId/override', requireRole('owner', 'admin'), async (req, 
 // GET /:studentId/interventions — list intervention history
 router.get('/:studentId/interventions', async (req, res) => {
   try {
-    const interventions = await atRiskDb.getInterventions(parseInt(req.params.studentId, 10));
+    const studentId = parseInt(req.params.studentId, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student id' });
+    if (req.user.role === 'instructor' && !(await atRiskDb.canInstructorAccessStudent(req.user.id, studentId))) {
+      return res.status(403).json({ error: 'Only assigned instructors can view interventions for this student' });
+    }
+    const interventions = await atRiskDb.getInterventions(studentId);
     res.json(interventions);
   } catch (err) {
     console.error(`[at-risk] GET /${req.params.studentId}/interventions error: ${err.message}`);
@@ -82,12 +91,17 @@ router.get('/:studentId/interventions', async (req, res) => {
 // POST /:studentId/interventions — log a new intervention
 router.post('/:studentId/interventions', async (req, res) => {
   try {
+    const studentId = parseInt(req.params.studentId, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student id' });
+    if (req.user.role === 'instructor' && !(await atRiskDb.canInstructorAccessStudent(req.user.id, studentId))) {
+      return res.status(403).json({ error: 'Only assigned instructors can log interventions for this student' });
+    }
     const { intervention_type, outcome, notes } = req.body;
     if (!intervention_type) {
       return res.status(400).json({ error: 'intervention_type is required' });
     }
     await atRiskDb.logIntervention(
-      parseInt(req.params.studentId, 10),
+      studentId,
       req.user.id,
       intervention_type,
       outcome || null,

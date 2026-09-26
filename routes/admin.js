@@ -11,6 +11,7 @@ const { emailFullDataBackup } = require('../lib/full-data-backup');
 const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue, timeToComparable } = require('../lib/instructors');
 const { getAllInstructorsDayAvailability } = require('../lib/instructor-availability');
 const { calendarDateFromDate } = require('../lib/school-timezone');
+const { getAppEnv, isStaging } = require('../lib/app-env');
 const { execSync, spawn } = require('child_process');
 
 const router = express.Router();
@@ -40,6 +41,10 @@ const RESET_DELETE_TABLES = [
 // ─── ADMIN: RESET ALL DATA ───────────────────────────────
 
 router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Reset all data is disabled on staging.' });
+  }
+
   const client = await pool.connect();
   try {
     // Safety backup before any deletion — abort if email fails
@@ -49,22 +54,26 @@ router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'),
     });
 
     await client.query('BEGIN');
+    const source = getAppEnv();
 
     for (const table of RESET_DELETE_TABLES) {
       try {
-        await client.query(`DELETE FROM ${table}`);
+        await client.query(`DELETE FROM ${table} WHERE source = $1`, [source]);
       } catch (err) {
         // Skip tables that don't exist in this schema version
         if (err.code === '42P01') {
           console.warn(`[reset-all-data] Skipping missing table: ${table}`);
           continue;
         }
+        if (err.code === '42703') {
+          throw new Error(`Unsafe reset aborted: ${table} is missing source isolation`);
+        }
         throw err;
       }
     }
 
-    await client.query('UPDATE users SET total_hobbs_hours = 0, total_tach_hours = 0');
-    await client.query('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0');
+    await client.query('UPDATE users SET total_hobbs_hours = 0, total_tach_hours = 0 WHERE source = $1', [source]);
+    await client.query('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0 WHERE source = $1', [source]);
 
     await client.query(
       'INSERT INTO admin_audit_log (action, performed_by, details, performed_at) VALUES ($1, $2, $3, NOW())',

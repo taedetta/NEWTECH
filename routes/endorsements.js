@@ -9,6 +9,18 @@ const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 
 const router = express.Router();
 
+async function canCreateEndorsementForStudent(user, studentId) {
+  if (['owner', 'admin'].includes(user.role)) return true;
+  if (user.role !== 'instructor') return false;
+  const assigned = await pool.query(
+    `SELECT 1 FROM student_training
+     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'
+     LIMIT 1`,
+    [studentId, user.id]
+  );
+  return assigned.rows.length > 0;
+}
+
 // ─── ENDORSEMENT TEMPLATES ──────────────────────────────
 
 const ENDORSEMENT_TEMPLATES = {
@@ -224,11 +236,13 @@ router.get('/', authenticateToken, async (req, res) => {
         params.push(req.user.id);
         query += ` AND e.instructor_id = $${params.length}`;
       }
-    } else {
+    } else if (['owner', 'admin'].includes(req.user.role)) {
       if (student_id) {
         params.push(parseInt(student_id));
         query += ` AND e.student_id = $${params.length}`;
       }
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     if (status === 'active') {
@@ -258,11 +272,16 @@ router.post('/', authenticateToken, requireRole('instructor', 'owner', 'admin'),
     if (!student_id || !template_key || !endorsement_date) {
       return res.status(400).json({ error: 'student_id, template_key, and endorsement_date are required' });
     }
+    const studentId = parseInt(student_id, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canCreateEndorsementForStudent(req.user, studentId))) {
+      return res.status(403).json({ error: 'Only assigned instructors or admins can endorse this student' });
+    }
 
     const template = ENDORSEMENT_TEMPLATES[template_key];
     if (!template) return res.status(400).json({ error: 'Unknown template key' });
 
-    const studentRes = await pool.query('SELECT id, name FROM users WHERE id = $1', [student_id]);
+    const studentRes = await pool.query('SELECT id, name FROM users WHERE id = $1', [studentId]);
     if (studentRes.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
     const student = studentRes.rows[0];
 

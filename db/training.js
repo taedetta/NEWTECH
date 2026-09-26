@@ -5,6 +5,7 @@
 'use strict';
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 /**
  * Get a student's active training enrollments with stages, maneuvers, and debriefs.
@@ -188,8 +189,8 @@ async function getStudentFlightHours(studentId) {
   const result = await pool.query(
     `SELECT COALESCE(SUM(hobbs_delta), 0) AS total_hobbs_hours,
             COALESCE(SUM(tach_delta), 0) AS total_tach_hours
-     FROM flight_logs WHERE student_id = $1`,
-    [studentId]
+     FROM flight_logs WHERE student_id = $1 AND source = $2`,
+    [studentId, getAppEnv()]
   );
   return result.rows[0];
 }

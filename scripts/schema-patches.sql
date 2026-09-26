@@ -59,7 +59,9 @@ ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS booking_id INTEGER REFEREN
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_status VARCHAR(20) DEFAULT 'pending';
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_message TEXT;
+ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
 UPDATE instructor_hours SET audit_status = 'pending' WHERE audit_status IS NULL;
+UPDATE instructor_hours SET source = 'production' WHERE source IS NULL;
 UPDATE bookings SET source = 'production' WHERE source IS NULL;
 UPDATE flight_logs SET source = 'production' WHERE source IS NULL;
 

@@ -3,31 +3,41 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
+const { parsePositiveNumber } = require('../lib/strict-number');
+const { canInstructorAccessStudent } = require('../db/at-risk');
 
 const router = express.Router();
 
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Students cannot submit ground sessions' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) {
+      return res.status(403).json({ error: 'Only admins, owners, and instructors can submit ground sessions' });
+    }
     const { student_id, session_date, ground_hours, notes } = req.body;
-    if (!student_id) return res.status(400).json({ error: 'student_id is required' });
-    if (!ground_hours || parseFloat(ground_hours) <= 0) return res.status(400).json({ error: 'ground_hours must be greater than 0' });
+    const studentId = parseInt(student_id, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'student_id is required' });
+    const parsedHours = parsePositiveNumber(ground_hours, 'ground_hours');
+    if (parsedHours.error) return res.status(400).json({ error: parsedHours.error });
     let instructorId = userId;
     if ((role === 'owner' || role === 'admin') && req.body.instructor_id) instructorId = parseInt(req.body.instructor_id);
     const instructorCheck = await pool.query('SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL', [instructorId]);
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
-    const studentCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL", [parseInt(student_id)]);
+    const studentCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL", [studentId]);
     if (studentCheck.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
+    if (role === 'instructor' && !(await canInstructorAccessStudent(userId, studentId))) {
+      return res.status(403).json({ error: 'Only assigned instructors can create ground sessions for this student' });
+    }
     const instrRate = instructorCheck.rows[0].instructor_rate;
-    const hrs = parseFloat(ground_hours);
-    const chargeAmount = instrRate != null ? Math.round(hrs * parseFloat(instrRate) * 100) / 100 : 0;
+    const hrs = parsedHours.value;
+    const rate = instrRate != null ? Number(instrRate) : null;
+    const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
     const result = await pool.query(`
       INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes)
       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [parseInt(student_id), instructorId, session_date || new Date().toISOString().slice(0, 10), hrs,
-       instrRate != null ? parseFloat(instrRate) : null, chargeAmount, notes || null]
+      [studentId, instructorId, session_date || new Date().toISOString().slice(0, 10), hrs,
+       Number.isFinite(rate) ? rate : null, chargeAmount, notes || null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -39,11 +49,14 @@ router.post('/', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
+    if (!['owner', 'admin', 'instructor', 'student', 'renter'].includes(role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const { student_id, instructor_id, start_date, end_date } = req.query;
     const conditions = [];
     const params = [];
     let pi = 1;
-    if (role === 'student') { conditions.push(`gs.student_id = $${pi++}`); params.push(userId); }
+    if (['student', 'renter'].includes(role)) { conditions.push(`gs.student_id = $${pi++}`); params.push(userId); }
     else {
       if (role === 'instructor') { conditions.push(`gs.instructor_id = $${pi++}`); params.push(userId); }
       else if (instructor_id) { conditions.push(`gs.instructor_id = $${pi++}`); params.push(parseInt(instructor_id)); }
@@ -85,7 +98,7 @@ router.delete('/clear', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) return res.status(403).json({ error: 'Access denied' });
     const sessionId = parseInt(req.params.id);
     const existing = await pool.query('SELECT instructor_id FROM ground_sessions WHERE id = $1', [sessionId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
@@ -106,10 +119,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1', [sessionId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     const { session_date, ground_hours, notes } = req.body;
-    if (!ground_hours || parseFloat(ground_hours) <= 0) return res.status(400).json({ error: 'ground_hours must be greater than 0' });
-    const hrs = parseFloat(ground_hours);
+    const parsedHours = parsePositiveNumber(ground_hours, 'ground_hours');
+    if (parsedHours.error) return res.status(400).json({ error: parsedHours.error });
+    const hrs = parsedHours.value;
     const instrRate = existing.rows[0].instructor_rate;
-    const chargeAmount = instrRate != null ? Math.round(hrs * parseFloat(instrRate) * 100) / 100 : 0;
+    const rate = instrRate != null ? Number(instrRate) : null;
+    const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
     const result = await pool.query(`
       UPDATE ground_sessions SET session_date = COALESCE($1, session_date), ground_hours = $2,
         instruction_charge_amount = $3, notes = $4, updated_at = NOW()

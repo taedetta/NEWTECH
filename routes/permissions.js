@@ -44,6 +44,13 @@ router.patch('/:userId', authenticateToken, async (req, res) => {
       }
     }
     const targetId = parseInt(req.params.userId);
+    const requesterIsOwnerOrAdmin = ['owner', 'admin'].includes(req.user.role);
+    if (!requesterIsOwnerOrAdmin && targetId === req.user.id) {
+      return res.status(403).json({ error: 'You cannot modify your own permissions' });
+    }
+    if (!requesterIsOwnerOrAdmin && req.body.can_edit_website !== undefined) {
+      return res.status(403).json({ error: 'Only owners and admins can grant website editor access' });
+    }
     const target = await pool.query('SELECT role FROM users WHERE id = $1', [targetId]);
     if (target.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (target.rows[0].role === 'owner') {

@@ -5,6 +5,7 @@
 // Does NOT own: users, bookings, flight_logs.
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 /** Ensure upsert target exists (Railway DB may predate schema patch). */
 async function ensureAtRiskUniqueIndex() {
@@ -67,8 +68,8 @@ async function computeAtRiskStudents() {
         u.id AS student_id,
         u.name AS student_name,
         GREATEST(
-          (SELECT MAX(b.start_time) FROM bookings b WHERE b.student_id = u.id AND b.status = 'completed'),
-          (SELECT MAX(fl.flight_date) FROM flight_logs fl WHERE fl.student_id = u.id)
+          (SELECT MAX(b.start_time) FROM bookings b WHERE b.student_id = u.id AND b.status = 'completed' AND b.source = $1),
+          (SELECT MAX(fl.flight_date) FROM flight_logs fl WHERE fl.student_id = u.id AND fl.source = $1)
         ) AS last_flight_date
       FROM users u
       WHERE u.role = 'student' AND u.deleted_at IS NULL
@@ -80,20 +81,21 @@ async function computeAtRiskStudents() {
         i.name AS instructor_name
       FROM bookings b
       JOIN users i ON i.id = b.instructor_id
-      WHERE b.status IN ('confirmed', 'completed')
+      WHERE b.status IN ('confirmed', 'completed') AND b.source = $1
       ORDER BY b.student_id, b.start_time DESC
     )
     SELECT
       la.student_id,
       la.student_name,
       la.last_flight_date,
+      ai.instructor_id,
       COALESCE(ai.instructor_name, NULL) AS instructor_name,
       ara.manual_override_level,
       ara.manual_override_notes
     FROM last_activity la
     LEFT JOIN assigned_instructor ai ON ai.student_id = la.student_id
     LEFT JOIN at_risk_assessments ara ON ara.student_id = la.student_id
-  `);
+  `, [getAppEnv()]);
 
   const students = [];
 
@@ -129,6 +131,7 @@ async function computeAtRiskStudents() {
       students.push({
         student_id: row.student_id,
         student_name: row.student_name,
+        instructor_id: row.instructor_id,
         instructor_name: row.instructor_name,
         risk_level: effectiveLevel,
         risk_score: riskScore,
@@ -143,6 +146,40 @@ async function computeAtRiskStudents() {
   // Sort by risk score descending (most at-risk first)
   students.sort((a, b) => b.risk_score - a.risk_score);
   return students;
+}
+
+/** Return active student ids that an instructor is allowed to review. */
+async function getInstructorStudentIds(instructorId) {
+  const result = await pool.query(`
+    SELECT DISTINCT student_id
+    FROM (
+      SELECT student_id
+      FROM student_training
+      WHERE instructor_id = $1 AND status = 'active'
+      UNION
+      SELECT student_id
+      FROM bookings
+      WHERE instructor_id = $1
+        AND student_id IS NOT NULL
+        AND status IN ('confirmed', 'completed')
+    ) scoped
+  `, [instructorId]);
+  return result.rows.map((row) => row.student_id);
+}
+
+/** Check whether an instructor can review or write at-risk records for a student. */
+async function canInstructorAccessStudent(instructorId, studentId) {
+  const result = await pool.query(`
+    SELECT 1
+    FROM student_training
+    WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'
+    UNION
+    SELECT 1
+    FROM bookings
+    WHERE student_id = $1 AND instructor_id = $2 AND status IN ('confirmed', 'completed')
+    LIMIT 1
+  `, [studentId, instructorId]);
+  return result.rows.length > 0;
 }
 
 /** Set manual override for a student's risk level */
@@ -189,6 +226,8 @@ module.exports = {
   getThresholds,
   saveThresholds,
   computeAtRiskStudents,
+  getInstructorStudentIds,
+  canInstructorAccessStudent,
   setManualOverride,
   getInterventions,
   logIntervention,
