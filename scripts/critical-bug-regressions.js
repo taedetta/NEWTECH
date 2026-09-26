@@ -83,8 +83,8 @@ async function testRequiredEmailsBypassPreferences() {
   await prefs.sendEmailToUser(1, 'student@example.com', prefs.EMAIL_TYPES.booking_confirmation, 'Booking', '<p>Booking</p>', 'Booking text');
   assert.strictEqual(sent.length, 1, 'only the required email should be delivered when all optional email is off');
   assert.strictEqual(sent[0][1], 'Reset');
+  assert.doesNotMatch(sent[0][2], /Unsubscribe/);
   assert.doesNotMatch(sent[0][3], /Unsubscribe/);
-  assert.doesNotMatch(sent[0][4], /Unsubscribe/);
 }
 
 async function testPreferenceUpdatesIgnoreRequiredColumns() {
