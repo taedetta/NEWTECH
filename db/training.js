@@ -22,9 +22,9 @@ async function getStudentProgress(studentId) {
     JOIN training_programs tp ON tp.id = st.program_id
     LEFT JOIN users instructor ON instructor.id = st.instructor_id
     LEFT JOIN program_stages ps ON ps.id = st.current_stage_id
-    WHERE st.student_id = $1 AND st.status = 'active'
+    WHERE st.student_id = $1 AND st.status = 'active' AND st.source = $2
     ORDER BY st.started_at DESC
-  `, [studentId]);
+  `, [studentId, getAppEnv()]);
 
   const enrollments = [];
   for (const enroll of enrollmentsResult.rows) {
@@ -42,19 +42,19 @@ async function getStudentProgress(studentId) {
                sm.lesson_type, sm.module_number, sm.reading_assignment, sm.lesson_tasks,
                smp.status, smp.notes, smp.proficient_date
         FROM stage_maneuvers sm
-        LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1
+        LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1 AND smp.source = $3
         WHERE sm.stage_id = $2 ORDER BY sm.order_index
-      `, [studentId, stage.id]);
+      `, [studentId, stage.id, getAppEnv()]);
 
       const completionResult = await pool.query(
         `SELECT COUNT(*) as cnt FROM stage_maneuvers sm
-         LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1
+         LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1 AND smp.source = $3
          WHERE sm.stage_id = $2 AND smp.status IN ('proficient','completed')`,
-        [studentId, stage.id]
+        [studentId, stage.id, getAppEnv()]
       );
       const milestoneResult = await pool.query(
-        `SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 LIMIT 1`,
-        [studentId, stage.id]
+        `SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 AND source = $3 LIMIT 1`,
+        [studentId, stage.id, getAppEnv()]
       );
       const mCount = parseInt(stage.maneuver_count);
       const isCompleteByManeuvers = mCount > 0 && parseInt(completionResult.rows[0].cnt) >= mCount;
@@ -94,10 +94,10 @@ async function getStudentProgress(studentId) {
     LEFT JOIN users u ON u.id = fd.instructor_id
     LEFT JOIN program_stages ps ON ps.id = fd.stage_id
     LEFT JOIN training_programs tp ON tp.id = ps.program_id
-    WHERE fd.student_id = $1
+    WHERE fd.student_id = $1 AND fd.source = $2
     ORDER BY fd.flight_date DESC
     LIMIT 50
-  `, [studentId]);
+  `, [studentId, getAppEnv()]);
 
   return { enrollments, debriefs: debriefsResult.rows };
 }
@@ -109,8 +109,8 @@ async function getStudentProgress(studentId) {
 async function getManeuverProgress(studentId, enrollmentId) {
   // Resolve enrollment to program_id
   const enrollResult = await pool.query(
-    'SELECT program_id FROM student_training WHERE id = $1 AND student_id = $2',
-    [enrollmentId, studentId]
+    'SELECT program_id FROM student_training WHERE id = $1 AND student_id = $2 AND source = $3',
+    [enrollmentId, studentId, getAppEnv()]
   );
   if (enrollResult.rows.length === 0) return [];
 
@@ -122,9 +122,9 @@ async function getManeuverProgress(studentId, enrollmentId) {
            COALESCE(smp.status, 'not_started') AS status, smp.notes, smp.proficient_date
     FROM stage_maneuvers sm
     JOIN program_stages ps ON ps.id = sm.stage_id AND ps.program_id = $1
-    LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $2
+    LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $2 AND smp.source = $3
     ORDER BY ps.order_index, sm.order_index
-  `, [programId, studentId]);
+  `, [programId, studentId, getAppEnv()]);
 
   return result.rows.map(r => ({
     ...r,
@@ -166,18 +166,18 @@ async function upsertManeuverProgress(studentId, maneuverId, status) {
 
   if (dbStatus === 'not_started') {
     await pool.query(
-      'DELETE FROM student_maneuver_progress WHERE student_id = $1 AND maneuver_id = $2',
-      [studentId, maneuverId]
+      'DELETE FROM student_maneuver_progress WHERE student_id = $1 AND maneuver_id = $2 AND source = $3',
+      [studentId, maneuverId, getAppEnv()]
     );
     return { student_id: studentId, maneuver_id: maneuverId, status: 'not_started' };
   }
 
   const result = await pool.query(
-    `INSERT INTO student_maneuver_progress (student_id, maneuver_id, status, proficient_date)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (student_id, maneuver_id) DO UPDATE SET status = $3, proficient_date = $4
+    `INSERT INTO student_maneuver_progress (student_id, maneuver_id, status, proficient_date, source)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (student_id, maneuver_id, source) DO UPDATE SET status = $3, proficient_date = $4
      RETURNING *`,
-    [studentId, maneuverId, dbStatus, profDate]
+    [studentId, maneuverId, dbStatus, profDate, getAppEnv()]
   );
   return { ...result.rows[0], status: normalizeManeuverStatus(result.rows[0].status) };
 }
@@ -205,10 +205,10 @@ async function createDebrief({ studentId, instructorId, bookingId, stageId, note
     await client.query('BEGIN');
 
     const debriefResult = await client.query(
-      `INSERT INTO flight_debriefs (student_id, instructor_id, booking_id, stage_id, notes, recommendations, overall_performance, flight_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO flight_debriefs (student_id, instructor_id, booking_id, stage_id, notes, recommendations, overall_performance, flight_date, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [studentId, instructorId, bookingId || null, stageId || null, notes || null, recommendations || null, overallPerformance || null, flightDate || new Date()]
+      [studentId, instructorId, bookingId || null, stageId || null, notes || null, recommendations || null, overallPerformance || null, flightDate || new Date(), getAppEnv()]
     );
     const debrief = debriefResult.rows[0];
 
@@ -350,7 +350,7 @@ async function getProgramEnrollments(programId) {
       (SELECT COUNT(*) FROM program_stages WHERE program_id = $1) AS stages_total,
       (SELECT COUNT(*) FROM program_stages ps2
        JOIN stage_maneuvers sm ON sm.stage_id = ps2.id
-       LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = st.student_id
+       LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = st.student_id AND smp.source = $2
        WHERE ps2.program_id = $1 AND smp.status IN ('proficient','completed')
       ) AS stages_completed,
       (SELECT COUNT(*) FROM stage_maneuvers sm2
@@ -359,16 +359,16 @@ async function getProgramEnrollments(programId) {
       ) AS maneuvers_total,
       (SELECT COUNT(*) FROM stage_maneuvers sm2
        JOIN program_stages ps3 ON ps3.id = sm2.stage_id
-       LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm2.id AND smp.student_id = st.student_id
+       LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm2.id AND smp.student_id = st.student_id AND smp.source = $2
        WHERE ps3.program_id = $1 AND smp.status IN ('proficient','completed')
       ) AS maneuvers_completed
     FROM student_training st
     JOIN users u ON u.id = st.student_id
     LEFT JOIN users instructor ON instructor.id = st.instructor_id
     LEFT JOIN program_stages ps ON ps.id = st.current_stage_id
-    WHERE st.program_id = $1 AND st.status = 'active'
+    WHERE st.program_id = $1 AND st.status = 'active' AND st.source = $2
     ORDER BY u.name
-  `, [programId]);
+  `, [programId, getAppEnv()]);
   return result.rows;
 }
 
@@ -377,8 +377,8 @@ async function getProgramEnrollments(programId) {
  */
 async function completeStageMilestone({ studentId, stageId, enrollmentId, completedBy, notes, debriefId }) {
   const enrollResult = await pool.query(
-    'SELECT * FROM student_training WHERE id = $1 AND student_id = $2',
-    [enrollmentId, studentId]
+    'SELECT * FROM student_training WHERE id = $1 AND student_id = $2 AND source = $3',
+    [enrollmentId, studentId, getAppEnv()]
   );
   if (enrollResult.rows.length === 0) {
     const err = new Error('Enrollment not found');
@@ -402,9 +402,9 @@ async function completeStageMilestone({ studentId, stageId, enrollmentId, comple
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [studentId, stageId, completedBy, debriefId || null, notes || null]
+      `INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes, source)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [studentId, stageId, completedBy, debriefId || null, notes || null, getAppEnv()]
     );
 
     const nextStage = await client.query(
@@ -415,8 +415,8 @@ async function completeStageMilestone({ studentId, stageId, enrollmentId, comple
     );
     const nextStageId = nextStage.rows.length > 0 ? nextStage.rows[0].id : stageId;
     await client.query(
-      `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2`,
-      [nextStageId, enrollmentId]
+      `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2 AND source = $3`,
+      [nextStageId, enrollmentId, getAppEnv()]
     );
     await client.query('COMMIT');
     return { ok: true, next_stage_id: nextStageId };

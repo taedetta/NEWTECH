@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS student_training (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);
+CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_source_unique ON student_training(student_id, program_id, source);
 
 CREATE TABLE IF NOT EXISTS student_maneuver_progress (
   id SERIAL PRIMARY KEY,
@@ -310,7 +310,7 @@ CREATE TABLE IF NOT EXISTS student_maneuver_progress (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
+CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_source_unique ON student_maneuver_progress(student_id, maneuver_id, source);
 
 CREATE TABLE IF NOT EXISTS flight_debriefs (
   id SERIAL PRIMARY KEY,
@@ -343,7 +343,8 @@ CREATE TABLE IF NOT EXISTS milestone_completions (
   completed_by INTEGER REFERENCES users(id),
   debrief_id INTEGER REFERENCES flight_debriefs(id),
   notes TEXT,
-  completed_at TIMESTAMPTZ DEFAULT NOW()
+  completed_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS training_progress (

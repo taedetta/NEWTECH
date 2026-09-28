@@ -186,8 +186,14 @@ ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS lesson_tasks JSONB DEFAULT 
 ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
 UPDATE student_maneuver_progress SET source = 'production' WHERE source IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
-CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);
+ALTER TABLE student_training ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE student_training SET source = 'production' WHERE source IS NULL;
+ALTER TABLE milestone_completions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE milestone_completions SET source = 'production' WHERE source IS NULL;
+DROP INDEX IF EXISTS student_maneuver_progress_student_maneuver_unique;
+DROP INDEX IF EXISTS student_training_student_program_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_source_unique ON student_maneuver_progress(student_id, maneuver_id, source);
+CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_source_unique ON student_training(student_id, program_id, source);
 
 -- ── At-risk interventions ──
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ DEFAULT NOW();

@@ -106,9 +106,9 @@ router.get('/student-progress', authenticateToken, async (req, res) => {
       `SELECT smp.*, sm.name as maneuver_name, sm.stage_id, sm.order_index as maneuver_order
        FROM student_maneuver_progress smp
        JOIN stage_maneuvers sm ON sm.id = smp.maneuver_id
-       WHERE smp.student_id = $1
+       WHERE smp.student_id = $1 AND smp.source = $2
        ORDER BY sm.stage_id, sm.order_index`,
-      [studentId]
+      [studentId, getAppEnv()]
     );
     const result = programs.rows.map(p => ({
       ...p,
@@ -138,11 +138,11 @@ router.post('/student-progress', authenticateToken, async (req, res) => {
     const validStatuses = ['not_started', 'in_progress', 'needs_review', 'proficient', 'completed'];
     const s = validStatuses.includes(status) ? status : 'in_progress';
     const result = await pool.query(
-      `INSERT INTO student_maneuver_progress (student_id, maneuver_id, status, notes, proficient_date)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (student_id, maneuver_id) DO UPDATE SET status = $3, notes = $4, proficient_date = $5
+      `INSERT INTO student_maneuver_progress (student_id, maneuver_id, status, notes, proficient_date, source)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (student_id, maneuver_id, source) DO UPDATE SET status = $3, notes = $4, proficient_date = $5
        RETURNING *`,
-      [studentId, maneuverId, s, notes || null, s === 'proficient' || s === 'completed' ? new Date() : null]
+      [studentId, maneuverId, s, notes || null, s === 'proficient' || s === 'completed' ? new Date() : null, getAppEnv()]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -426,9 +426,9 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
       JOIN training_programs tp ON tp.id = st.program_id
       LEFT JOIN users u ON u.id = st.instructor_id
       LEFT JOIN program_stages ps ON ps.id = st.current_stage_id
-      WHERE st.student_id = $1 AND st.status = 'active'
+      WHERE st.student_id = $1 AND st.status = 'active' AND st.source = $2
       ORDER BY st.started_at
-    `, [studentId]);
+    `, [studentId, getAppEnv()]);
     if (enrollResult.rows.length === 0) return res.json({ programs: [] });
     const flightResult = await pool.query(
       `SELECT hobbs_delta, is_night, is_xc, is_instrument, is_solo, flight_date
@@ -445,11 +445,15 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
       xc_solo: flights.filter(f => f.is_xc && f.is_solo).reduce((s, f) => s + toHrs(f), 0),
       instrument: flights.filter(f => f.is_instrument).reduce((s, f) => s + toHrs(f), 0),
     };
-    const endorseResult = await pool.query(`SELECT id, endorsement_type, endorsement_date, expiration_date, instructor_name, instructor_cert_number, signed_at FROM endorsements WHERE student_id = $1 ORDER BY endorsement_date DESC`, [studentId]);
+    const endorseResult = await pool.query(
+      `SELECT id, endorsement_type, endorsement_date, expiration_date, instructor_name, instructor_cert_number, signed_at
+       FROM endorsements WHERE student_id = $1 AND source = $2 ORDER BY endorsement_date DESC`,
+      [studentId, getAppEnv()]
+    );
     const debriefsResult = await pool.query(`
       SELECT fd.id, fd.flight_date, fd.notes, fd.overall_performance, fd.recommendations, u.name as instructor_name, ps.name as stage_name
       FROM flight_debriefs fd LEFT JOIN users u ON u.id = fd.instructor_id LEFT JOIN program_stages ps ON ps.id = fd.stage_id
-      WHERE fd.student_id = $1 ORDER BY fd.flight_date DESC`, [studentId]);
+      WHERE fd.student_id = $1 AND fd.source = $2 ORDER BY fd.flight_date DESC`, [studentId, getAppEnv()]);
     const debriefIds = debriefsResult.rows.map(d => d.id);
     let debrief_grades = [];
     if (debriefIds.length > 0) {
@@ -465,8 +469,8 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
                COUNT(smp.id) FILTER (WHERE smp.status IN ('proficient','completed')) as proficient_count
         FROM program_stages ps
         LEFT JOIN stage_maneuvers sm ON sm.stage_id = ps.id
-        LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1
-        WHERE ps.program_id = $2 GROUP BY ps.id, ps.name, ps.order_index ORDER BY ps.order_index`, [studentId, enroll.program_id]);
+        LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1 AND smp.source = $3
+        WHERE ps.program_id = $2 GROUP BY ps.id, ps.name, ps.order_index ORDER BY ps.order_index`, [studentId, enroll.program_id, getAppEnv()]);
       const stages = stagesResult.rows;
       const totalStages = stages.length;
       const completedStages = stages.filter(s => parseInt(s.total_maneuvers) > 0 && parseInt(s.proficient_count) >= parseInt(s.total_maneuvers)).length;
@@ -618,7 +622,7 @@ router.get('/students', authenticateToken, async (req, res) => {
           'stages_total', (SELECT COUNT(*) FROM program_stages ps2 WHERE ps2.program_id = st.program_id),
           'stages_completed', (SELECT COUNT(*) FROM program_stages ps3
             JOIN stage_maneuvers sm ON sm.stage_id = ps3.id
-            LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = u.id
+            LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = u.id AND smp.source = $${canViewAll ? 1 : 2}
             WHERE ps3.program_id = st.program_id AND smp.status IN ('proficient','completed'))
         )) FILTER (WHERE st.id IS NOT NULL), '[]') AS enrollments
       FROM users u
@@ -672,10 +676,10 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
       LEFT JOIN users u ON u.id = fd.instructor_id
       LEFT JOIN program_stages ps ON ps.id = fd.stage_id
       LEFT JOIN training_programs tp ON tp.id = ps.program_id
-      WHERE fd.student_id = $1
+      WHERE fd.student_id = $1 AND fd.source = $2
       ORDER BY fd.flight_date DESC
       LIMIT 20
-    `, [studentId]);
+    `, [studentId, getAppEnv()]);
 
     // Build stages + maneuvers with status for each enrollment
     const enrollments = [];
@@ -692,20 +696,20 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
           SELECT sm.id, sm.name, sm.description, sm.order_index, sm.proficiency_standard,
                  smp.status, smp.notes, smp.proficient_date
           FROM stage_maneuvers sm
-          LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1
+          LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1 AND smp.source = $3
           WHERE sm.stage_id = $2
           ORDER BY sm.order_index
-        `, [studentId, stage.id]);
+        `, [studentId, stage.id, getAppEnv()]);
 
         const completionResult = await pool.query(
           `SELECT COUNT(*) as cnt FROM stage_maneuvers sm
-           LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1
+           LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1 AND smp.source = $3
            WHERE sm.stage_id = $2 AND smp.status IN ('proficient','completed')`,
-          [studentId, stage.id]
+          [studentId, stage.id, getAppEnv()]
         );
         const milestoneResult = await pool.query(
-          `SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 LIMIT 1`,
-          [studentId, stage.id]
+          `SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 AND source = $3 LIMIT 1`,
+          [studentId, stage.id, getAppEnv()]
         );
         const isCompleteByManeuvers = parseInt(stage.maneuver_count) > 0
           && parseInt(completionResult.rows[0].cnt) >= parseInt(stage.maneuver_count);
@@ -769,10 +773,10 @@ router.get('/students/:studentId/debriefs', authenticateToken, async (req, res) 
       LEFT JOIN users u ON u.id = fd.instructor_id
       LEFT JOIN program_stages ps ON ps.id = fd.stage_id
       LEFT JOIN training_programs tp ON tp.id = ps.program_id
-      WHERE fd.student_id = $1
+      WHERE fd.student_id = $1 AND fd.source = $2
       ORDER BY fd.flight_date DESC
       LIMIT 50
-    `, [studentId]);
+    `, [studentId, getAppEnv()]);
 
     res.json(result.rows);
   } catch (err) {

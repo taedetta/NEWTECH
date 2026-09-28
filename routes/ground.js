@@ -5,6 +5,7 @@ const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { parsePositiveNumber } = require('../lib/strict-number');
 const { canInstructorAccessStudent } = require('../db/at-risk');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -21,10 +22,17 @@ router.post('/', authenticateToken, async (req, res) => {
     if (parsedHours.error) return res.status(400).json({ error: parsedHours.error });
     let instructorId = userId;
     if ((role === 'owner' || role === 'admin') && req.body.instructor_id) instructorId = parseInt(req.body.instructor_id);
-    const instructorCheck = await pool.query('SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL', [instructorId]);
+    const source = getAppEnv();
+    const instructorCheck = await pool.query(
+      'SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [instructorId, source]
+    );
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
-    const studentCheck = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL", [studentId]);
+    const studentCheck = await pool.query(
+      "SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL AND source = $2",
+      [studentId, source]
+    );
     if (studentCheck.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
     if (role === 'instructor' && !(await canInstructorAccessStudent(userId, studentId))) {
       return res.status(403).json({ error: 'Only assigned instructors can create ground sessions for this student' });
@@ -34,10 +42,10 @@ router.post('/', authenticateToken, async (req, res) => {
     const rate = instrRate != null ? Number(instrRate) : null;
     const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
     const result = await pool.query(`
-      INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes)
-      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [studentId, instructorId, session_date || new Date().toISOString().slice(0, 10), hrs,
-       Number.isFinite(rate) ? rate : null, chargeAmount, notes || null]
+       Number.isFinite(rate) ? rate : null, chargeAmount, notes || null, source]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -53,9 +61,9 @@ router.get('/', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
     const { student_id, instructor_id, start_date, end_date } = req.query;
-    const conditions = [];
-    const params = [];
-    let pi = 1;
+    const conditions = ['gs.source = $1'];
+    const params = [getAppEnv()];
+    let pi = 2;
     if (['student', 'renter'].includes(role)) { conditions.push(`gs.student_id = $${pi++}`); params.push(userId); }
     else {
       if (role === 'instructor') { conditions.push(`gs.instructor_id = $${pi++}`); params.push(userId); }
@@ -69,8 +77,8 @@ router.get('/', authenticateToken, async (req, res) => {
       SELECT gs.id, gs.session_date, gs.ground_hours, gs.instructor_rate, gs.instruction_charge_amount, gs.notes, gs.created_at,
              gs.student_id, gs.instructor_id, s.name as student_name, inst.name as instructor_name
       FROM ground_sessions gs
-      JOIN users s ON s.id = gs.student_id
-      JOIN users inst ON inst.id = gs.instructor_id
+      JOIN users s ON s.id = gs.student_id AND s.source = gs.source
+      JOIN users inst ON inst.id = gs.instructor_id AND inst.source = gs.source
       ${where}
       ORDER BY gs.session_date DESC, gs.created_at DESC
     `, params);
@@ -87,7 +95,10 @@ router.delete('/clear', authenticateToken, async (req, res) => {
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can clear ground sessions' });
     const { instructor_id } = req.query;
     if (!instructor_id) return res.status(400).json({ error: 'instructor_id is required' });
-    const result = await pool.query('DELETE FROM ground_sessions WHERE instructor_id = $1 RETURNING id', [parseInt(instructor_id)]);
+    const result = await pool.query(
+      'DELETE FROM ground_sessions WHERE instructor_id = $1 AND source = $2 RETURNING id',
+      [parseInt(instructor_id), getAppEnv()]
+    );
     res.json({ ok: true, deleted: result.rowCount });
   } catch (err) {
     console.error('Ground sessions clear error:', err);
@@ -100,10 +111,10 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const { role, id: userId } = req.user;
     if (!['owner', 'admin', 'instructor'].includes(role)) return res.status(403).json({ error: 'Access denied' });
     const sessionId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT instructor_id FROM ground_sessions WHERE id = $1', [sessionId]);
+    const existing = await pool.query('SELECT instructor_id FROM ground_sessions WHERE id = $1 AND source = $2', [sessionId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     if (role === 'instructor' && existing.rows[0].instructor_id !== userId) return res.status(403).json({ error: "Cannot delete another instructor's session" });
-    await pool.query('DELETE FROM ground_sessions WHERE id = $1', [sessionId]);
+    await pool.query('DELETE FROM ground_sessions WHERE id = $1 AND source = $2', [sessionId, getAppEnv()]);
     res.json({ ok: true });
   } catch (err) {
     console.error('Ground session delete error:', err);
@@ -116,7 +127,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { role } = req.user;
     if (!['owner', 'admin'].includes(role)) return res.status(403).json({ error: 'Only admins and owners can edit ground sessions' });
     const sessionId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1', [sessionId]);
+    const existing = await pool.query('SELECT * FROM ground_sessions WHERE id = $1 AND source = $2', [sessionId, getAppEnv()]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });
     const { session_date, ground_hours, notes } = req.body;
     const parsedHours = parsePositiveNumber(ground_hours, 'ground_hours');
@@ -128,8 +139,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const result = await pool.query(`
       UPDATE ground_sessions SET session_date = COALESCE($1, session_date), ground_hours = $2,
         instruction_charge_amount = $3, notes = $4, updated_at = NOW()
-      WHERE id = $5 RETURNING *`,
-      [session_date || null, hrs, chargeAmount, notes !== undefined ? (notes || null) : existing.rows[0].notes, sessionId]
+      WHERE id = $5 AND source = $6 RETURNING *`,
+      [session_date || null, hrs, chargeAmount, notes !== undefined ? (notes || null) : existing.rows[0].notes, sessionId, getAppEnv()]
     );
     res.json(result.rows[0]);
   } catch (err) {

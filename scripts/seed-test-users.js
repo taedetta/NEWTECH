@@ -98,7 +98,6 @@ async function main() {
   });
   const hash = await bcrypt.hash(PASSWORD, 12);
   try {
-    await pool.query(`DELETE FROM users WHERE email LIKE '%@test.local'`);
     await ensureUserSequence(pool);
     for (const user of TEST_USERS) {
       const id = await upsertUser(pool, user, hash);

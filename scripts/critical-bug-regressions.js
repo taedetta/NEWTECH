@@ -913,6 +913,54 @@ function testBetaSweepRegressionGuards() {
   );
 }
 
+function testTrainingAndGroundSourceIsolationGuards() {
+  const groundSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ground.js'), 'utf8');
+  assert(
+    groundSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && groundSrc.includes('INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source)')
+      && groundSrc.includes("const conditions = ['gs.source = $1']")
+      && groundSrc.includes('DELETE FROM ground_sessions WHERE instructor_id = $1 AND source = $2 RETURNING id')
+      && groundSrc.includes('SELECT instructor_id FROM ground_sessions WHERE id = $1 AND source = $2')
+      && groundSrc.includes('WHERE id = $5 AND source = $6 RETURNING *'),
+    'ground session create/list/update/delete/clear paths must be source-scoped'
+  );
+
+  const trainingDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'training.js'), 'utf8');
+  assert(
+    trainingDbSrc.includes("WHERE st.student_id = $1 AND st.status = 'active' AND st.source = $2")
+      && trainingDbSrc.includes('LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = $1 AND smp.source = $3')
+      && trainingDbSrc.includes('DELETE FROM student_maneuver_progress WHERE student_id = $1 AND maneuver_id = $2 AND source = $3')
+      && trainingDbSrc.includes('ON CONFLICT (student_id, maneuver_id, source) DO UPDATE')
+      && trainingDbSrc.includes('INSERT INTO flight_debriefs (student_id, instructor_id, booking_id, stage_id, notes, recommendations, overall_performance, flight_date, source)')
+      && trainingDbSrc.includes('INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes, source)')
+      && trainingDbSrc.includes("WHERE st.program_id = $1 AND st.status = 'active' AND st.source = $2"),
+    'training DB helpers must source-scope progress, debriefs, milestones, and enrollments'
+  );
+
+  const trainingRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'training.js'), 'utf8');
+  assert(
+    trainingRouteSrc.includes('WHERE smp.student_id = $1 AND smp.source = $2')
+      && trainingRouteSrc.includes('INSERT INTO student_maneuver_progress (student_id, maneuver_id, status, notes, proficient_date, source)')
+      && trainingRouteSrc.includes('ON CONFLICT (student_id, maneuver_id, source) DO UPDATE')
+      && trainingRouteSrc.includes('WHERE fd.student_id = $1 AND fd.source = $2')
+      && trainingRouteSrc.includes('SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 AND source = $3 LIMIT 1')
+      && trainingRouteSrc.includes('LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = u.id AND smp.source = $${canViewAll ? 1 : 2}'),
+    'training routes must source-scope maneuver progress, debrief, and milestone reads/writes'
+  );
+
+  const bootstrapSchema = fs.readFileSync(path.join(__dirname, 'bootstrap-schema.sql'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, 'schema-patches.sql'), 'utf8');
+  assert(
+    bootstrapSchema.includes('student_training_student_program_source_unique ON student_training(student_id, program_id, source)')
+      && bootstrapSchema.includes('student_maneuver_progress_student_maneuver_source_unique ON student_maneuver_progress(student_id, maneuver_id, source)')
+      && bootstrapSchema.includes("source VARCHAR(20) DEFAULT 'production'\n);")
+      && schemaPatches.includes("ALTER TABLE milestone_completions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production'")
+      && schemaPatches.includes('DROP INDEX IF EXISTS student_maneuver_progress_student_maneuver_unique')
+      && schemaPatches.includes('CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_source_unique ON student_training(student_id, program_id, source)'),
+    'training schema must support per-source progress/enrollment/milestone records'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -942,6 +990,7 @@ async function main() {
   testSubagentFollowUpGuards();
   testSharedDatabaseReadSourceGuards();
   testBetaSweepRegressionGuards();
+  testTrainingAndGroundSourceIsolationGuards();
   console.log('critical bug regressions passed');
 }
 
