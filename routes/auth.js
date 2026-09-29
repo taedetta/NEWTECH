@@ -68,16 +68,16 @@ router.post('/register', async (req, res) => {
     const userRole = validRoles.includes(role) ? role : 'student';
     // Only block ACTIVE (non-deleted) accounts — soft-deleted users can re-signup
     const existingActive = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
-      [email]
+      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2',
+      [email, getAppEnv()]
     );
     if (existingActive.rows.length > 0) {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
     // Reuse a soft-deleted user's email: undelete them and treat as new pending signup
     const existingDeleted = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NOT NULL',
-      [email]
+      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NOT NULL AND source = $2',
+      [email, getAppEnv()]
     );
     if (existingDeleted.rows.length > 0) {
       const oldUser = existingDeleted.rows[0];
@@ -166,8 +166,8 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     const result = await pool.query(
-      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor FROM users WHERE LOWER(email) = LOWER($1)',
-      [email]
+      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor FROM users WHERE LOWER(email) = LOWER($1) AND source = $2',
+      [email, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -224,8 +224,9 @@ router.post('/forgot-password', async (req, res) => {
        WHERE LOWER(email) = LOWER($1)
          AND deleted_at IS NULL
          AND password_hash IS NOT NULL
-         AND approval_status = 'approved'`,
-      [email]
+         AND approval_status = 'approved'
+         AND source = $2`,
+      [email, getAppEnv()]
     );
     if (result.rows.length === 0) {
       // No active approved account — do not send email
@@ -271,8 +272,8 @@ router.post('/reset-password', async (req, res) => {
       `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name, u.deleted_at, u.approval_status
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
-       WHERE prt.token_hash = $1 AND prt.used_at IS NULL`,
-      [tokenHash]
+       WHERE prt.token_hash = $1 AND prt.used_at IS NULL AND u.source = $2`,
+      [tokenHash, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
@@ -285,7 +286,7 @@ router.post('/reset-password', async (req, res) => {
       return res.status(403).json({ error: 'This account is not active.' });
     }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND source = $3', [passwordHash, row.user_id, getAppEnv()]);
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
     console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
@@ -305,8 +306,8 @@ router.get('/me', authenticateToken, async (req, res) => {
          COALESCE(ip.can_edit_website, false) as can_edit_website
        FROM users u
        LEFT JOIN user_permissions ip ON ip.user_id = u.id
-       WHERE u.id = $1`,
-      [req.user.id]
+       WHERE u.id = $1 AND u.source = $2`,
+      [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (result.rows[0].deleted_at) return res.status(401).json({ error: 'Account has been deleted' });
@@ -329,7 +330,7 @@ router.get('/me', authenticateToken, async (req, res) => {
       );
       res.cookie('token', freshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     }
-    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
+    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' AND source = $1 LIMIT 1", [getAppEnv()]);
     const response = { user: { id: u.id, email: u.email, name: u.name, role: u.role, is_instructor: !!u.is_instructor, permissions,
       approval_status: u.approval_status || 'approved',
       total_hobbs_hours: u.total_hobbs_hours || 0,
@@ -349,21 +350,21 @@ router.post('/claim-owner', authenticateToken, async (req, res) => {
     if (!isPlatformAdminEmail(req.user.email)) {
       return res.status(403).json({ error: 'Only the platform administrator can claim owner role' });
     }
-    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner'");
+    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' AND source = $1", [getAppEnv()]);
     if (ownerCheck.rows.length > 0) {
       return res.status(409).json({ error: 'An owner already exists' });
     }
     const currentRole = await pool.query(
-      'SELECT role, approval_status, deleted_at FROM users WHERE id = $1',
-      [req.user.id]
+      'SELECT role, approval_status, deleted_at FROM users WHERE id = $1 AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     const currentUser = currentRole.rows[0];
     if (!currentUser || currentUser.deleted_at || currentUser.approval_status !== 'approved' || currentUser.role !== 'admin') {
       return res.status(403).json({ error: 'Only an approved platform admin can claim owner role' });
     }
     const result = await pool.query(
-      "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
-      [req.user.id]
+      "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 AND source = $2 RETURNING id, email, name, role",
+      [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = result.rows[0];

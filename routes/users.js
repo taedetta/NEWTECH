@@ -62,10 +62,11 @@ router.get('/', authenticateToken, async (req, res) => {
              AND (u.role IN ('student', 'renter') OR (u.is_instructor = TRUE OR u.role = 'instructor'))`
           : BOOKABLE_INSTRUCTOR_WHERE}
       `;
-      const params = [];
+      const params = [getAppEnv()];
+      query += ' AND u.source = $1';
       if (role) {
-        query += ' AND u.role = $1';
         params.push(role);
+        query += ` AND u.role = $${params.length}`;
       }
       query += ' ORDER BY u.name';
       const result = await pool.query(
@@ -79,7 +80,7 @@ router.get('/', authenticateToken, async (req, res) => {
         u.total_hobbs_hours, u.total_tach_hours, u.instructor_rate, u.phone_number,
         u.medical_certificate_expiry, u.medical_certificate_class,
         (SELECT COUNT(DISTINCT st.student_id)::int FROM student_training st
-         WHERE st.instructor_id = u.id AND st.status = 'active') AS assigned_students,
+         WHERE st.instructor_id = u.id AND st.status = 'active' AND st.source = $1) AS assigned_students,
         COALESCE(ip.can_manage_aircraft, false) as can_manage_aircraft,
         COALESCE(ip.can_manage_instructors, false) as can_manage_instructors,
         COALESCE(ip.can_manage_permissions, false) as can_manage_permissions,
@@ -88,14 +89,14 @@ router.get('/', authenticateToken, async (req, res) => {
         EXISTS (SELECT 1 FROM instructor_availability WHERE instructor_id = u.id) as has_instructor_availability
       FROM users u
       LEFT JOIN user_permissions ip ON ip.user_id = u.id
-      WHERE u.deleted_at IS NULL
+      WHERE u.deleted_at IS NULL AND u.source = $1
     `;
-    const params = [];
+    const params = [getAppEnv()];
     if (role === 'instructor') {
       query += ` AND (u.is_instructor = TRUE OR u.role = 'instructor')`;
     } else if (role) {
-      query += ' AND u.role = $1';
       params.push(role);
+      query += ` AND u.role = $${params.length}`;
     }
     query += ' ORDER BY u.name';
     const result = await pool.query(query, params);
@@ -136,9 +137,9 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
     let query = `
       SELECT u.id, u.email, u.name, u.role, u.is_instructor, u.phone_number, u.approval_status
       FROM users u
-      WHERE u.deleted_at IS NULL
+      WHERE u.deleted_at IS NULL AND u.source = $1
     `;
-    const params = [];
+    const params = [getAppEnv()];
     if (role === 'instructor') {
       query += ` AND (u.is_instructor = TRUE OR u.role = 'instructor')`;
     } else if (role && role !== 'all') {
@@ -232,8 +233,8 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
     const parsedRate = parseUserHours(instructor_rate, 'instructor_rate');
     if (parsedRate.error) return res.status(400).json({ error: parsedRate.error });
     const result = await pool.query(
-      `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, instructor_rate`,
-      [parsedRate.value, targetId]
+      `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 AND source = $3 RETURNING id, name, instructor_rate`,
+      [parsedRate.value, targetId, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
@@ -493,8 +494,8 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
 router.patch('/:id/instructor-status', authenticateToken, async (req, res) => {
   try {
     const requester = await pool.query(
-      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [req.user.id]
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
       return res.status(403).json({ error: 'Only owners and admins can change instructor status' });
@@ -511,11 +512,15 @@ router.patch('/:id/instructor-status', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'is_instructor must be a boolean' });
     }
     const targetResult = await pool.query(
-      'SELECT id, name, role FROM users WHERE id = $1 AND deleted_at IS NULL', [targetId]
+      'SELECT id, name, role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [targetId, getAppEnv()]
     );
     if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const target = targetResult.rows[0];
-    await pool.query('UPDATE users SET is_instructor = $1, updated_at = NOW() WHERE id = $2', [is_instructor, targetId]);
+    await pool.query(
+      'UPDATE users SET is_instructor = $1, updated_at = NOW() WHERE id = $2 AND source = $3',
+      [is_instructor, targetId, getAppEnv()]
+    );
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
       ['change_instructor_status', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, is_instructor })]
@@ -554,8 +559,9 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
       vals.push(parsed.value);
     }
     vals.push(userId);
+    vals.push(getAppEnv());
     const result = await pool.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} AND source = $${idx + 1} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
       vals
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });

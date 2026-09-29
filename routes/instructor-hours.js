@@ -65,7 +65,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const parsedInstructorRate = instructor_rate !== undefined ? parseStrictNumber(instructor_rate, 'instructor_rate', { required: false }) : { value: null };
     if (parsedInstructorRate.error) return res.status(400).json({ error: parsedInstructorRate.error });
     // Re-verify role from DB — don't trust JWT alone for write operations
-    const dbUserCheck = await pool.query('SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL', [userId]);
+    const dbUserCheck = await pool.query('SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [userId, getAppEnv()]);
     if (dbUserCheck.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
     const verifiedRole = dbUserCheck.rows[0].role;
     if (verifiedRole === 'student') return res.status(403).json({ error: 'Students cannot submit instructor hours' });
@@ -73,7 +73,7 @@ router.post('/', authenticateToken, async (req, res) => {
     if ((verifiedRole === 'owner' || verifiedRole === 'admin') && req.body.instructor_id) instructorId = parseInt(req.body.instructor_id);
     const parsedAircraftId = aircraft_id ? parseInt(aircraft_id) : null;
     if (parsedAircraftId && !isNaN(parsedAircraftId)) {
-      const aircraftCheck = await pool.query('SELECT id FROM aircraft WHERE id = $1', [parsedAircraftId]);
+      const aircraftCheck = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [parsedAircraftId, getAppEnv()]);
       if (aircraftCheck.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     }
     // Validate submitted Hobbs readings against aircraft's current reading
@@ -85,7 +85,7 @@ router.post('/', authenticateToken, async (req, res) => {
       const hS = hStart.value;
       const hE = hEnd.value;
       if (hE <= hS) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
-      const acHobbsCheck = await pool.query('SELECT current_hobbs FROM aircraft WHERE id = $1', [parsedAircraftId]);
+      const acHobbsCheck = await pool.query('SELECT current_hobbs FROM aircraft WHERE id = $1 AND source = $2', [parsedAircraftId, getAppEnv()]);
       if (acHobbsCheck.rows.length > 0 && acHobbsCheck.rows[0].current_hobbs != null) {
         const currentHobbs = parseFloat(acHobbsCheck.rows[0].current_hobbs);
         if (Math.abs(hS - currentHobbs) > 0.5) {
@@ -94,12 +94,22 @@ router.post('/', authenticateToken, async (req, res) => {
         }
       }
     }
-    const instructorCheck = await pool.query(`SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL`, [instructorId]);
+    const instructorCheck = await pool.query(
+      `SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2`,
+      [instructorId, getAppEnv()]
+    );
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
     const entryDate = entry_date || new Date().toISOString().slice(0, 10);
     const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
     if (parsedBookingId && !isNaN(parsedBookingId)) {
+      const bookingCheck = await pool.query(
+        'SELECT id FROM bookings WHERE id = $1 AND source = $2',
+        [parsedBookingId, getAppEnv()]
+      );
+      if (bookingCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Booking not found in this environment' });
+      }
       const bookingDup = await pool.query(
         'SELECT id FROM instructor_hours WHERE booking_id = $1 AND source = $2 LIMIT 1',
         [parsedBookingId, getAppEnv()]
@@ -393,8 +403,14 @@ router.get('/prefill', authenticateToken, async (req, res) => {
     }
     let instructorId = userId;
     if ((role === 'owner' || role === 'admin') && req.query.instructor_id) instructorId = parseInt(req.query.instructor_id);
-    const instrResult = await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [instructorId]);
-    const aircraftResult = await pool.query('SELECT id, tail_number, make_model, hourly_rate FROM aircraft ORDER BY tail_number');
+    const instrResult = await pool.query(
+      'SELECT instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [instructorId, getAppEnv()]
+    );
+    const aircraftResult = await pool.query(
+      'SELECT id, tail_number, make_model, hourly_rate FROM aircraft WHERE source = $1 ORDER BY tail_number',
+      [getAppEnv()]
+    );
     let aircraft = aircraftResult.rows;
     if (aircraft.length === 0) {
       try {
@@ -412,7 +428,10 @@ router.get('/prefill', authenticateToken, async (req, res) => {
         }
       } catch (_) { /* CMS fallback failed */ }
     }
-    const studentsResult = await pool.query("SELECT id, name FROM users WHERE role = 'student' AND deleted_at IS NULL ORDER BY name");
+    const studentsResult = await pool.query(
+      "SELECT id, name FROM users WHERE role = 'student' AND deleted_at IS NULL AND source = $1 ORDER BY name",
+      [getAppEnv()]
+    );
     res.json({ instructor_rate: instrResult.rows[0]?.instructor_rate || null, aircraft, students: studentsResult.rows });
   } catch (err) {
     console.error('Instructor hours prefill error:', err);

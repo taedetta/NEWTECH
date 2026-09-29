@@ -667,6 +667,24 @@ async function createBookingInternal(client, req) {
   const iid = instructor_id ? parseInt(instructor_id, 10) : null;
   if (['student', 'renter'].includes(req.user.role)) sid = req.user.id;
   if (!aircraft_id || !start_time || !end_time) return { error: 'Missing required fields' };
+  if (sid) {
+    const studentCheck = await client.query(
+      `SELECT id FROM users
+       WHERE id = $1 AND deleted_at IS NULL AND source = $2
+         AND role IN ('student', 'renter', 'instructor', 'admin', 'owner')`,
+      [sid, getAppEnv()]
+    );
+    if (studentCheck.rows.length === 0) return { error: 'Student/renter not found in this environment' };
+  }
+  if (iid) {
+    const instructorCheck = await client.query(
+      `SELECT id FROM users
+       WHERE id = $1 AND deleted_at IS NULL AND source = $2
+         AND (is_instructor = TRUE OR role IN ('instructor', 'admin', 'owner'))`,
+      [iid, getAppEnv()]
+    );
+    if (instructorCheck.rows.length === 0) return { error: 'Instructor not found in this environment' };
+  }
   const start = new Date(start_time);
   const end = new Date(end_time);
   if (end <= start) return { error: 'End time must be after start time' };
@@ -743,6 +761,24 @@ router.post('/', authenticateToken, async (req, res) => {
     }
     if (!sid && !iid) return res.status(400).json({ error: 'At least one person (student or instructor) is required' });
     if (!aircraft_id || !start_time || !end_time) return res.status(400).json({ error: 'Aircraft, start time, and end time are required' });
+    if (sid) {
+      const studentCheck = await client.query(
+        `SELECT id FROM users
+         WHERE id = $1 AND deleted_at IS NULL AND source = $2
+           AND role IN ('student', 'renter', 'instructor', 'admin', 'owner')`,
+        [sid, getAppEnv()]
+      );
+      if (studentCheck.rows.length === 0) return res.status(404).json({ error: 'Student/renter not found in this environment' });
+    }
+    if (iid) {
+      const instructorCheck = await client.query(
+        `SELECT id FROM users
+         WHERE id = $1 AND deleted_at IS NULL AND source = $2
+           AND (is_instructor = TRUE OR role IN ('instructor', 'admin', 'owner'))`,
+        [iid, getAppEnv()]
+      );
+      if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found in this environment' });
+    }
     const start = new Date(start_time);
     const end = new Date(end_time);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return res.status(400).json({ error: 'Invalid date format for start or end time' });
@@ -816,9 +852,10 @@ router.post('/', authenticateToken, async (req, res) => {
         const startDt = new Date(start_time);
         const durationMinutes = Math.round((new Date(end_time) - startDt) / 60000);
         const nextSlots = await findNextAvailableSlots(client, iid, start_time, durationMinutes, 3);
-        const instrName = (await client.query('SELECT name FROM users WHERE id=$1', [iid])).rows[0]?.name || 'Instructor';
+        const instrName = (await client.query('SELECT name FROM users WHERE id=$1 AND source = $2', [iid, getAppEnv()])).rows[0]?.name || 'Instructor';
         const allInst = await client.query(
-          `SELECT id, name FROM users u WHERE ${BOOKABLE_INSTRUCTOR_WHERE} AND u.id != $1`, [iid]
+          `SELECT id, name FROM users u WHERE ${BOOKABLE_INSTRUCTOR_WHERE} AND u.id != $1 AND u.source = $2`,
+          [iid, getAppEnv()]
         );
         const alternatives = [];
         for (const inst of allInst.rows) {

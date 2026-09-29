@@ -10,9 +10,10 @@ async function listDocuments(studentId) {
     `SELECT d.*, u.name AS uploaded_by_name
      FROM student_documents d
      LEFT JOIN users u ON u.id = d.uploaded_by
-     WHERE d.student_id = $1
+     JOIN users student ON student.id = d.student_id
+     WHERE d.student_id = $1 AND student.source = $2
      ORDER BY d.expiry_date NULLS LAST, d.created_at DESC`,
-    [studentId]
+    [studentId, getAppEnv()]
   );
   return result.rows;
 }
@@ -37,8 +38,12 @@ async function createDocument({ studentId, docType, fileUrl, fileName, expiryDat
 
 async function deleteDocument(docId, studentId) {
   const result = await pool.query(
-    'DELETE FROM student_documents WHERE id = $1 AND student_id = $2 RETURNING *',
-    [docId, studentId]
+    `DELETE FROM student_documents
+     WHERE id = $1
+       AND student_id = $2
+       AND EXISTS (SELECT 1 FROM users u WHERE u.id = student_documents.student_id AND u.source = $3)
+     RETURNING *`,
+    [docId, studentId, getAppEnv()]
   );
   return result.rows[0];
 }
@@ -50,8 +55,9 @@ async function getExpiringDocuments(withinDays = 30) {
      JOIN users u ON u.id = d.student_id
      WHERE d.expiry_date IS NOT NULL
        AND d.expiry_date <= CURRENT_DATE + ($1 || ' days')::interval
+       AND u.source = $2
      ORDER BY d.expiry_date ASC`,
-    [withinDays]
+    [withinDays, getAppEnv()]
   );
   return result.rows;
 }

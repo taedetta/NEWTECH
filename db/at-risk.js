@@ -25,15 +25,22 @@ async function ensureAtRiskUniqueIndex() {
 }
 
 /** Fetch all at-risk threshold settings from school_settings */
+const THRESHOLD_KEYS = ['at_risk_low_days', 'at_risk_medium_days', 'at_risk_high_days', 'at_risk_critical_days'];
+
+function settingKeyForEnv(key) {
+  return getAppEnv() === 'staging' ? `${key}:staging` : key;
+}
+
 async function getThresholds() {
-  const keys = ['at_risk_low_days', 'at_risk_medium_days', 'at_risk_high_days', 'at_risk_critical_days'];
+  const keyMap = new Map(THRESHOLD_KEYS.map((key) => [settingKeyForEnv(key), key]));
   const result = await pool.query(
-    `SELECT key, value FROM school_settings WHERE key = ANY($1)`, [keys]
+    `SELECT key, value FROM school_settings WHERE key = ANY($1)`, [[...keyMap.keys()]]
   );
   const defaults = { at_risk_low_days: 14, at_risk_medium_days: 21, at_risk_high_days: 30, at_risk_critical_days: 45 };
   const out = { ...defaults };
   for (const row of result.rows) {
-    out[row.key] = parseInt(row.value, 10);
+    const baseKey = keyMap.get(row.key);
+    if (baseKey) out[baseKey] = parseInt(row.value, 10);
   }
   return out;
 }
@@ -50,7 +57,7 @@ async function saveThresholds({ at_risk_low_days, at_risk_medium_days, at_risk_h
     await pool.query(
       `INSERT INTO school_settings (key, value, updated_at) VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-      [key, String(value)]
+      [settingKeyForEnv(key), String(value)]
     );
   }
 }

@@ -961,6 +961,80 @@ function testTrainingAndGroundSourceIsolationGuards() {
   );
 }
 
+function testDelayedAuditSourceAndMeterGuards() {
+  const authMiddleware = fs.readFileSync(path.join(__dirname, '..', 'middleware', 'auth.js'), 'utf8');
+  const authRoutes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'auth.js'), 'utf8');
+  assert(
+    authMiddleware.includes('WHERE id = $1 AND source = $2')
+      && authRoutes.includes('WHERE LOWER(email) = LOWER($1) AND source = $2')
+      && authRoutes.includes('WHERE u.id = $1 AND u.source = $2'),
+    'auth tokens, login, and /me must bind users to the current APP_ENV source'
+  );
+
+  const approvalsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'approvals.js'), 'utf8');
+  const usersSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
+  const permissionsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'permissions.js'), 'utf8');
+  assert(
+    approvalsSrc.includes("approval_status = 'pending' AND deleted_at IS NULL AND source = $1")
+      && approvalsSrc.includes("WHERE id = $1 AND approval_status = 'pending' AND source = $2")
+      && usersSrc.includes('WHERE u.deleted_at IS NULL AND u.source = $1')
+      && usersSrc.includes('WHERE id = $2 AND source = $3 RETURNING id, name, instructor_rate')
+      && usersSrc.includes('AND source = $${idx + 1} RETURNING id, name, total_hobbs_hours')
+      && permissionsSrc.includes('AND u.source = $1')
+      && permissionsSrc.includes('WHERE id = $1 AND deleted_at IS NULL AND source = $2'),
+    'approvals, roster/export, user admin mutations, and permissions must be source-scoped'
+  );
+
+  const bookingRoutesSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    bookingRoutesSrc.includes('Student/renter not found in this environment')
+      && bookingRoutesSrc.includes('Instructor not found in this environment')
+      && historySrc.includes('SELECT hourly_rate FROM aircraft WHERE id = $1 AND source = $2')
+      && instructorHoursSrc.includes('SELECT id FROM aircraft WHERE id = $1 AND source = $2')
+      && instructorHoursSrc.includes('SELECT id FROM bookings WHERE id = $1 AND source = $2')
+      && instructorHoursSrc.includes('SELECT id, tail_number, make_model, hourly_rate FROM aircraft WHERE source = $1 ORDER BY tail_number'),
+    'booking create, manual history, and instructor-hours entity lookups must reject cross-source IDs'
+  );
+
+  const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
+  const documentsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'documents.js'), 'utf8');
+  const docsDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'documents.js'), 'utf8');
+  assert(
+    aircraftSrc.includes('SELECT id FROM aircraft WHERE id = $1 AND source = $2')
+      && aircraftSrc.includes('airworthiness_directives WHERE aircraft_id = $1')
+      && documentsSrc.includes("SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL AND source = $2")
+      && docsDbSrc.includes('JOIN users student ON student.id = d.student_id')
+      && docsDbSrc.includes('AND u.source = $2'),
+    'aircraft AD/history and student document flows must be current-source scoped'
+  );
+
+  const remindersSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'preflight-reminders.js'), 'utf8');
+  const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  const cmsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'cms.js'), 'utf8');
+  const atRiskSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'at-risk.js'), 'utf8');
+  assert(
+    remindersSrc.includes('AND b.source = $3')
+      && remindersSrc.includes('WHERE id = $1 AND source = $2')
+      && adminSrc.includes('WHERE id = ANY($1) AND source = $2 RETURNING id')
+      && cmsSrc.includes('Website content edits are disabled on staging')
+      && atRiskSrc.includes("return getAppEnv() === 'staging' ? `${key}:staging` : key;"),
+    'reminders, CMS writes, and at-risk thresholds must not cross staging/production data'
+  );
+
+  const sanitySrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'flight-hour-sanity.js'), 'utf8');
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  const syncSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sync-flight-record.js'), 'utf8');
+  assert(
+    sanitySrc.includes('ABSOLUTE_HOBBS_DELTA_LIMIT = 24')
+      && sanitySrc.includes('(scheduled * 1.25) + 0.25')
+      && completionSrc.includes('validateReasonableHobbsDelta(b, hobbsFlown)')
+      && syncSrc.includes('validateReasonableHobbsDelta(bookingBefore, hobbsDelta)'),
+    'completion and completed-hour edits must reject unreasonable Hobbs deltas'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -991,6 +1065,7 @@ async function main() {
   testSharedDatabaseReadSourceGuards();
   testBetaSweepRegressionGuards();
   testTrainingAndGroundSourceIsolationGuards();
+  testDelayedAuditSourceAndMeterGuards();
   console.log('critical bug regressions passed');
 }
 

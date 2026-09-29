@@ -3,6 +3,7 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { getJwtSecret } = require('../lib/jwt-secret');
+const { getAppEnv } = require('../lib/app-env');
 
 const JWT_SECRET = getJwtSecret();
 
@@ -14,8 +15,8 @@ async function authenticateToken(req, res, next) {
     const result = await pool.query(
       `SELECT id, email, name, role, is_instructor, approval_status, deleted_at
        FROM users
-       WHERE id = $1`,
-      [decoded.id]
+       WHERE id = $1 AND source = $2`,
+      [decoded.id, getAppEnv()]
     );
     const user = result.rows[0];
     if (!user || user.deleted_at) {

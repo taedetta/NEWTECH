@@ -10,6 +10,7 @@ const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { sendEmail, approvalConfirmationEmail, rejectionEmail } = require('../email-templates');
 const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -22,8 +23,9 @@ router.get('/pending', ...canApprove, async (req, res) => {
     const result = await pool.query(
       `SELECT id, name, email, role, created_at
        FROM users
-       WHERE approval_status = 'pending' AND deleted_at IS NULL
-       ORDER BY created_at ASC`
+       WHERE approval_status = 'pending' AND deleted_at IS NULL AND source = $1
+       ORDER BY created_at ASC`,
+      [getAppEnv()]
     );
     res.json({ users: result.rows });
   } catch (err) {
@@ -36,7 +38,8 @@ router.get('/pending', ...canApprove, async (req, res) => {
 router.get('/count', ...canApprove, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT COUNT(*) AS cnt FROM users WHERE approval_status = 'pending' AND deleted_at IS NULL`
+      `SELECT COUNT(*) AS cnt FROM users WHERE approval_status = 'pending' AND deleted_at IS NULL AND source = $1`,
+      [getAppEnv()]
     );
     res.json({ count: parseInt(result.rows[0].cnt, 10) });
   } catch (err) {
@@ -54,9 +57,9 @@ router.post('/:id/approve', ...canApprove, async (req, res) => {
        SET approval_status = 'approved',
            is_instructor = CASE WHEN role = 'instructor' THEN TRUE ELSE is_instructor END,
            updated_at = NOW()
-       WHERE id = $1 AND approval_status = 'pending'
+       WHERE id = $1 AND approval_status = 'pending' AND source = $2
        RETURNING id, name, email, role, is_instructor`,
-      [id]
+      [id, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found or already approved' });
@@ -87,9 +90,9 @@ router.post('/:id/reject', ...canApprove, async (req, res) => {
     const result = await pool.query(
       `UPDATE users
        SET approval_status = 'rejected', deleted_at = NOW(), updated_at = NOW()
-       WHERE id = $1 AND approval_status = 'pending'
+       WHERE id = $1 AND approval_status = 'pending' AND source = $2
        RETURNING id, name, email, role`,
-      [id]
+      [id, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found or already processed' });

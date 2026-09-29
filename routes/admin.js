@@ -503,7 +503,9 @@ router.get('/instructor-availability/directory', authenticateToken, async (req, 
        FROM instructor_availability ia
        JOIN users u ON u.id = ia.instructor_id
        WHERE ${BOOKABLE_INSTRUCTOR_WHERE}
-       ORDER BY ia.instructor_id, ia.day_of_week, ia.start_time`
+         AND u.source = $1
+       ORDER BY ia.instructor_id, ia.day_of_week, ia.start_time`,
+      [getAppEnv()]
     );
     const weeklyByInstructor = {};
     for (const row of weeklyRows.rows) {
@@ -612,8 +614,8 @@ router.post('/reset-reminders', authenticateToken, requireRole('owner', 'admin')
   }
   try {
     const result = await pool.query(
-      'UPDATE bookings SET reminder_sent = false, updated_at = NOW() WHERE id = ANY($1) RETURNING id',
-      [booking_ids]
+      'UPDATE bookings SET reminder_sent = false, updated_at = NOW() WHERE id = ANY($1) AND source = $2 RETURNING id',
+      [booking_ids, getAppEnv()]
     );
     res.json({ ok: true, reset: result.rows.length });
   } catch (err) {

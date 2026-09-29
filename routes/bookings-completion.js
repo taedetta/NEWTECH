@@ -16,6 +16,7 @@ const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { parseStrictNumber } = require('../lib/strict-number');
 const { getAppEnv } = require('../lib/app-env');
+const { validateReasonableHobbsDelta } = require('../lib/flight-hour-sanity');
 
 const router = express.Router();
 
@@ -200,7 +201,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
             is_night, is_xc, is_instrument, is_solo } = req.body;
 
     // Re-verify user role from DB — don't trust JWT alone for critical operations
-    const dbUser = await client.query('SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL', [req.user.id]);
+    const dbUser = await client.query('SELECT id, role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [req.user.id, getAppEnv()]);
     if (dbUser.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
     const verifiedRole = dbUser.rows[0].role;
 
@@ -334,6 +335,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
 
     const hobbsFlown = parseFloat((hEnd - hStart).toFixed(2));
+    const hobbsDeltaErr = validateReasonableHobbsDelta(b, hobbsFlown);
+    if (hobbsDeltaErr) {
+      recordHobbsFail(req.user.id);
+      return abortTransaction(400, { error: hobbsDeltaErr });
+    }
 
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {

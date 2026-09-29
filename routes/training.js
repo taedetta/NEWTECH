@@ -233,8 +233,8 @@ router.post(['/admin/programs', '/programs'], authenticateToken, requireRole('ow
     const { name, code, description } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'name and code are required' });
     const result = await pool.query(
-      `INSERT INTO training_programs (name, code, description) VALUES ($1, UPPER($2), $3) RETURNING *`,
-      [name, code, description || null]
+      `INSERT INTO training_programs (name, code, description, source) VALUES ($1, UPPER($2), $3, $4) RETURNING *`,
+      [name, code, description || null, getAppEnv()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -248,8 +248,8 @@ router.put(['/admin/programs/:id', '/programs/:id'], authenticateToken, requireR
   try {
     const { name, description } = req.body;
     const result = await pool.query(
-      `UPDATE training_programs SET name = COALESCE($1, name), description = COALESCE($2, description) WHERE id = $3 RETURNING *`,
-      [name || null, description || null, req.params.id]
+      `UPDATE training_programs SET name = COALESCE($1, name), description = COALESCE($2, description) WHERE id = $3 AND source = $4 RETURNING *`,
+      [name || null, description || null, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Program not found' });
     res.json(result.rows[0]);
@@ -264,6 +264,14 @@ router.delete(['/admin/programs/:id', '/programs/:id'], authenticateToken, requi
   try {
     const id = parseInt(req.params.id);
     await client.query('BEGIN');
+    const program = await client.query(
+      'SELECT id FROM training_programs WHERE id = $1 AND source = $2 FOR UPDATE',
+      [id, getAppEnv()]
+    );
+    if (program.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Program not found' });
+    }
     const enrollments = await client.query(
       'SELECT 1 FROM student_training WHERE program_id = $1 AND source = $2 LIMIT 1',
       [id, getAppEnv()]
@@ -275,7 +283,7 @@ router.delete(['/admin/programs/:id', '/programs/:id'], authenticateToken, requi
     // Cascade delete: maneuvers → stages → program
     await client.query(`DELETE FROM stage_maneuvers WHERE stage_id IN (SELECT id FROM program_stages WHERE program_id = $1)`, [id]);
     await client.query(`DELETE FROM program_stages WHERE program_id = $1`, [id]);
-    const result = await client.query(`DELETE FROM training_programs WHERE id = $1 RETURNING id`, [id]);
+    const result = await client.query(`DELETE FROM training_programs WHERE id = $1 AND source = $2 RETURNING id`, [id, getAppEnv()]);
     await client.query('COMMIT');
     if (result.rows.length === 0) return res.status(404).json({ error: 'Program not found' });
     res.json({ ok: true });

@@ -7,6 +7,7 @@ const archiver = require('archiver');
 const pool = require('../db/index');
 const { saveFileOverride, removeOverride, getUnsyncedOverrides, getAllOverrides, markSynced, clearAllOverrides, countUnsynced } = require('../db/file-overrides');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
+const { isStaging } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -108,6 +109,9 @@ router.post('/site-content/upload-image', authenticateToken, requirePermission('
 
 router.put('/site-content', authenticateToken, requirePermission('can_edit_website'), async (req, res) => {
   try {
+    if (isStaging()) {
+      return res.status(403).json({ error: 'Website content edits are disabled on staging to protect production CMS data' });
+    }
     const updates = req.body;
     if (!updates || typeof updates !== 'object') return res.status(400).json({ error: 'Request body must be a key-value object' });
     const entries = Object.entries(updates);

@@ -170,9 +170,9 @@ router.get('/hours-audit', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied: owner/admin role required', role: req.user.role });
     }
     const { aircraft_id, start_date, end_date, user_id } = req.query;
-    const conditions = [];
-    const params = [];
-    let idx = 1;
+    const conditions = [`a.source = $1`];
+    const params = [getAppEnv()];
+    let idx = 2;
     if (aircraft_id) { conditions.push(`h.aircraft_id = $${idx++}`); params.push(parseInt(aircraft_id)); }
     if (user_id) { conditions.push(`h.changed_by = $${idx++}`); params.push(parseInt(user_id)); }
     if (start_date) { conditions.push(`h.created_at >= $${idx++}`); params.push(start_date); }

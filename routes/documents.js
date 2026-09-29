@@ -16,15 +16,20 @@ function parseId(value) {
 }
 
 async function canManageStudentDocuments(user, studentId) {
+  const student = await pool.query(
+    "SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL AND source = $2",
+    [studentId, getAppEnv()]
+  );
+  if (!student.rows.length) return false;
   if (['owner', 'admin'].includes(user.role)) return true;
   if (user.role !== 'instructor') return false;
   const perms = await getUserPermissions(user.id, user.role);
   if (perms.can_manage_students) return true;
   const assigned = await pool.query(
     `SELECT 1 FROM student_training
-     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active'
+     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active' AND source = $3
      LIMIT 1`,
-    [studentId, user.id]
+    [studentId, user.id, getAppEnv()]
   );
   return assigned.rows.length > 0;
 }
@@ -101,7 +106,13 @@ router.delete('/:docId', authenticateToken, requireRole('owner', 'admin', 'instr
   try {
     const docId = parseId(req.params.docId);
     if (!docId) return res.status(400).json({ error: 'Invalid document id' });
-    const existing = await pool.query('SELECT * FROM student_documents WHERE id = $1', [docId]);
+    const existing = await pool.query(
+      `SELECT d.*
+       FROM student_documents d
+       JOIN users u ON u.id = d.student_id
+       WHERE d.id = $1 AND u.source = $2`,
+      [docId, getAppEnv()]
+    );
     if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
     if (!(await canManageStudentDocuments(req.user, existing.rows[0].student_id))) {
       return res.status(403).json({ error: 'Only assigned instructors or admins can manage student documents' });

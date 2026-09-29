@@ -243,7 +243,7 @@ async function createDebrief({ studentId, instructorId, bookingId, stageId, note
  */
 async function enrollStudent(studentId, programId, instructorId) {
   // Verify program exists
-  const progCheck = await pool.query('SELECT id FROM training_programs WHERE id = $1', [programId]);
+  const progCheck = await pool.query('SELECT id FROM training_programs WHERE id = $1 AND source = $2', [programId, getAppEnv()]);
   if (progCheck.rows.length === 0) {
     const err = new Error('Training program not found');
     err.status = 404;

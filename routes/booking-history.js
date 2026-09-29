@@ -488,9 +488,34 @@ router.post('/manual', authenticateToken, async (req, res) => {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const acRate = (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1', [acId])).rows[0];
+        const studentCheck = await client.query(
+          `SELECT id, name FROM users
+           WHERE id = $1 AND deleted_at IS NULL AND source = $2`,
+          [sid, getAppEnv()]
+        );
+        if (studentCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Student not found in this environment' });
+        }
+        if (iid) {
+          const instructorCheck = await client.query(
+            `SELECT id FROM users
+             WHERE id = $1 AND deleted_at IS NULL AND source = $2
+               AND (is_instructor = TRUE OR role IN ('instructor', 'admin', 'owner'))`,
+            [iid, getAppEnv()]
+          );
+          if (instructorCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Instructor not found in this environment' });
+          }
+        }
+        const acRate = (await client.query('SELECT hourly_rate FROM aircraft WHERE id = $1 AND source = $2', [acId, getAppEnv()])).rows[0];
+        if (!acRate) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Aircraft not found in this environment' });
+        }
         const instrRate = iid
-          ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1', [iid])).rows[0]
+          ? (await client.query('SELECT instructor_rate FROM users WHERE id = $1 AND source = $2', [iid, getAppEnv()])).rows[0]
           : null;
         const { aircraftChargeAmount, instructionChargeAmount } = resolveFlightCharges({
           lessonType: resolvedLessonType,
@@ -538,7 +563,7 @@ router.post('/manual', authenticateToken, async (req, res) => {
              WHERE id = $3 AND source = $4`,
             [hDelta, tDelta || 0, iid, getAppEnv()]
           );
-          const studentName = (await client.query('SELECT name FROM users WHERE id = $1', [sid])).rows[0]?.name || null;
+          const studentName = studentCheck.rows[0]?.name || null;
           await syncInstructorHoursFromFlight(client, {
             booking: {
               id: bkId,
