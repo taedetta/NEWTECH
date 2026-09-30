@@ -375,7 +375,7 @@ router.get('/preflight-check', authenticateToken, async (req, res) => {
       skipInstructorAvailability: isReschedule || isAdmin || isHistoricalEdit,
       skipDiscoveryDurationCheck: !isDiscovery && (isReschedule || isAdmin || isHistoricalEdit),
     }, req.user.role);
-    if (!isAdmin && !isHistoricalEdit) {
+    if (!isHistoricalEdit) {
       const client = await pool.connect();
       try {
         const conflicts = await checkConflicts(client, {
@@ -840,7 +840,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -885,8 +885,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
+    const resultingStatus = status !== undefined ? status : b.status;
+    const existingBlocksSchedule = !['cancelled', 'completed'].includes(b.status);
+    const resultingBlocksSchedule = !['cancelled', 'completed'].includes(resultingStatus);
+    const statusReactivatesSchedule = !existingBlocksSchedule && resultingBlocksSchedule;
+    const needsConflictCheck = resultingBlocksSchedule && (scheduleChanged || statusReactivatesSchedule);
     if (needsConflictCheck || (scheduleChanged && isAdmin)) {
       await client.query('BEGIN');
       try {
