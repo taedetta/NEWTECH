@@ -10063,8 +10063,6 @@ function staffEditingHistoricalBooking() {
 
 function shouldSkipBookingConflictChecks() {
   if (!bookingEditId) return false;
-  if (adminEditingBooking()) return true;
-  if (currentUser?.role === 'instructor' && ['completed', 'cancelled'].includes(bookingEditStatus)) return true;
   return ['completed', 'cancelled'].includes(bookingEditStatus);
 }
 
@@ -10719,7 +10717,7 @@ async function refreshBookingPreflight() {
     let html = '';
     if (data.errors?.length) {
       const conflictOnly = data.errors.every(e => /conflict:/i.test(e));
-      if (bookingEditId && conflictOnly) {
+      if (bookingEditId && conflictOnly && shouldSkipBookingConflictChecks()) {
         el.classList.add('hidden');
         return;
       }

@@ -3,6 +3,8 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'critical-bug-regression-secret';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const {
   EMAIL_TYPES,
@@ -67,6 +69,45 @@ async function run() {
       `${requiredType} should be hidden from editable preference catalog`
     );
   }
+
+  const bookingsRoutes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  assert.match(
+    bookingsRoutes,
+    /const isStaffHistoricalEdit = isHistoricalBooking && \(isAdmin \|\| isAssignedInstructor\);/,
+    'admin edits must not be treated as historical unless the booking is completed/cancelled'
+  );
+  assert.match(
+    bookingsRoutes,
+    /const statusReactivatesSchedule = !existingBlocksSchedule && resultingBlocksSchedule;/,
+    'reactivating a historical booking must be detected'
+  );
+  assert.match(
+    bookingsRoutes,
+    /const needsConflictCheck = resultingBlocksSchedule && \(scheduleChanged \|\| statusReactivatesSchedule\);/,
+    'active schedule changes and historical reactivations must conflict-check'
+  );
+
+  const appHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const skipFn = appHtml.slice(
+    appHtml.indexOf('function shouldSkipBookingConflictChecks()'),
+    appHtml.indexOf('async function loadBookingModalData')
+  );
+  assert.doesNotMatch(
+    skipFn,
+    /adminEditingBooking\(\)\) return true/,
+    'admin active booking edits must not suppress conflict previews or 409 errors'
+  );
+  assert.match(
+    skipFn,
+    /completed.*cancelled/,
+    'only historical booking edits should skip conflict-only previews'
+  );
+
+  const profileRoutes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'profile.js'), 'utf8');
+  const cfiRouteIndex = profileRoutes.indexOf("router.get('/cfi-profile'");
+  const catchAllIndex = profileRoutes.indexOf('router.use((req, res)');
+  assert.ok(cfiRouteIndex !== -1, 'profile router must serve the legacy CFI profile endpoint');
+  assert.ok(cfiRouteIndex < catchAllIndex, 'CFI profile endpoint must be defined before profile catch-all');
 }
 
 run()
