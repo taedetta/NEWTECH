@@ -76,6 +76,11 @@ UPDATE flight_logs SET source = 'production' WHERE source IS NULL;
 -- ── Users: terms acceptance audit trail ──
 ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version VARCHAR(32);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE users SET source = 'production' WHERE source IS NULL;
+DROP INDEX IF EXISTS users_email_unique_idx;
+DROP INDEX IF EXISTS users_email_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users(LOWER(email), source);
 
 -- ── Leads: program interest + activity history ──
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS program_interest VARCHAR(100);
@@ -176,6 +181,11 @@ CREATE TABLE IF NOT EXISTS airworthiness_directives (
 CREATE INDEX IF NOT EXISTS airworthiness_directives_aircraft_id_idx ON airworthiness_directives(aircraft_id);
 
 -- ── Training: stage maneuvers + student progress ──
+ALTER TABLE training_programs ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE training_programs SET source = 'production' WHERE source IS NULL;
+ALTER TABLE training_programs DROP CONSTRAINT IF EXISTS training_programs_code_key;
+DROP INDEX IF EXISTS training_programs_code_key;
+CREATE UNIQUE INDEX IF NOT EXISTS training_programs_code_source_unique ON training_programs(code, source);
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS proficiency_standard TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();

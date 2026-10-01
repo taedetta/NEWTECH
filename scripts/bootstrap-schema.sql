@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_updated_at TIMESTAMPTZ,
   source VARCHAR(20) DEFAULT 'production'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx ON users (LOWER(email));
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users (LOWER(email), source);
 
 CREATE TABLE IF NOT EXISTS user_permissions (
   id SERIAL PRIMARY KEY,
@@ -255,11 +255,12 @@ CREATE TABLE IF NOT EXISTS instructor_availability_overrides (
 CREATE TABLE IF NOT EXISTS training_programs (
   id SERIAL PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
-  code VARCHAR(20) UNIQUE,
+  code VARCHAR(20),
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
+CREATE UNIQUE INDEX IF NOT EXISTS training_programs_code_source_unique ON training_programs(code, source);
 
 CREATE TABLE IF NOT EXISTS program_stages (
   id SERIAL PRIMARY KEY,

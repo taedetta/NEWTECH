@@ -953,11 +953,15 @@ function testTrainingAndGroundSourceIsolationGuards() {
   assert(
     bootstrapSchema.includes('student_training_student_program_source_unique ON student_training(student_id, program_id, source)')
       && bootstrapSchema.includes('student_maneuver_progress_student_maneuver_source_unique ON student_maneuver_progress(student_id, maneuver_id, source)')
+      && bootstrapSchema.includes('users_email_source_unique_idx ON users (LOWER(email), source)')
+      && bootstrapSchema.includes('training_programs_code_source_unique ON training_programs(code, source)')
       && bootstrapSchema.includes("source VARCHAR(20) DEFAULT 'production'\n);")
+      && schemaPatches.includes('CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users(LOWER(email), source)')
+      && schemaPatches.includes('CREATE UNIQUE INDEX IF NOT EXISTS training_programs_code_source_unique ON training_programs(code, source)')
       && schemaPatches.includes("ALTER TABLE milestone_completions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production'")
       && schemaPatches.includes('DROP INDEX IF EXISTS student_maneuver_progress_student_maneuver_unique')
       && schemaPatches.includes('CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_source_unique ON student_training(student_id, program_id, source)'),
-    'training schema must support per-source progress/enrollment/milestone records'
+    'training and user schema must support per-source program, progress, enrollment, milestone, and login records'
   );
 }
 
@@ -1035,6 +1039,38 @@ function testDelayedAuditSourceAndMeterGuards() {
   );
 }
 
+function testStartupSeedersStaySourceScoped() {
+  const startupSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'startup.js'), 'utf8');
+  assert(
+    startupSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && startupSrc.includes('WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2')
+      && startupSrc.includes('INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor, source)')
+      && startupSrc.includes('SELECT COUNT(*) as cnt FROM training_programs WHERE source = $1')
+      && startupSrc.includes('ON CONFLICT (code, source) DO NOTHING')
+      && startupSrc.includes('SELECT id FROM training_programs WHERE code = $1 AND source = $2'),
+    'startup admin and training program seeders must create/update rows only for the active APP_ENV source'
+  );
+
+  const syllabusSrc = fs.readFileSync(path.join(__dirname, 'seed-ppl-pm-syllabus.js'), 'utf8');
+  assert(
+    syllabusSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && syllabusSrc.includes('INSERT INTO training_programs (name, code, description, source)')
+      && syllabusSrc.includes('ON CONFLICT (code, source) DO UPDATE')
+      && syllabusSrc.includes('AND source = $2')
+      && syllabusSrc.includes("WHERE program_id = $2 AND status = 'active' AND source = $3"),
+    'PPL syllabus seeder must not select production programs or delete production progress from staging'
+  );
+
+  const trainingRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'training.js'), 'utf8');
+  assert(
+    trainingRouteSrc.includes('SELECT * FROM training_programs WHERE source = $1 ORDER BY id')
+      && trainingRouteSrc.includes('JOIN training_programs tp ON tp.id = ps.program_id')
+      && trainingRouteSrc.includes('JOIN training_programs tp ON tp.id = ps.program_id')
+      && trainingRouteSrc.includes('SELECT id FROM training_programs WHERE code = $1 AND source = $2'),
+    'training program lists and cohort stats must only read programs for the active APP_ENV source'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1066,6 +1102,7 @@ async function main() {
   testBetaSweepRegressionGuards();
   testTrainingAndGroundSourceIsolationGuards();
   testDelayedAuditSourceAndMeterGuards();
+  testStartupSeedersStaySourceScoped();
   console.log('critical bug regressions passed');
 }
 

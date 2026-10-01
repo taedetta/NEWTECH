@@ -43,11 +43,25 @@ async function canWriteStudentTraining(user, studentId) {
 
 router.get('/programs', authenticateToken, async (req, res) => {
   try {
-    const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
-    const stages = await pool.query('SELECT * FROM program_stages ORDER BY program_id, order_index');
+    const source = getAppEnv();
+    const programs = await pool.query('SELECT * FROM training_programs WHERE source = $1 ORDER BY id', [source]);
+    const stages = await pool.query(
+      `SELECT ps.* FROM program_stages ps
+       JOIN training_programs tp ON tp.id = ps.program_id
+       WHERE tp.source = $1
+       ORDER BY ps.program_id, ps.order_index`,
+      [source]
+    );
     let maneuvers = [];
     try {
-      const mr = await pool.query('SELECT * FROM stage_maneuvers ORDER BY stage_id, order_index');
+      const mr = await pool.query(
+        `SELECT sm.* FROM stage_maneuvers sm
+         JOIN program_stages ps ON ps.id = sm.stage_id
+         JOIN training_programs tp ON tp.id = ps.program_id
+         WHERE tp.source = $1
+         ORDER BY sm.stage_id, sm.order_index`,
+        [source]
+      );
       maneuvers = mr.rows;
     } catch (_) { /* table not yet migrated */ }
     const result = programs.rows.map(p => ({
@@ -71,7 +85,7 @@ router.get('/program-enrollments', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
     const canViewAll = await canManageAllTraining(req.user);
-    const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
+    const programs = await pool.query('SELECT * FROM training_programs WHERE source = $1 ORDER BY id', [getAppEnv()]);
     const result = [];
     for (const prog of programs.rows) {
       let enrollments = await trainingDb.getProgramEnrollments(prog.id);
@@ -98,10 +112,27 @@ router.get('/student-progress', authenticateToken, async (req, res) => {
     const studentId = req.query.student_id ? parseInt(req.query.student_id, 10) : req.user.id;
     if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
     if (!(await canAccessStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Access denied' });
-    const programs = await pool.query('SELECT * FROM training_programs ORDER BY id');
-    const stages = await pool.query('SELECT * FROM program_stages ORDER BY program_id, order_index');
+    const source = getAppEnv();
+    const programs = await pool.query('SELECT * FROM training_programs WHERE source = $1 ORDER BY id', [source]);
+    const stages = await pool.query(
+      `SELECT ps.* FROM program_stages ps
+       JOIN training_programs tp ON tp.id = ps.program_id
+       WHERE tp.source = $1
+       ORDER BY ps.program_id, ps.order_index`,
+      [source]
+    );
     let maneuvers = [];
-    try { const mr = await pool.query('SELECT * FROM stage_maneuvers ORDER BY stage_id, order_index'); maneuvers = mr.rows; } catch (_) {}
+    try {
+      const mr = await pool.query(
+        `SELECT sm.* FROM stage_maneuvers sm
+         JOIN program_stages ps ON ps.id = sm.stage_id
+         JOIN training_programs tp ON tp.id = ps.program_id
+         WHERE tp.source = $1
+         ORDER BY sm.stage_id, sm.order_index`,
+        [source]
+      );
+      maneuvers = mr.rows;
+    } catch (_) {}
     const progress = await pool.query(
       `SELECT smp.*, sm.name as maneuver_name, sm.stage_id, sm.order_index as maneuver_order
        FROM student_maneuver_progress smp
@@ -536,7 +567,10 @@ router.get('/checkride-readiness/:studentId', authenticateToken, async (req, res
 router.get('/cohort-stats/:programCode', authenticateToken, async (req, res) => {
   try {
     const { programCode } = req.params;
-    const progResult = await pool.query('SELECT id FROM training_programs WHERE code = $1', [programCode]);
+    const progResult = await pool.query(
+      'SELECT id FROM training_programs WHERE code = $1 AND source = $2',
+      [programCode, getAppEnv()]
+    );
     if (progResult.rows.length === 0) return res.json({ cohort_size: 0, enough_data: false });
     const programId = progResult.rows[0].id;
     const studentsResult = await pool.query(`
