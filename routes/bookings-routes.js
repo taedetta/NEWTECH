@@ -950,6 +950,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
     if (status && !isAdmin) return abortTransaction(403, { error: 'Only admins can change booking status' });
     const acId = aircraft_id !== undefined ? parseInt(aircraft_id, 10) : b.aircraft_id;
+    if (b.status === 'completed' && acId !== b.aircraft_id) {
+      return abortTransaction(400, { error: 'Aircraft cannot be changed after a flight is completed' });
+    }
     const stTime = new Date(start_time !== undefined ? start_time : b.start_time);
     const enTime = new Date(end_time !== undefined ? end_time : b.end_time);
     if (isNaN(stTime.getTime()) || isNaN(enTime.getTime())) return abortTransaction(400, { error: 'Invalid date format' });

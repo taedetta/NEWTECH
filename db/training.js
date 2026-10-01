@@ -402,10 +402,19 @@ async function completeStageMilestone({ studentId, stageId, enrollmentId, comple
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes, source)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [studentId, stageId, completedBy, debriefId || null, notes || null, getAppEnv()]
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`milestone:${getAppEnv()}:${studentId}:${stageId}`]
     );
+    const existing = await client.query(
+      `SELECT id FROM milestone_completions
+       WHERE student_id = $1 AND stage_id = $2 AND source = $3
+       LIMIT 1`,
+      [studentId, stageId, getAppEnv()]
+    );
+    if (existing.rows.length > 0) {
+      await client.query('COMMIT');
+      return { ok: true, next_stage_id: enroll.current_stage_id, already_completed: true };
+    }
 
     const nextStage = await client.query(
       `SELECT id FROM program_stages
@@ -414,6 +423,12 @@ async function completeStageMilestone({ studentId, stageId, enrollmentId, comple
       [enroll.program_id, stage.order_index]
     );
     const nextStageId = nextStage.rows.length > 0 ? nextStage.rows[0].id : stageId;
+    await client.query(
+      `INSERT INTO milestone_completions (student_id, stage_id, completed_by, debrief_id, notes, source)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (student_id, stage_id, source) DO NOTHING`,
+      [studentId, stageId, completedBy, debriefId || null, notes || null, getAppEnv()]
+    );
     await client.query(
       `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2 AND source = $3`,
       [nextStageId, enrollmentId, getAppEnv()]

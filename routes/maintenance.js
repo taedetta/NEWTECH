@@ -55,7 +55,10 @@ router.post('/squawks', authenticateToken, async (req, res) => {
       try {
         const [acResult, usersResult] = await Promise.all([
           pool.query('SELECT tail_number, make_model FROM aircraft WHERE id = $1 AND source = $2', [aircraft_id, getAppEnv()]),
-          pool.query("SELECT id, email, name FROM users WHERE role IN ('admin', 'owner', 'instructor') AND deleted_at IS NULL AND email IS NOT NULL")
+          pool.query(
+            "SELECT id, email, name FROM users WHERE role IN ('admin', 'owner', 'instructor') AND deleted_at IS NULL AND email IS NOT NULL AND source = $1",
+            [getAppEnv()]
+          )
         ]);
         const ac = acResult.rows[0];
         const { groundingSquawkEmail } = require('../email-templates');

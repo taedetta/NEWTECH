@@ -1071,6 +1071,75 @@ function testStartupSeedersStaySourceScoped() {
   );
 }
 
+function testDelayedAuditFixesRemainInPlace() {
+  const fileOverrideDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'file-overrides.js'), 'utf8');
+  const startupSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'startup.js'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, 'schema-patches.sql'), 'utf8');
+  const bootstrapSchema = fs.readFileSync(path.join(__dirname, 'bootstrap-schema.sql'), 'utf8');
+  assert(
+    fileOverrideDbSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && fileOverrideDbSrc.includes('ON CONFLICT (file_path, source) DO UPDATE')
+      && fileOverrideDbSrc.includes('WHERE source = $1 ORDER BY updated_at ASC')
+      && fileOverrideDbSrc.includes('DELETE FROM file_overrides WHERE source = $1 RETURNING file_path')
+      && startupSrc.includes('FROM file_overrides WHERE source = $1 ORDER BY updated_at ASC')
+      && bootstrapSchema.includes('file_overrides_file_path_source_unique')
+      && schemaPatches.includes('ALTER TABLE file_overrides ADD COLUMN IF NOT EXISTS source')
+      && schemaPatches.includes('ALTER TABLE file_overrides DROP CONSTRAINT IF EXISTS file_overrides_file_path_key'),
+    'file editor overrides and deploy rehydration must be source-scoped'
+  );
+
+  const trainingRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'training.js'), 'utf8');
+  assert(
+    trainingRouteSrc.includes('async function programBelongsToCurrentSource')
+      && trainingRouteSrc.includes('async function stageBelongsToCurrentSource')
+      && trainingRouteSrc.includes('if (!(await programBelongsToCurrentSource(program_id)))')
+      && trainingRouteSrc.includes('WHERE ps.program_id = tp.id AND ps.id = $4 AND tp.source = $5')
+      && trainingRouteSrc.includes('WHERE sm.stage_id = ps.id AND sm.id = $5 AND tp.source = $6')
+      && trainingRouteSrc.includes('WHERE sm.stage_id = ps.id AND ps.program_id = tp.id AND sm.id = $1 AND tp.source = $2')
+      && trainingRouteSrc.includes('WHERE ps.program_id = tp.id AND ps.id = $2 AND tp.source = $3'),
+    'training stage and maneuver admin CRUD must verify parent program source'
+  );
+
+  const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert(
+    adminSrc.includes('async function ensureInstructorInCurrentSource')
+      && adminSrc.includes('if (!(await ensureInstructorInCurrentSource(client, iid)))')
+      && adminSrc.includes('JOIN users u ON u.id = ia.instructor_id')
+      && adminSrc.includes('JOIN users u ON u.id = iao.instructor_id')
+      && adminSrc.includes('AND b.source = $3'),
+    'instructor availability writes/deletes and admin availability bookings must be source-scoped'
+  );
+
+  const maintenanceSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'maintenance.js'), 'utf8');
+  assert(
+    maintenanceSrc.includes("email IS NOT NULL AND source = $1")
+      && maintenanceSrc.includes('[getAppEnv()]'),
+    'grounding squawk notifications must only target users in the active source'
+  );
+
+  const completionSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-completion.js'), 'utf8');
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  assert(
+    completionSrc.includes('completed_at = COALESCE(completed_at, NOW())')
+      && bookingsSrc.includes('Aircraft cannot be changed after a flight is completed'),
+    'completion must write completed_at and completed flight edits must not reassign aircraft'
+  );
+
+  const trainingDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'training.js'), 'utf8');
+  const groundSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ground.js'), 'utf8');
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  assert(
+    trainingDbSrc.includes('milestone:${getAppEnv()}:${studentId}:${stageId}')
+      && trainingDbSrc.includes('ON CONFLICT (student_id, stage_id, source) DO NOTHING')
+      && bootstrapSchema.includes('milestone_completions_student_stage_source_unique')
+      && schemaPatches.includes('milestone_completions_student_stage_source_unique')
+      && groundSrc.includes('Duplicate ground session already exists')
+      && historySrc.includes('Duplicate ground session already exists')
+      && historySrc.includes('completed_at, source)'),
+    'milestone, ground-session, and manual-completion write paths must be idempotent and timestamped'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1103,6 +1172,7 @@ async function main() {
   testTrainingAndGroundSourceIsolationGuards();
   testDelayedAuditSourceAndMeterGuards();
   testStartupSeedersStaySourceScoped();
+  testDelayedAuditFixesRemainInPlace();
   console.log('critical bug regressions passed');
 }
 

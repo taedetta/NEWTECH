@@ -41,13 +41,40 @@ router.post('/', authenticateToken, async (req, res) => {
     const hrs = parsedHours.value;
     const rate = instrRate != null ? Number(instrRate) : null;
     const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
-    const result = await pool.query(`
-      INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [studentId, instructorId, session_date || new Date().toISOString().slice(0, 10), hrs,
-       Number.isFinite(rate) ? rate : null, chargeAmount, notes || null, source]
-    );
-    res.status(201).json(result.rows[0]);
+    const sessionDate = session_date || new Date().toISOString().slice(0, 10);
+    const noteText = notes || null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`ground:${source}:${studentId}:${instructorId}:${sessionDate}:${hrs}:${noteText || ''}`]
+      );
+      const duplicate = await client.query(
+        `SELECT id FROM ground_sessions
+         WHERE student_id = $1 AND instructor_id = $2 AND session_date = $3
+           AND ground_hours = $4 AND COALESCE(notes, '') = COALESCE($5, '') AND source = $6
+         LIMIT 1`,
+        [studentId, instructorId, sessionDate, hrs, noteText, source]
+      );
+      if (duplicate.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Duplicate ground session already exists', ground_session_id: duplicate.rows[0].id });
+      }
+      const result = await client.query(`
+        INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [studentId, instructorId, sessionDate, hrs,
+         Number.isFinite(rate) ? rate : null, chargeAmount, noteText, source]
+      );
+      await client.query('COMMIT');
+      res.status(201).json(result.rows[0]);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
     console.error('Ground session create error:', err);
     res.status(500).json({ error: 'Failed to create ground session' });

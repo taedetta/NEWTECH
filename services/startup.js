@@ -274,7 +274,8 @@ async function rehydrateFileOverrides(pool) {
     }
 
     const result = await pool.query(
-      'SELECT file_path, content, updated_at FROM file_overrides ORDER BY updated_at ASC'
+      'SELECT file_path, content, updated_at FROM file_overrides WHERE source = $1 ORDER BY updated_at ASC',
+      [getAppEnv()]
     );
     if (result.rows.length === 0) {
       console.log('[file-overrides] No overrides to rehydrate');

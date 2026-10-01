@@ -525,8 +525,8 @@ router.post('/manual', authenticateToken, async (req, res) => {
           instructorRate: instrRate?.instructor_rate,
         });
         const bkResult = await client.query(
-          `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, lesson_type, notes, created_by, booking_type, hobbs_start, hobbs_end, source)
-           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+          `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, lesson_type, notes, created_by, booking_type, hobbs_start, hobbs_end, completed_at, source)
+           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, NOW(), $12) RETURNING id`,
           [sid, iid, acId, startTime.toISOString(), endTime.toISOString(), lesson_type || null, notes || null, userId, bookingType, hStart, hEnd, getAppEnv()]
         );
         const bkId = bkResult.rows[0].id;
@@ -591,14 +591,59 @@ router.post('/manual', authenticateToken, async (req, res) => {
       const parsedGroundHours = parsePositiveNumber(ground_hours, 'ground_hours');
       if (parsedGroundHours.error) return res.status(400).json({ error: parsedGroundHours.error });
       const hrs = parsedGroundHours.value;
-      const instrRate = (await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [iid])).rows[0]?.instructor_rate;
-      const rate = instrRate != null ? Number(instrRate) : null;
-      const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
-      const gsResult = await pool.query(
-        `INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-        [sid, iid, flight_date, hrs, Number.isFinite(rate) ? rate : null, chargeAmount, notes || null, getAppEnv()]
-      );
-      res.json({ ground_session_id: gsResult.rows[0].id });
+      const noteText = notes || null;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const studentCheck = await client.query(
+          `SELECT id FROM users WHERE id = $1 AND role = 'student' AND deleted_at IS NULL AND source = $2`,
+          [sid, getAppEnv()]
+        );
+        if (studentCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Student not found in this environment' });
+        }
+        const instructorCheck = await client.query(
+          `SELECT id, instructor_rate FROM users
+           WHERE id = $1 AND deleted_at IS NULL AND source = $2
+             AND (is_instructor = TRUE OR role IN ('instructor', 'admin', 'owner'))`,
+          [iid, getAppEnv()]
+        );
+        if (instructorCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Instructor not found in this environment' });
+        }
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1))',
+          [`ground:${getAppEnv()}:${sid}:${iid}:${flight_date}:${hrs}:${noteText || ''}`]
+        );
+        const duplicate = await client.query(
+          `SELECT id FROM ground_sessions
+           WHERE student_id = $1 AND instructor_id = $2 AND session_date = $3
+             AND ground_hours = $4 AND COALESCE(notes, '') = COALESCE($5, '') AND source = $6
+           LIMIT 1`,
+          [sid, iid, flight_date, hrs, noteText, getAppEnv()]
+        );
+        if (duplicate.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Duplicate ground session already exists', ground_session_id: duplicate.rows[0].id });
+        }
+        const instrRate = instructorCheck.rows[0]?.instructor_rate;
+        const rate = instrRate != null ? Number(instrRate) : null;
+        const chargeAmount = Number.isFinite(rate) ? Math.round(hrs * rate * 100) / 100 : 0;
+        const gsResult = await client.query(
+          `INSERT INTO ground_sessions (student_id, instructor_id, session_date, ground_hours, instructor_rate, instruction_charge_amount, notes, source)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+          [sid, iid, flight_date, hrs, Number.isFinite(rate) ? rate : null, chargeAmount, noteText, getAppEnv()]
+        );
+        await client.query('COMMIT');
+        res.json({ ground_session_id: gsResult.rows[0].id });
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
     }
   } catch (err) {
     console.error('Manual history entry error:', err);

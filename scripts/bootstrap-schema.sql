@@ -347,6 +347,16 @@ CREATE TABLE IF NOT EXISTS milestone_completions (
   completed_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE milestone_completions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE milestone_completions SET source = 'production' WHERE source IS NULL;
+DELETE FROM milestone_completions mc
+USING milestone_completions newer
+WHERE mc.student_id = newer.student_id
+  AND mc.stage_id = newer.stage_id
+  AND mc.source = newer.source
+  AND mc.id > newer.id;
+CREATE UNIQUE INDEX IF NOT EXISTS milestone_completions_student_stage_source_unique
+  ON milestone_completions(student_id, stage_id, source);
 
 CREATE TABLE IF NOT EXISTS training_progress (
   id SERIAL PRIMARY KEY,
@@ -465,13 +475,21 @@ CREATE TABLE IF NOT EXISTS flight_discrepancies (
 
 CREATE TABLE IF NOT EXISTS file_overrides (
   id SERIAL PRIMARY KEY,
-  file_path TEXT UNIQUE NOT NULL,
+  file_path TEXT NOT NULL,
   content TEXT,
   edited_by INTEGER REFERENCES users(id),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   synced_to_github BOOLEAN DEFAULT FALSE,
-  synced_at TIMESTAMPTZ
+  synced_at TIMESTAMPTZ,
+  source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE file_overrides ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE file_overrides SET source = 'production' WHERE source IS NULL;
+ALTER TABLE file_overrides ALTER COLUMN source SET NOT NULL;
+ALTER TABLE file_overrides DROP CONSTRAINT IF EXISTS file_overrides_file_path_key;
+DROP INDEX IF EXISTS file_overrides_file_path_key;
+CREATE UNIQUE INDEX IF NOT EXISTS file_overrides_file_path_source_unique
+  ON file_overrides(file_path, source);
 
 CREATE TABLE IF NOT EXISTS airworthiness_directives (
   id SERIAL PRIMARY KEY,

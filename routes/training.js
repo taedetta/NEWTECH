@@ -41,6 +41,25 @@ async function canWriteStudentTraining(user, studentId) {
   return isAssignedTrainingInstructor(user, studentId);
 }
 
+async function programBelongsToCurrentSource(programId, client = pool) {
+  const result = await client.query(
+    'SELECT id FROM training_programs WHERE id = $1 AND source = $2',
+    [programId, getAppEnv()]
+  );
+  return result.rows.length > 0;
+}
+
+async function stageBelongsToCurrentSource(stageId, client = pool) {
+  const result = await client.query(
+    `SELECT ps.id, ps.program_id
+     FROM program_stages ps
+     JOIN training_programs tp ON tp.id = ps.program_id
+     WHERE ps.id = $1 AND tp.source = $2`,
+    [stageId, getAppEnv()]
+  );
+  return result.rows[0] || null;
+}
+
 router.get('/programs', authenticateToken, async (req, res) => {
   try {
     const source = getAppEnv();
@@ -331,6 +350,7 @@ router.post(['/admin/stages', '/stages'], authenticateToken, requireRole('owner'
   try {
     const { program_id, name, description, order_index } = req.body;
     if (!program_id || !name) return res.status(400).json({ error: 'program_id and name are required' });
+    if (!(await programBelongsToCurrentSource(program_id))) return res.status(404).json({ error: 'Program not found' });
     let idx = order_index;
     if (!idx) {
       const maxR = await pool.query(`SELECT COALESCE(MAX(order_index), 0) + 1 as next_idx FROM program_stages WHERE program_id = $1`, [program_id]);
@@ -351,8 +371,14 @@ router.put(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole(
   try {
     const { name, description, order_index } = req.body;
     const result = await pool.query(
-      `UPDATE program_stages SET name = COALESCE($1, name), description = COALESCE($2, description), order_index = COALESCE($3, order_index) WHERE id = $4 RETURNING *`,
-      [name || null, description || null, order_index || null, req.params.id]
+      `UPDATE program_stages ps
+       SET name = COALESCE($1, ps.name),
+           description = COALESCE($2, ps.description),
+           order_index = COALESCE($3, ps.order_index)
+       FROM training_programs tp
+       WHERE ps.program_id = tp.id AND ps.id = $4 AND tp.source = $5
+       RETURNING ps.*`,
+      [name || null, description || null, order_index || null, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Stage not found' });
     res.json(result.rows[0]);
@@ -364,11 +390,13 @@ router.put(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole(
 
 router.delete(['/admin/stages/:id', '/stages/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
+    const stage = await stageBelongsToCurrentSource(req.params.id);
+    if (!stage) return res.status(404).json({ error: 'Stage not found' });
     const inUse = await pool.query(`SELECT COUNT(*) as cnt FROM student_training WHERE current_stage_id = $1 AND source = $2`, [req.params.id, getAppEnv()]);
     if (parseInt(inUse.rows[0].cnt) > 0) {
       return res.status(409).json({ error: 'Cannot delete: students are currently in this stage. Reassign them first.' });
     }
-    await pool.query('DELETE FROM program_stages WHERE id = $1', [req.params.id]);
+    await pool.query('DELETE FROM program_stages WHERE id = $1', [stage.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error('Admin delete stage error:', err);
@@ -380,6 +408,7 @@ router.post(['/admin/maneuvers', '/maneuvers'], authenticateToken, requireRole('
   try {
     const { stage_id, name, description, proficiency_standard, order_index } = req.body;
     if (!stage_id || !name) return res.status(400).json({ error: 'stage_id and name are required' });
+    if (!(await stageBelongsToCurrentSource(stage_id))) return res.status(404).json({ error: 'Stage not found' });
     let idx = order_index;
     if (!idx) {
       const maxR = await pool.query(`SELECT COALESCE(MAX(order_index), 0) + 1 as next_idx FROM stage_maneuvers WHERE stage_id = $1`, [stage_id]);
@@ -400,8 +429,17 @@ router.put(['/admin/maneuvers/:id', '/maneuvers/:id'], authenticateToken, requir
   try {
     const { name, description, proficiency_standard, order_index } = req.body;
     const result = await pool.query(
-      `UPDATE stage_maneuvers SET name = COALESCE($1, name), description = COALESCE($2, description), proficiency_standard = COALESCE($3, proficiency_standard), order_index = COALESCE($4, order_index), updated_at = NOW() WHERE id = $5 RETURNING *`,
-      [name || null, description || null, proficiency_standard || null, order_index || null, req.params.id]
+      `UPDATE stage_maneuvers sm
+       SET name = COALESCE($1, sm.name),
+           description = COALESCE($2, sm.description),
+           proficiency_standard = COALESCE($3, sm.proficiency_standard),
+           order_index = COALESCE($4, sm.order_index),
+           updated_at = NOW()
+       FROM program_stages ps
+       JOIN training_programs tp ON tp.id = ps.program_id
+       WHERE sm.stage_id = ps.id AND sm.id = $5 AND tp.source = $6
+       RETURNING sm.*`,
+      [name || null, description || null, proficiency_standard || null, order_index || null, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Maneuver not found' });
     res.json(result.rows[0]);
@@ -413,7 +451,14 @@ router.put(['/admin/maneuvers/:id', '/maneuvers/:id'], authenticateToken, requir
 
 router.delete(['/admin/maneuvers/:id', '/maneuvers/:id'], authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
-    await pool.query('DELETE FROM stage_maneuvers WHERE id = $1', [req.params.id]);
+    const result = await pool.query(
+      `DELETE FROM stage_maneuvers sm
+       USING program_stages ps, training_programs tp
+       WHERE sm.stage_id = ps.id AND ps.program_id = tp.id AND sm.id = $1 AND tp.source = $2
+       RETURNING sm.id`,
+      [req.params.id, getAppEnv()]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Maneuver not found' });
     res.json({ ok: true });
   } catch (err) {
     console.error('Admin delete maneuver error:', err);
@@ -429,7 +474,18 @@ router.put(['/admin/stages/reorder', '/stages/reorder'], authenticateToken, requ
     try {
       await client.query('BEGIN');
       for (const s of stages) {
-        await client.query('UPDATE program_stages SET order_index = $1 WHERE id = $2', [s.order_index, s.id]);
+        const result = await client.query(
+          `UPDATE program_stages ps
+           SET order_index = $1
+           FROM training_programs tp
+           WHERE ps.program_id = tp.id AND ps.id = $2 AND tp.source = $3
+           RETURNING ps.id`,
+          [s.order_index, s.id, getAppEnv()]
+        );
+        if (result.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Stage not found' });
+        }
       }
       await client.query('COMMIT');
       res.json({ ok: true });

@@ -232,7 +232,8 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       }
       const finishedEnd = completionEndTime(b);
       await client.query(
-        `UPDATE bookings SET status = 'completed', end_time = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed' AND source = $3`,
+        `UPDATE bookings SET status = 'completed', end_time = $1, completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
+         WHERE id = $2 AND status = 'confirmed' AND source = $3`,
         [finishedEnd, req.params.id, getAppEnv()]
       );
       await client.query('COMMIT');
@@ -446,7 +447,7 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     // Update booking — persist hobbs/tach on booking row for billing queries
     const completeResult = await client.query(
       `UPDATE bookings SET status = 'completed', hobbs_start = $1, hobbs_end = $2,
-       tach_start = $3, tach_end = $4, end_time = $5, updated_at = NOW()
+       tach_start = $3, tach_end = $4, end_time = $5, completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
        WHERE id = $6 AND status = 'confirmed' AND source = $7`,
       [hStart, hEnd, tStart, tEnd, finishedEnd, req.params.id, getAppEnv()]
     );

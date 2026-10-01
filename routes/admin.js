@@ -16,6 +16,15 @@ const { execSync, spawn } = require('child_process');
 
 const router = express.Router();
 
+async function ensureInstructorInCurrentSource(client, instructorId) {
+  const result = await client.query(
+    `SELECT id FROM users
+     WHERE id = $1 AND deleted_at IS NULL AND is_instructor = TRUE AND source = $2`,
+    [instructorId, getAppEnv()]
+  );
+  return result.rows.length > 0;
+}
+
 /** Tables cleared by reset-all-data — order respects foreign keys */
 const RESET_DELETE_TABLES = [
   'debrief_grades',
@@ -344,6 +353,9 @@ router.get('/instructor-availability', authenticateToken, async (req, res) => {
     if (!isOwnProfile && !isAdmin) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    if (!(await ensureInstructorInCurrentSource(client, instructorId))) {
+      return res.status(404).json({ error: 'Instructor not found' });
+    }
 
     const weekly = await client.query(
       `SELECT id, day_of_week, start_time, end_time FROM instructor_availability
@@ -375,6 +387,7 @@ router.post('/instructor-availability', authenticateToken, requireRole('instruct
     const isOwnProfile = iid === req.user.id;
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) return res.status(403).json({ error: 'Can only set your own availability' });
+    if (!(await ensureInstructorInCurrentSource(client, iid))) return res.status(404).json({ error: 'Instructor not found' });
     if (day_of_week === undefined || day_of_week === null || !start_time || !end_time) {
       return res.status(400).json({ error: 'day_of_week, start_time, end_time are required' });
     }
@@ -398,7 +411,13 @@ router.delete('/instructor-availability/:id', authenticateToken, requireRole('in
   const client = await pool.connect();
   try {
     const { id } = req.params;
-    const row = await client.query('SELECT instructor_id FROM instructor_availability WHERE id=$1', [id]);
+    const row = await client.query(
+      `SELECT ia.instructor_id
+       FROM instructor_availability ia
+       JOIN users u ON u.id = ia.instructor_id
+       WHERE ia.id = $1 AND u.source = $2`,
+      [id, getAppEnv()]
+    );
     if (row.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const iid = row.rows[0].instructor_id;
     const isOwnProfile = iid === req.user.id;
@@ -421,6 +440,7 @@ router.delete('/instructor-availability', authenticateToken, requireRole('instru
     const isOwnProfile = instructorId === req.user.id;
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+    if (!(await ensureInstructorInCurrentSource(client, instructorId))) return res.status(404).json({ error: 'Instructor not found' });
     await client.query('DELETE FROM instructor_availability WHERE instructor_id=$1', [instructorId]);
     res.json({ ok: true });
   } catch (err) {
@@ -440,6 +460,7 @@ router.post('/instructor-availability/overrides', authenticateToken, requireRole
     const isOwnProfile = iid === req.user.id;
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) return res.status(403).json({ error: 'Can only set your own availability' });
+    if (!(await ensureInstructorInCurrentSource(client, iid))) return res.status(404).json({ error: 'Instructor not found' });
     if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date are required' });
     if (start_date > end_date) return res.status(400).json({ error: 'end_date must be >= start_date' });
     if (start_time && end_time && start_time >= end_time) return res.status(400).json({ error: 'end_time must be after start_time when specifying a range' });
@@ -473,7 +494,13 @@ router.delete('/instructor-availability/overrides/:id', authenticateToken, requi
   const client = await pool.connect();
   try {
     const { id } = req.params;
-    const row = await client.query('SELECT instructor_id FROM instructor_availability_overrides WHERE id=$1', [id]);
+    const row = await client.query(
+      `SELECT iao.instructor_id
+       FROM instructor_availability_overrides iao
+       JOIN users u ON u.id = iao.instructor_id
+       WHERE iao.id = $1 AND u.source = $2`,
+      [id, getAppEnv()]
+    );
     if (row.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const iid = row.rows[0].instructor_id;
     const isOwnProfile = iid === req.user.id;
@@ -546,8 +573,9 @@ router.get('/instructor-availability/all', authenticateToken, requireRole('admin
         `SELECT b.start_time, b.end_time, u.name as student_name
          FROM bookings b LEFT JOIN users u ON b.student_id = u.id
          WHERE b.instructor_id = $1 AND b.status = 'confirmed' AND b.end_time > NOW()
-           AND DATE(b.start_time AT TIME ZONE 'UTC') = $2::date`,
-        [inst.id, date]
+           AND DATE(b.start_time AT TIME ZONE 'UTC') = $2::date
+           AND b.source = $3`,
+        [inst.id, date, getAppEnv()]
       );
 
       result.push({
