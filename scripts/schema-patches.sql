@@ -265,6 +265,9 @@ ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES loc
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(id);
 UPDATE aircraft SET location_id = (SELECT id FROM locations WHERE is_default = true LIMIT 1)
 WHERE location_id IS NULL;
+ALTER TABLE aircraft DROP CONSTRAINT IF EXISTS aircraft_tail_number_key;
+DROP INDEX IF EXISTS aircraft_tail_number_key;
+CREATE UNIQUE INDEX IF NOT EXISTS aircraft_tail_number_source_unique ON aircraft(tail_number, source);
 
 -- ── Student document vault ──
 CREATE TABLE IF NOT EXISTS student_documents (

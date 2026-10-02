@@ -10,6 +10,7 @@
 const fs = require('fs');
 const { Pool } = require('pg');
 const { TERMS_VERSION } = require('../lib/terms');
+const { getAppEnv } = require('../lib/app-env');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
@@ -95,7 +96,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
   const slot = pastSlot(hoursAgo, 90);
   const r = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, $8)
     RETURNING id
   `, [
     studentId || null,
@@ -105,6 +106,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
     slot.end_time,
     type,
     instructorId || studentId,
+    getAppEnv(),
   ]);
   return r.rows[0].id;
 }
@@ -292,9 +294,9 @@ async function testEndEarlyFlow(pool, tokens, users, ac) {
 
   const ins = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time]);
+  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time, getAppEnv()]);
   const bid = ins.rows[0].id;
 
   const early = await api(adminTok, `/api/bookings/${bid}/end-early`, {

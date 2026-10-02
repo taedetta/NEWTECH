@@ -11754,14 +11754,15 @@ async function loadFleet() {
   emptyEl.classList.add('hidden');
   const perms = currentUser.permissions || {};
   const canEdit = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || perms.can_manage_aircraft;
+  const canViewDocs = canEdit;
   const canEditHours = ['owner', 'instructor', 'admin', 'maintenance'].includes(currentUser.role);
   const canDelete = ['owner', 'admin', 'maintenance'].includes(currentUser.role);
 
   document.getElementById('schedule-downtime-btn').classList.toggle('hidden', !canEdit);
 
-  tbody.innerHTML = allAircraft.map(a => renderFleetTableRow(a, canEdit, canEditHours, canDelete)).join('');
+  tbody.innerHTML = allAircraft.map(a => renderFleetTableRow(a, canEdit, canEditHours, canDelete, canViewDocs)).join('');
   if (cardsEl) {
-    cardsEl.innerHTML = allAircraft.map(a => renderFleetCard(a, canEdit, canEditHours, canDelete)).join('');
+    cardsEl.innerHTML = allAircraft.map(a => renderFleetCard(a, canEdit, canEditHours, canDelete, canViewDocs)).join('');
   }
 
   if (!window._fleetDocsClickBound) {
@@ -11783,7 +11784,7 @@ async function loadFleet() {
   }
 }
 
-function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
+function renderFleetTableRow(a, canEdit, canEditHours, canDelete, canViewDocs) {
   const st = aircraftStatusDisplay(a);
   const typeLabel = aircraftTypeLabel(a);
   return `<tr>
@@ -11800,7 +11801,7 @@ function renderFleetTableRow(a, canEdit, canEditHours, canDelete) {
     <td><span class="tag ${st.tagClass}">${st.label}</span></td>
     <td style="white-space:nowrap">
       ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
-      <button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}" title="Aircraft documents">Docs</button>
+      ${canViewDocs ? `<button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}" title="Aircraft documents">Docs</button>` : ''}
       <button class="btn btn-secondary btn-sm" onclick="openHoursHistory(${a.id}, '${escHtml(a.tail_number)}')" title="Hours history" style="margin-left:0.25rem">History</button>
       ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="openDeleteAircraftModal(${a.id}, '${escHtml(a.tail_number)}')" style="margin-left:0.25rem" title="Delete aircraft">Delete</button>` : ''}
     </td>
@@ -11815,7 +11816,7 @@ function aircraftTypeLabel(a) {
   return raw.replace(/_/g, ' ');
 }
 
-function renderFleetCard(a, canEdit, canEditHours, canDelete) {
+function renderFleetCard(a, canEdit, canEditHours, canDelete, canViewDocs) {
   const st = aircraftStatusDisplay(a);
   const hobbs = (() => { const h = aircraftMeterHobbs(a); return h != null ? h.toFixed(1) : '0.0'; })();
   const tach = (() => { const t = aircraftMeterTach(a); return t != null ? t.toFixed(1) : '0.0'; })();
@@ -11836,7 +11837,7 @@ function renderFleetCard(a, canEdit, canEditHours, canDelete) {
     </div>
     <div class="fleet-card-actions">
       ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="editAircraft(${a.id})">Edit</button>` : ''}
-      <button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}">Docs</button>
+      ${canViewDocs ? `<button type="button" class="btn btn-secondary btn-sm" data-aircraft-docs-id="${a.id}">Docs</button>` : ''}
       <button class="btn btn-secondary btn-sm" onclick="openHoursHistory(${a.id}, '${escHtml(a.tail_number)}')">History</button>
       ${canEditHours ? `<button class="btn btn-secondary btn-sm" onclick="openInspectionModalHoursOnly(${a.id}, '${escHtml(a.tail_number)}')">Edit Hours</button>` : ''}
       ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="openDowntimeModal(${a.id})">Downtime</button>` : ''}
@@ -11867,9 +11868,18 @@ function canUploadAircraftDocs() {
   return currentUser && ['owner', 'admin'].includes(currentUser.role);
 }
 
+function canViewAircraftDocs() {
+  var perms = currentUser && currentUser.permissions ? currentUser.permissions : {};
+  return !!(currentUser && (['owner', 'admin', 'maintenance'].includes(currentUser.role) || perms.can_manage_aircraft));
+}
+
 function openAircraftDocsModal(aircraftId) {
   aircraftId = parseInt(aircraftId, 10);
   if (!Number.isFinite(aircraftId)) return;
+  if (!canViewAircraftDocs()) {
+    showToast('Aircraft documents are limited to fleet managers.', 'error');
+    return;
+  }
   var modal = document.getElementById('aircraft-docs-modal');
   if (!modal) { showToast('Documents feature not loaded — hard refresh (Ctrl+Shift+R)', 'error'); return; }
   var ac = (allAircraft || []).find(function(x) { return Number(x.id) === aircraftId; });

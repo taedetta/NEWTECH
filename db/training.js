@@ -146,6 +146,23 @@ function normalizeManeuverStatus(dbStatus) {
   return map[dbStatus] || dbStatus;
 }
 
+async function maneuverBelongsToStudentActiveProgram(studentId, maneuverId, client = pool) {
+  const result = await client.query(
+    `SELECT 1
+     FROM student_training st
+     JOIN training_programs tp ON tp.id = st.program_id AND tp.source = st.source
+     JOIN program_stages ps ON ps.program_id = tp.id
+     JOIN stage_maneuvers sm ON sm.stage_id = ps.id
+     WHERE st.student_id = $1
+       AND sm.id = $2
+       AND st.status = 'active'
+       AND st.source = $3
+     LIMIT 1`,
+    [studentId, maneuverId, getAppEnv()]
+  );
+  return result.rows.length > 0;
+}
+
 /**
  * Upsert maneuver progress status for a student.
  * Maps frontend statuses (introduced/practiced/proficient) to DB values.
@@ -163,6 +180,12 @@ async function upsertManeuverProgress(studentId, maneuverId, status) {
   };
   const dbStatus = statusMap[status] || status;
   const profDate = (dbStatus === 'proficient' || dbStatus === 'completed') ? new Date() : null;
+
+  if (!(await maneuverBelongsToStudentActiveProgram(studentId, maneuverId))) {
+    const err = new Error('Maneuver is not part of the student active training program');
+    err.status = 400;
+    throw err;
+  }
 
   if (dbStatus === 'not_started') {
     await pool.query(
@@ -446,6 +469,7 @@ async function completeStageMilestone({ studentId, stageId, enrollmentId, comple
 module.exports = {
   getStudentProgress,
   getManeuverProgress,
+  maneuverBelongsToStudentActiveProgram,
   upsertManeuverProgress,
   getStudentFlightHours,
   createDebrief,

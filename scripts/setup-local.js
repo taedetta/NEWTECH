@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const { getAppEnv } = require('../lib/app-env');
 
 const PG = {
   host: process.env.PGHOST || 'localhost',
@@ -78,32 +79,36 @@ async function seedCms(pool) {
 
 async function seedOwner(pool) {
   const hash = await bcrypt.hash(OWNER.password, 12);
-  const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [OWNER.email]);
+  const existing = await pool.query(
+    'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND source = $2',
+    [OWNER.email, getAppEnv()]
+  );
   if (existing.rows.length > 0) {
     await pool.query(
       `UPDATE users SET password_hash = $1, name = $2, role = $3, approval_status = 'approved',
-       deleted_at = NULL, is_instructor = TRUE, updated_at = NOW() WHERE id = $4`,
-      [hash, OWNER.name, OWNER.role, existing.rows[0].id]
+       deleted_at = NULL, is_instructor = TRUE, source = $4, updated_at = NOW() WHERE id = $5`,
+      [hash, OWNER.name, OWNER.role, getAppEnv(), existing.rows[0].id]
     );
     console.log(`Updated owner account: ${OWNER.email}`);
   } else {
     await pool.query(
-      `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor)
-       VALUES ($1, $2, $3, $4, 'approved', TRUE)`,
-      [OWNER.email.toLowerCase(), OWNER.name, hash, OWNER.role]
+      `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor, source)
+       VALUES ($1, $2, $3, $4, 'approved', TRUE, $5)`,
+      [OWNER.email.toLowerCase(), OWNER.name, hash, OWNER.role, getAppEnv()]
     );
     console.log(`Created owner account: ${OWNER.email}`);
   }
 }
 
 async function seedSampleAircraft(pool) {
-  const check = await pool.query('SELECT COUNT(*) AS cnt FROM aircraft');
+  const check = await pool.query('SELECT COUNT(*) AS cnt FROM aircraft WHERE source = $1', [getAppEnv()]);
   if (parseInt(check.rows[0].cnt, 10) > 0) return;
   await pool.query(
-    `INSERT INTO aircraft (tail_number, make_model, status, hourly_rate, current_hobbs, current_tach)
-     VALUES ('N8040S', 'Cessna 150', 'available', 120, 4520.5, 4510.0),
-            ('N172NT', 'Cessna 172 Skyhawk', 'available', 165, 3200.0, 3180.0)
-     ON CONFLICT (tail_number) DO NOTHING`
+    `INSERT INTO aircraft (tail_number, make_model, status, hourly_rate, current_hobbs, current_tach, source)
+     VALUES ('N8040S', 'Cessna 150', 'available', 120, 4520.5, 4510.0, $1),
+            ('N172NT', 'Cessna 172 Skyhawk', 'available', 165, 3200.0, 3180.0, $1)
+     ON CONFLICT (tail_number, source) DO NOTHING`,
+    [getAppEnv()]
   );
   console.log('Seeded sample aircraft');
 }
@@ -114,7 +119,7 @@ function writeEnvFile() {
 DATABASE_URL=${LOCAL_DATABASE_URL}
 PORT=3000
 NODE_ENV=development
-APP_ENV=production
+APP_ENV=${getAppEnv()}
 APP_URL=http://localhost:3000
 JWT_SECRET=${jwt}
 

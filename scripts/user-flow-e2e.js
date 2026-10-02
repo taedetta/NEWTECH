@@ -5,6 +5,7 @@
  */
 const fs = require('fs');
 const { Pool } = require('pg');
+const { getAppEnv } = require('../lib/app-env');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
@@ -154,9 +155,9 @@ async function main() {
   const dualPast = pastSlot(3, 90);
   const dualIns = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, COALESCE((SELECT source FROM bookings LIMIT 1), 'production'))
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, dualPast.start_time, dualPast.end_time]);
+  `, [student.id, instructor.id, ac.id, dualPast.start_time, dualPast.end_time, getAppEnv()]);
   const dualId = dualIns.rows[0].id;
   created.push(dualId);
 
@@ -184,9 +185,9 @@ async function main() {
   const soloPast = pastSlot(5, 60);
   const soloIns = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES (NULL, $1, $2, $3::timestamptz, $4::timestamptz, 'confirmed', 'instructor_solo', $1, COALESCE((SELECT source FROM bookings LIMIT 1), 'production'))
+    VALUES (NULL, $1, $2, $3::timestamptz, $4::timestamptz, 'confirmed', 'instructor_solo', $1, $5)
     RETURNING id
-  `, [instructor.id, ac.id, soloPast.start_time, soloPast.end_time]);
+  `, [instructor.id, ac.id, soloPast.start_time, soloPast.end_time, getAppEnv()]);
   const soloId = soloIns.rows[0].id;
   created.push(soloId);
 

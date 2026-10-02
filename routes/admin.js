@@ -665,9 +665,12 @@ router.get('/debug-schema/:table', authenticateToken, requireRole('owner', 'admi
   }
 });
 
-router.post('/clone-database', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
-  const targetUrl = req.body?.target_url || process.env.TARGET_DATABASE_URL;
-  if (!targetUrl) return res.status(400).json({ error: 'target_url required in body or TARGET_DATABASE_URL env' });
+router.post('/clone-database', authenticateToken, requireRole('owner'), async (req, res) => {
+  if (req.body?.target_url) {
+    return res.status(400).json({ error: 'Database clone targets must be configured by TARGET_DATABASE_URL' });
+  }
+  const targetUrl = process.env.TARGET_DATABASE_URL;
+  if (!targetUrl) return res.status(400).json({ error: 'TARGET_DATABASE_URL is not configured' });
   try {
     const { cloneDatabase } = require('../scripts/clone-render-db');
     console.log('[clone-database] Starting clone to external target...');

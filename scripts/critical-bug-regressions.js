@@ -1140,6 +1140,95 @@ function testDelayedAuditFixesRemainInPlace() {
   );
 }
 
+function testOwnerAndSensitiveDataGuards() {
+  const usersSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
+  const inviteRoute = usersSrc.slice(usersSrc.indexOf("router.post('/invite'"), usersSrc.indexOf("// PATCH /api/users/:id/rate"));
+  assert(
+    inviteRoute.includes('AND deleted_at IS NULL AND source = $2')
+      && inviteRoute.includes('[email, getAppEnv()]'),
+    'user invites must not leak or block accounts from another source'
+  );
+
+  const deleteRoute = usersSrc.slice(usersSrc.indexOf("router.delete('/:id'"), usersSrc.indexOf("// PATCH /api/users/:id/privileges"));
+  assert(
+    deleteRoute.includes("target.role === 'owner' && requesterRole !== 'owner'")
+      && deleteRoute.includes('Cannot remove the last owner'),
+    'only owners may delete owner accounts, and the last owner must be protected'
+  );
+
+  const roleRoute = usersSrc.slice(usersSrc.indexOf("router.patch('/:id/role'"), usersSrc.indexOf("// PATCH /api/users/:id/instructor-status"));
+  assert(
+    roleRoute.includes("target.role === 'owner' && role !== 'owner' && requester.rows[0].role !== 'owner'")
+      && roleRoute.includes('Only owners can revoke owner access'),
+    'only owners may revoke owner access through the role endpoint'
+  );
+
+  const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
+  assert(
+    aircraftSrc.includes("router.get('/:id/documents', authenticateToken, requirePermission('can_manage_aircraft')")
+      && aircraftSrc.includes("router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin')"),
+    'aircraft document URLs must not be readable by every authenticated user'
+  );
+
+  const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  const cloneRoute = adminSrc.slice(adminSrc.indexOf("router.post('/clone-database'"), adminSrc.indexOf('module.exports = router'));
+  assert(
+    cloneRoute.includes("requireRole('owner')")
+      && cloneRoute.includes('Database clone targets must be configured by TARGET_DATABASE_URL')
+      && cloneRoute.includes('const targetUrl = process.env.TARGET_DATABASE_URL')
+      && !cloneRoute.includes("req.body?.target_url ||"),
+    'database clone endpoint must not accept attacker-controlled target URLs'
+  );
+}
+
+function testTrainingProgressIntegrityGuards() {
+  const trainingDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'training.js'), 'utf8');
+  assert(
+    trainingDbSrc.includes('async function maneuverBelongsToStudentActiveProgram')
+      && trainingDbSrc.includes('JOIN training_programs tp ON tp.id = st.program_id AND tp.source = st.source')
+      && trainingDbSrc.includes("st.status = 'active'")
+      && trainingDbSrc.includes('Maneuver is not part of the student active training program'),
+    'training progress writes must validate maneuver membership in the active student program'
+  );
+
+  const trainingRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'training.js'), 'utf8');
+  assert(
+    trainingRouteSrc.includes('trainingDb.maneuverBelongsToStudentActiveProgram(studentId, maneuverId)')
+      && trainingRouteSrc.includes('if (err.status) return res.status(err.status).json({ error: err.message })'),
+    'training progress routes must reject unrelated maneuvers with a client error'
+  );
+}
+
+function testStagingQaFixturesUseCurrentSource() {
+  const fullBetaSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'full-beta-qa.js'), 'utf8');
+  const userFlowSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'user-flow-e2e.js'), 'utf8');
+  assert(
+    fullBetaSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && !fullBetaSrc.includes("'production')\n    RETURNING id")
+      && fullBetaSrc.includes('getAppEnv()')
+      && userFlowSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && !userFlowSrc.includes("COALESCE((SELECT source FROM bookings LIMIT 1), 'production')")
+      && userFlowSrc.includes('getAppEnv()'),
+    'direct booking QA fixtures must use the current APP_ENV source'
+  );
+
+  const setupLocalSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'setup-local.js'), 'utf8');
+  const seedUsersSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'seed-test-users.js'), 'utf8');
+  const bootstrapSchema = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'bootstrap-schema.sql'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'schema-patches.sql'), 'utf8');
+  assert(
+    setupLocalSrc.includes('SELECT COUNT(*) AS cnt FROM aircraft WHERE source = $1')
+      && setupLocalSrc.includes('APP_ENV=${getAppEnv()}')
+      && seedUsersSrc.includes('SELECT COUNT(*) AS cnt FROM aircraft WHERE source = $1')
+      && seedUsersSrc.includes('current_tach, source)')
+      && setupLocalSrc.includes('ON CONFLICT (tail_number, source) DO NOTHING')
+      && seedUsersSrc.includes('ON CONFLICT (tail_number, source) DO NOTHING')
+      && bootstrapSchema.includes('aircraft_tail_number_source_unique')
+      && schemaPatches.includes('aircraft_tail_number_source_unique'),
+    'local setup, QA seeding, and aircraft schema must allow sample fleet data per source'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1173,6 +1262,9 @@ async function main() {
   testDelayedAuditSourceAndMeterGuards();
   testStartupSeedersStaySourceScoped();
   testDelayedAuditFixesRemainInPlace();
+  testOwnerAndSensitiveDataGuards();
+  testTrainingProgressIntegrityGuards();
+  testStagingQaFixturesUseCurrentSource();
   console.log('critical bug regressions passed');
 }
 

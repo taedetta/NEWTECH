@@ -192,8 +192,8 @@ router.post('/invite', authenticateToken, async (req, res) => {
       }
     }
     const existing = await pool.query(
-      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
-      [email]
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2',
+      [email, getAppEnv()]
     );
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'An account with this email already exists' });
@@ -263,8 +263,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [req.user.id, getAppEnv()]
     );
     const requesterRole = requesterResult.rows[0]?.role;
-    if (target.role === 'owner' && !['owner', 'admin'].includes(requesterRole)) {
-      return res.status(403).json({ error: 'Only owners and admins can remove owner accounts' });
+    if (target.role === 'owner' && requesterRole !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can remove owner accounts' });
     }
     const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
     const allowed = ['owner', 'admin'].includes(requesterRole) ||
@@ -272,6 +272,16 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       (target.role === 'student' && requesterPerms.can_manage_students);
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to remove this user' });
     await client.query('BEGIN');
+    if (target.role === 'owner') {
+      const ownerCount = await client.query(
+        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
+        [getAppEnv()]
+      );
+      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      }
+    }
     const futureBookings = await client.query(
       `SELECT COUNT(*) FROM bookings
        WHERE (student_id = $1 OR instructor_id = $1)
@@ -458,6 +468,9 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     }
     if (target.role === role) {
       return res.json({ ok: true, id: targetId, role, unchanged: true });
+    }
+    if (target.role === 'owner' && role !== 'owner' && requester.rows[0].role !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can revoke owner access' });
     }
     // Protect last owner
     if (target.role === 'owner' && role !== 'owner') {

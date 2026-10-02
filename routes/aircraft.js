@@ -386,7 +386,7 @@ router.get('/document-types', authenticateToken, (req, res) => {
   res.json({ types: aircraftDocsDb.DOC_TYPES, labels: aircraftDocsDb.DOC_LABELS });
 });
 
-router.get('/:id/documents', authenticateToken, async (req, res) => {
+router.get('/:id/documents', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const aircraftId = parseInt(req.params.id, 10);
     if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });

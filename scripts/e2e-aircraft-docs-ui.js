@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Browser E2E: Fleet Docs button opens modal for each role.
+ * Browser E2E: Fleet Docs button opens only for roles with aircraft document access.
  * Usage: QA_BASE=http://localhost:3000 node scripts/e2e-aircraft-docs-ui.js
  */
 const { chromium } = require('playwright');
@@ -10,11 +10,11 @@ const BASE = process.env.QA_BASE || 'http://localhost:3000';
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 
 const ROLES = [
-  { email: 'qa-admin@test.local', role: 'admin', canUpload: true },
-  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false },
-  { email: 'qa-student@test.local', role: 'student', canUpload: false },
-  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false },
-  { email: 'qa-renter@test.local', role: 'renter', canUpload: false },
+  { email: 'qa-admin@test.local', role: 'admin', canUpload: true, canViewDocs: true },
+  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false, canViewDocs: true },
+  { email: 'qa-student@test.local', role: 'student', canUpload: false, canViewDocs: false },
+  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false, canViewDocs: true },
+  { email: 'qa-renter@test.local', role: 'renter', canUpload: false, canViewDocs: false },
 ];
 
 const failures = [];
@@ -48,6 +48,13 @@ async function openFleetDocs(page) {
   const hidden = await modal.evaluate((el) => el.classList.contains('hidden'));
   ok('modal visible after click', !hidden, hidden ? 'still hidden' : '');
   return modal;
+}
+
+async function assertFleetDocsHidden(page, role) {
+  await page.click('[data-page="fleet"]');
+  await page.waitForSelector('#fleet-table tr', { timeout: 10000 });
+  const docsBtn = page.locator('#fleet-table [data-aircraft-docs-id]').first();
+  ok(`${role} docs button hidden`, (await docsBtn.count()) === 0);
 }
 
 async function main() {
@@ -101,6 +108,10 @@ async function main() {
     await page.evaluate(() => { localStorage.removeItem('fs_token'); location.reload(); });
     await page.waitForTimeout(500);
     await login(page, user.email);
+    if (!user.canViewDocs) {
+      await assertFleetDocsHidden(page, user.role);
+      continue;
+    }
     await openFleetDocs(page);
     const hiddenUpload = await page.locator('#aircraft-docs-upload-wrap').evaluate((el) => el.classList.contains('hidden'));
     ok(`${user.role} upload hidden`, hiddenUpload === !user.canUpload);

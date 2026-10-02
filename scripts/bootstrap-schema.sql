@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS site_content (
 
 CREATE TABLE IF NOT EXISTS aircraft (
   id SERIAL PRIMARY KEY,
-  tail_number VARCHAR(20) UNIQUE NOT NULL,
+  tail_number VARCHAR(20) NOT NULL,
   make_model VARCHAR(100) NOT NULL,
   type VARCHAR(50) DEFAULT 'single_engine',
   year INTEGER,
@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS aircraft (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE aircraft DROP CONSTRAINT IF EXISTS aircraft_tail_number_key;
+DROP INDEX IF EXISTS aircraft_tail_number_key;
+CREATE UNIQUE INDEX IF NOT EXISTS aircraft_tail_number_source_unique ON aircraft(tail_number, source);
 
 CREATE TABLE IF NOT EXISTS bookings (
   id SERIAL PRIMARY KEY,

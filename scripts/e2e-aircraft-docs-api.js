@@ -1,19 +1,19 @@
 'use strict';
 
 /**
- * API E2E: upload aircraft document as admin, verify view for all roles.
+ * API E2E: upload aircraft document as admin, verify only fleet managers can view URLs.
  * Usage: QA_BASE=https://flightslate-staging-production.up.railway.app node scripts/e2e-aircraft-docs-api.js
  */
 const BASE = process.env.QA_BASE || 'http://localhost:3000';
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 
 const ACCOUNTS = [
-  { email: 'qa-admin@test.local', role: 'admin', canUpload: true },
-  { email: 'evaughntaemw@gmail.com', role: 'owner', canUpload: true, optional: true },
-  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false },
-  { email: 'qa-student@test.local', role: 'student', canUpload: false },
-  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false },
-  { email: 'qa-renter@test.local', role: 'renter', canUpload: false },
+  { email: 'qa-admin@test.local', role: 'admin', canUpload: true, canList: true },
+  { email: 'evaughntaemw@gmail.com', role: 'owner', canUpload: true, canList: true, optional: true },
+  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false, canList: true },
+  { email: 'qa-student@test.local', role: 'student', canUpload: false, canList: false },
+  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false, canList: true },
+  { email: 'qa-renter@test.local', role: 'renter', canUpload: false, canList: false },
 ];
 
 const failures = [];
@@ -130,13 +130,13 @@ async function main() {
       const data = await api(`/api/aircraft/${aircraftId}/documents`, { headers: auth(token) });
       const docs = data.documents || [];
       const found = docs.some((d) => d.id === docId);
-      ok(`${acct.role} can list documents`, found, `docs=${docs.length}`);
+      ok(`${acct.role} can list documents`, acct.canList && found, `docs=${docs.length}`);
       if (found) {
         const doc = docs.find((d) => d.id === docId);
         ok(`${acct.role} has file_url`, !!doc.file_url);
       }
     } catch (e) {
-      ok(`${acct.role} can list documents`, false, e.message);
+      ok(`${acct.role} document list blocked`, !acct.canList && (e.status === 403 || e.status === 401), `${e.status || ''} ${e.message}`);
     }
 
     if (!acct.canUpload) {

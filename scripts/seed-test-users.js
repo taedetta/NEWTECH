@@ -73,12 +73,13 @@ async function upsertUser(pool, user, hash) {
 }
 
 async function ensureSampleAircraft(pool) {
-  const check = await pool.query('SELECT COUNT(*) AS cnt FROM aircraft');
+  const check = await pool.query('SELECT COUNT(*) AS cnt FROM aircraft WHERE source = $1', [getAppEnv()]);
   if (parseInt(check.rows[0].cnt, 10) > 0) return;
   await pool.query(
-    `INSERT INTO aircraft (tail_number, make_model, type, status, hourly_rate, current_hobbs, current_tach)
-     VALUES ('N123QA', 'Cessna 172S', 'single_engine', 'available', 165.00, 1000.0, 950.0)
-     ON CONFLICT (tail_number) DO NOTHING`
+    `INSERT INTO aircraft (tail_number, make_model, type, status, hourly_rate, current_hobbs, current_tach, source)
+     VALUES ('N123QA', 'Cessna 172S', 'single_engine', 'available', 165.00, 1000.0, 950.0, $1)
+     ON CONFLICT (tail_number, source) DO NOTHING`,
+    [getAppEnv()]
   );
 }
 

@@ -185,6 +185,9 @@ router.post('/student-progress', authenticateToken, async (req, res) => {
     const maneuverId = parseInt(maneuver_id, 10);
     if (!Number.isFinite(studentId) || !Number.isFinite(maneuverId)) return res.status(400).json({ error: 'Invalid student or maneuver ID' });
     if (!(await canWriteStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Only assigned instructors or admins can update progress' });
+    if (!(await trainingDb.maneuverBelongsToStudentActiveProgram(studentId, maneuverId))) {
+      return res.status(400).json({ error: 'Maneuver is not part of the student active training program' });
+    }
     const validStatuses = ['not_started', 'in_progress', 'needs_review', 'proficient', 'completed'];
     const s = validStatuses.includes(status) ? status : 'in_progress';
     const result = await pool.query(
@@ -694,6 +697,7 @@ router.put('/maneuver-progress', authenticateToken, async (req, res) => {
     const result = await trainingDb.upsertManeuverProgress(studentId, maneuverId, status);
     res.json(result);
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('[training] PUT /maneuver-progress error:', err.message);
     res.status(500).json({ error: 'Failed to update maneuver progress' });
   }
