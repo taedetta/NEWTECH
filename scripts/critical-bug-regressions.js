@@ -108,50 +108,75 @@ async function testUnsubscribeRouteDoesNotMutateOnGetAndBindsType() {
 }
 
 async function testRequiredEmailTypesCannotBeSuppressed() {
-  const {
-    appendUnsubscribeFooter,
-    getPreferenceCatalog,
-    shouldSendEmail,
-  } = require('../lib/notification-prefs');
-  const { rowToPrefs, updatePrefs } = require('../db/notification-prefs');
-  const { signUnsubscribeToken, verifyUnsubscribeToken, buildUnsubscribeUrl } = require('../lib/unsubscribe-token');
+  const dbIndexPath = require.resolve('../db/index');
+  const dbPrefsPath = require.resolve('../db/notification-prefs');
+  const notificationPrefsPath = require.resolve('../lib/notification-prefs');
+  const originalDbIndexCache = require.cache[dbIndexPath];
+  const originalDbPrefsCache = require.cache[dbPrefsPath];
+  const originalNotificationPrefsCache = require.cache[notificationPrefsPath];
 
-  const requiredToken = signUnsubscribeToken(77, 'password_reset');
-  assert.strictEqual(verifyUnsubscribeToken(requiredToken, 'password_reset'), null, 'required email tokens are not type-unsubscribable');
-  assert.match(buildUnsubscribeUrl(77, 'password_reset'), /type=all$/, 'required email types must not generate type opt-out URLs');
-
-  const withFooter = appendUnsubscribeFooter('<body>Hello</body>', 'Hello', 77, 'password_reset');
-  assert.strictEqual(withFooter.html, '<body>Hello</body>');
-  assert.strictEqual(withFooter.text, 'Hello');
-
-  const categories = getPreferenceCatalog('owner', true);
-  const visibleTypes = categories.flatMap((cat) => cat.types.map((type) => type.key));
-  assert(!visibleTypes.includes('password_reset'));
-  assert(!visibleTypes.includes('profile_change'));
-  assert(visibleTypes.includes('booking_confirmation'));
-
-  const prefs = rowToPrefs({ email_all_off: true, password_reset: false, profile_change: false });
-  assert.strictEqual(prefs.password_reset, true);
-  assert.strictEqual(prefs.profile_change, true);
-
-  const dbCalls = [];
-  const fakeDb = {
-    async query(sql, params) {
-      dbCalls.push({ sql, params });
-      if (/SELECT \* FROM user_email_preferences/.test(sql)) {
-        return { rows: [{ user_id: 77, email_all_off: true, password_reset: false, booking_confirmation: true }] };
-      }
-      return { rows: [] };
-    },
+  require.cache[dbIndexPath] = {
+    id: dbIndexPath,
+    filename: dbIndexPath,
+    loaded: true,
+    exports: { query: async () => ({ rows: [] }) },
   };
-  const updated = await updatePrefs(77, { password_reset: false, booking_confirmation: false }, fakeDb);
-  const updateCall = dbCalls.find((call) => /^UPDATE user_email_preferences SET/.test(call.sql));
-  assert(updateCall, 'optional preference update should still run');
-  assert(!/password_reset/.test(updateCall.sql), 'required preference columns must not be updated');
-  assert(/booking_confirmation/.test(updateCall.sql));
-  assert.strictEqual(updated.password_reset, true);
+  delete require.cache[dbPrefsPath];
+  delete require.cache[notificationPrefsPath];
 
-  assert.strictEqual(await shouldSendEmail(77, 'password_reset'), true);
+  try {
+    const {
+      appendUnsubscribeFooter,
+      getPreferenceCatalog,
+      shouldSendEmail,
+    } = require('../lib/notification-prefs');
+    const { rowToPrefs, updatePrefs } = require('../db/notification-prefs');
+    const { signUnsubscribeToken, verifyUnsubscribeToken, buildUnsubscribeUrl } = require('../lib/unsubscribe-token');
+
+    const requiredToken = signUnsubscribeToken(77, 'password_reset');
+    assert.strictEqual(verifyUnsubscribeToken(requiredToken, 'password_reset'), null, 'required email tokens are not type-unsubscribable');
+    assert.match(buildUnsubscribeUrl(77, 'password_reset'), /type=all$/, 'required email types must not generate type opt-out URLs');
+
+    const withFooter = appendUnsubscribeFooter('<body>Hello</body>', 'Hello', 77, 'password_reset');
+    assert.strictEqual(withFooter.html, '<body>Hello</body>');
+    assert.strictEqual(withFooter.text, 'Hello');
+
+    const categories = getPreferenceCatalog('owner', true);
+    const visibleTypes = categories.flatMap((cat) => cat.types.map((type) => type.key));
+    assert(!visibleTypes.includes('password_reset'));
+    assert(!visibleTypes.includes('profile_change'));
+    assert(visibleTypes.includes('booking_confirmation'));
+
+    const prefs = rowToPrefs({ email_all_off: true, password_reset: false, profile_change: false });
+    assert.strictEqual(prefs.password_reset, true);
+    assert.strictEqual(prefs.profile_change, true);
+
+    const dbCalls = [];
+    const fakeDb = {
+      async query(sql, params) {
+        dbCalls.push({ sql, params });
+        if (/SELECT \* FROM user_email_preferences/.test(sql)) {
+          return { rows: [{ user_id: 77, email_all_off: true, password_reset: false, booking_confirmation: true }] };
+        }
+        return { rows: [] };
+      },
+    };
+    const updated = await updatePrefs(77, { password_reset: false, booking_confirmation: false }, fakeDb);
+    const updateCall = dbCalls.find((call) => /^UPDATE user_email_preferences SET/.test(call.sql));
+    assert(updateCall, 'optional preference update should still run');
+    assert(!/password_reset/.test(updateCall.sql), 'required preference columns must not be updated');
+    assert(/booking_confirmation/.test(updateCall.sql));
+    assert.strictEqual(updated.password_reset, true);
+
+    assert.strictEqual(await shouldSendEmail(77, 'password_reset'), true);
+  } finally {
+    if (originalDbIndexCache) require.cache[dbIndexPath] = originalDbIndexCache;
+    else delete require.cache[dbIndexPath];
+    if (originalDbPrefsCache) require.cache[dbPrefsPath] = originalDbPrefsCache;
+    else delete require.cache[dbPrefsPath];
+    if (originalNotificationPrefsCache) require.cache[notificationPrefsPath] = originalNotificationPrefsCache;
+    else delete require.cache[notificationPrefsPath];
+  }
 }
 
 (async () => {
