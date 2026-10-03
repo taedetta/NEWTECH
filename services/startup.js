@@ -11,6 +11,7 @@ const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
 const { getPlatformAdminEmail } = require('../lib/platform-admin');
 const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
+const { getAppEnv } = require('../lib/app-env');
 
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
@@ -60,14 +61,19 @@ async function ensureDatabaseSchema(pool) {
     // Create default admin account if no users exist
     const users = await pool.query('SELECT COUNT(*) AS cnt FROM users');
     if (parseInt(users.rows[0].cnt, 10) === 0) {
-      const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL || 'evaughntaemw@gmail.com';
-      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
+      const email = process.env.ADMIN_EMAIL || process.env.OWNER_EMAIL;
+      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD;
+      if (!email || !pass) {
+        console.warn('[bootstrap] No users exist; set ADMIN_EMAIL and ADMIN_PASSWORD (or OWNER_EMAIL/OWNER_PASSWORD) to create the first admin.');
+        return;
+      }
+      const source = getAppEnv();
       const hash = await bcrypt.hash(pass, 12);
       const inserted = await pool.query(
-        `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor)
-         VALUES ($1, $2, $3, 'admin', 'approved', TRUE)
+        `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor, source)
+         VALUES ($1, $2, $3, 'admin', 'approved', TRUE, $4)
          RETURNING id`,
-        [email.toLowerCase(), 'Evaughntae White', hash]
+        [email.toLowerCase(), process.env.ADMIN_NAME || process.env.OWNER_NAME || 'Administrator', hash, source]
       );
       await pool.query(
         `INSERT INTO user_permissions (user_id, can_manage_aircraft, can_manage_instructors, can_manage_permissions, can_manage_students, can_edit_website)
@@ -135,26 +141,40 @@ async function ensureUserIdSequence(pool) {
 
 async function ensureDefaultAdminAccount(pool) {
   const email = getPlatformAdminEmail();
+  const source = getAppEnv();
   try {
     const existing = await pool.query(
-      'SELECT id, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
-      [email]
+      'SELECT id, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2',
+      [email, source]
     );
-    if (existing.rows.length === 0) return;
+    if (existing.rows.length === 0) {
+      const pass = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD;
+      if (!pass) return;
+      const hash = await bcrypt.hash(pass, 12);
+      const inserted = await pool.query(
+        `INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor, source)
+         VALUES ($1, $2, $3, 'admin', 'approved', TRUE, $4)
+         RETURNING id`,
+        [email.toLowerCase(), process.env.ADMIN_NAME || process.env.OWNER_NAME || 'Administrator', hash, source]
+      );
+      await upsertFullUserPermissions(pool, inserted.rows[0].id);
+      console.log(`[bootstrap] Created ${source} platform admin account: ${email}`);
+      return;
+    }
 
     const userId = existing.rows[0].id;
     if (existing.rows[0].role !== 'admin') {
       await pool.query(
         `UPDATE users SET role = 'admin', is_instructor = TRUE, approval_status = 'approved', updated_at = NOW()
-         WHERE id = $1`,
-        [userId]
+         WHERE id = $1 AND source = $2`,
+        [userId, source]
       );
       console.log(`[bootstrap] Platform admin ${email} set to admin/instructor (not owner label)`);
     } else {
       await pool.query(
         `UPDATE users SET is_instructor = TRUE, approval_status = 'approved', updated_at = NOW()
-         WHERE id = $1 AND (is_instructor IS NOT TRUE OR approval_status != 'approved')`,
-        [userId]
+         WHERE id = $1 AND source = $2 AND (is_instructor IS NOT TRUE OR approval_status != 'approved')`,
+        [userId, source]
       );
     }
 
@@ -193,7 +213,8 @@ async function migrateDataUriImagesToR2Inline(pool) {
 
 async function ensureTrainingPrograms(pool) {
   try {
-    const check = await pool.query('SELECT COUNT(*) as cnt FROM training_programs');
+    const source = getAppEnv();
+    const check = await pool.query('SELECT COUNT(*) as cnt FROM training_programs WHERE source = $1', [source]);
     if (parseInt(check.rows[0].cnt) === 0) {
       console.log('Seeding training programs...');
       const programs = [
@@ -202,8 +223,16 @@ async function ensureTrainingPrograms(pool) {
         { name: 'Commercial Pilot License', code: 'CPL', description: 'FAA Commercial Pilot Certificate', stages: ['Complex Aircraft Transition','Commercial Maneuvers','Commercial Cross-Country','Night Commercial Training','High Altitude & Oxygen','Checkride Prep','Checkride'] },
       ];
       for (const p of programs) {
-        const r = await pool.query(`INSERT INTO training_programs (name, code, description) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING RETURNING id`, [p.name, p.code, p.description]);
-        const pid = r.rows.length > 0 ? r.rows[0].id : (await pool.query(`SELECT id FROM training_programs WHERE code = $1`, [p.code])).rows[0].id;
+        const r = await pool.query(
+          `INSERT INTO training_programs (name, code, description, source)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (code, source) DO NOTHING
+           RETURNING id`,
+          [p.name, p.code, p.description, source]
+        );
+        const pid = r.rows.length > 0
+          ? r.rows[0].id
+          : (await pool.query(`SELECT id FROM training_programs WHERE code = $1 AND source = $2`, [p.code, source])).rows[0].id;
         for (let i = 0; i < p.stages.length; i++) {
           await pool.query(`INSERT INTO program_stages (program_id, name, order_index) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [pid, p.stages[i], i + 1]);
         }
@@ -245,7 +274,8 @@ async function rehydrateFileOverrides(pool) {
     }
 
     const result = await pool.query(
-      'SELECT file_path, content, updated_at FROM file_overrides ORDER BY updated_at ASC'
+      'SELECT file_path, content, updated_at FROM file_overrides WHERE source = $1 ORDER BY updated_at ASC',
+      [getAppEnv()]
     );
     if (result.rows.length === 0) {
       console.log('[file-overrides] No overrides to rehydrate');
