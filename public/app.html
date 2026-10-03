@@ -11904,6 +11904,30 @@ function closeAircraftDocsModal() {
   _aircraftDocsAircraftId = null;
 }
 
+async function viewProtectedAircraftDocument(event, url, fileName) {
+  if (event) event.preventDefault();
+  try {
+    var authToken = token || localStorage.getItem('fs_token') || '';
+    var res = await fetch(url, { headers: { Authorization: 'Bearer ' + authToken } });
+    if (!res.ok) throw new Error('Download failed (' + res.status + ')');
+    var blob = await res.blob();
+    var objectUrl = URL.createObjectURL(blob);
+    var opened = window.open(objectUrl, '_blank', 'noopener');
+    if (!opened) {
+      var a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = fileName || 'aircraft-document';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    setTimeout(function() { URL.revokeObjectURL(objectUrl); }, 60000);
+  } catch (err) {
+    showToast(err.message || 'Failed to open document', 'error');
+  }
+  return false;
+}
+
 async function loadAircraftDocsList() {
   var loading = document.getElementById('aircraft-docs-loading');
   var empty = document.getElementById('aircraft-docs-empty');
@@ -11928,7 +11952,7 @@ async function loadAircraftDocsList() {
       var title = d.title || d.file_name || 'Document';
       var dateStr = d.created_at ? new Date(d.created_at).toLocaleDateString() : '—';
       var expStr = d.expiry_date ? new Date(d.expiry_date + 'T12:00:00').toLocaleDateString() : '—';
-      var view = d.file_url ? '<a href="' + escHtml(d.file_url) + '" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">View</a>' : '—';
+      var view = d.file_url ? '<a href="' + escHtml(d.file_url) + '" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" data-file-url="' + escHtml(d.file_url) + '" data-file-name="' + escHtml(title) + '" onclick="return viewProtectedAircraftDocument(event, this.dataset.fileUrl, this.dataset.fileName)">View</a>' : '—';
       var del = canDelete ? ' <button type="button" class="btn btn-danger btn-sm" onclick="deleteAircraftDocument(' + d.id + ')">Delete</button>' : '';
       return '<div class="pwa-device-card" style="margin-bottom:0.65rem;padding:0.85rem 1rem;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:0.75rem">' +
         '<div style="min-width:0;flex:1">' +

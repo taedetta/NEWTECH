@@ -3,7 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
-const { uploadBuffer } = require('../lib/r2-storage');
+const { uploadBuffer, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
 const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
 const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
@@ -19,6 +19,28 @@ function parseOptionalNumber(value, fieldName, { max = 99999 } = {}) {
   if (!Number.isFinite(num)) return { error: `${fieldName} must be a valid number` };
   if (num > max) return { error: `${fieldName} exceeds maximum allowed value` };
   return { value: num };
+}
+
+function protectedAircraftDocument(doc, aircraftId = doc && doc.aircraft_id) {
+  if (!doc) return doc;
+  return {
+    ...doc,
+    file_url: doc.file_url ? `/api/aircraft/${aircraftId}/documents/${doc.id}/file` : null,
+  };
+}
+
+function safeDownloadName(name) {
+  return String(name || 'aircraft-document').replace(/[\r\n"]/g, '_');
+}
+
+async function sendStoredAircraftDocument(res, doc) {
+  if (!doc.file_url) return res.status(404).json({ error: 'Document file not found' });
+  const file = await downloadStoredFile(doc.file_url, doc.file_name);
+  if (!file) return res.status(404).json({ error: 'Document file not found' });
+  res.setHeader('Content-Type', file.contentType || guessContentType(doc.file_name || 'document'));
+  res.setHeader('Content-Disposition', `inline; filename="${safeDownloadName(doc.file_name)}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(file.buffer);
 }
 
 router.get('/', authenticateToken, async (req, res) => {
@@ -392,7 +414,8 @@ router.get('/:id/documents', authenticateToken, requirePermission('can_manage_ai
     if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
     const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
     if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
-    const documents = await aircraftDocsDb.listByAircraft(aircraftId);
+    const documents = (await aircraftDocsDb.listByAircraft(aircraftId))
+      .map((doc) => protectedAircraftDocument(doc, aircraftId));
     res.json({ aircraft: ac.rows[0], documents, labels: aircraftDocsDb.DOC_LABELS });
   } catch (err) {
     console.error('[aircraft-docs] list:', err.message);
@@ -437,10 +460,29 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
       uploadedBy: req.user.id,
     });
 
-    res.status(201).json({ document: doc });
+    res.status(201).json({ document: protectedAircraftDocument(doc, aircraftId) });
   } catch (err) {
     console.error('[aircraft-docs] create:', err.message);
     res.status(500).json({ error: 'Failed to save document' });
+  }
+});
+
+router.get('/:id/documents/:docId/file', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
+  try {
+    const aircraftId = parseInt(req.params.id, 10);
+    const docId = parseInt(req.params.docId, 10);
+    if (!Number.isFinite(aircraftId) || !Number.isFinite(docId)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
+    const documents = await aircraftDocsDb.listByAircraft(aircraftId);
+    const doc = documents.find((row) => row.id === docId);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    return sendStoredAircraftDocument(res, doc);
+  } catch (err) {
+    console.error('[aircraft-docs] download:', err.message);
+    return res.status(500).json({ error: 'Failed to download document' });
   }
 });
 
@@ -455,7 +497,7 @@ router.delete('/:id/documents/:docId', authenticateToken, requireRole('owner', '
     if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const doc = await aircraftDocsDb.deleteDocument(docId, aircraftId);
     if (!doc) return res.status(404).json({ error: 'Document not found' });
-    res.json({ ok: true, document: doc });
+    res.json({ ok: true, document: protectedAircraftDocument(doc, aircraftId) });
   } catch (err) {
     console.error('[aircraft-docs] delete:', err.message);
     res.status(500).json({ error: 'Failed to delete document' });

@@ -98,8 +98,11 @@ async function main() {
   const viewLink = page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).first();
   ok('admin sees View link after upload', (await viewLink.count()) > 0);
   const viewHref = await viewLink.getAttribute('href');
-  ok('View link has URL', !!viewHref && viewHref.startsWith('http'));
-  const viewRes = await page.request.get(viewHref);
+  ok('View link has protected URL', !!viewHref && viewHref.includes('/api/aircraft/'));
+  const adminToken = await page.evaluate(() => localStorage.getItem('fs_token'));
+  const viewRes = await page.request.get(new URL(viewHref, BASE).toString(), {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
   ok('View URL returns PDF', viewRes.ok(), `status=${viewRes.status()}`);
   await page.locator('#aircraft-docs-modal .modal').locator('button.btn-secondary', { hasText: 'Close' }).click().catch(() => {});
 
@@ -118,7 +121,10 @@ async function main() {
     ok(`${user.role} sees uploaded doc`, (await page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).count()) > 0);
     const roleView = page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).first();
     const roleHref = await roleView.getAttribute('href');
-    const roleRes = await page.request.get(roleHref);
+    const roleToken = await page.evaluate(() => localStorage.getItem('fs_token'));
+    const roleRes = await page.request.get(new URL(roleHref, BASE).toString(), {
+      headers: { Authorization: `Bearer ${roleToken}` },
+    });
     ok(`${user.role} can fetch document`, roleRes.ok(), `status=${roleRes.status()}`);
     await page.locator('#aircraft-docs-modal').evaluate((el) => el.classList.add('hidden')).catch(() => {});
   }

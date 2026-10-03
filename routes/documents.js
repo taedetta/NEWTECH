@@ -3,7 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const documentsDb = require('../db/documents');
-const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
+const { uploadBuffer, isConfigured, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const { getAppEnv } = require('../lib/app-env');
 
@@ -13,6 +13,28 @@ function parseId(value) {
   if (!/^\d+$/.test(String(value))) return null;
   const id = Number(value);
   return Number.isFinite(id) ? id : null;
+}
+
+function protectedDocument(doc) {
+  if (!doc) return doc;
+  return {
+    ...doc,
+    file_url: doc.file_url ? `/api/documents/${doc.id}/file` : null,
+  };
+}
+
+function safeDownloadName(name) {
+  return String(name || 'document').replace(/[\r\n"]/g, '_');
+}
+
+async function sendStoredDocument(res, doc) {
+  if (!doc.file_url) return res.status(404).json({ error: 'Document file not found' });
+  const file = await downloadStoredFile(doc.file_url, doc.file_name);
+  if (!file) return res.status(404).json({ error: 'Document file not found' });
+  res.setHeader('Content-Type', file.contentType || guessContentType(doc.file_name || 'document'));
+  res.setHeader('Content-Disposition', `inline; filename="${safeDownloadName(doc.file_name)}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(file.buffer);
 }
 
 async function canManageStudentDocuments(user, studentId) {
@@ -45,7 +67,7 @@ router.get('/student/:studentId', authenticateToken, requireRole('owner', 'admin
     if (!(await canManageStudentDocuments(req.user, studentId))) {
       return res.status(403).json({ error: 'Only assigned instructors or admins can manage student documents' });
     }
-    const documents = await documentsDb.listDocuments(studentId);
+    const documents = (await documentsDb.listDocuments(studentId)).map(protectedDocument);
     res.json({ documents });
   } catch (err) {
     console.error('[documents] list:', err.message);
@@ -95,10 +117,32 @@ router.post('/student/:studentId', authenticateToken, requireRole('owner', 'admi
       );
     }
 
-    res.status(201).json({ document: doc });
+    res.status(201).json({ document: protectedDocument(doc) });
   } catch (err) {
     console.error('[documents] create:', err.message);
     res.status(500).json({ error: 'Failed to save document' });
+  }
+});
+
+router.get('/:docId/file', authenticateToken, requireRole('owner', 'admin', 'instructor'), async (req, res) => {
+  try {
+    const docId = parseId(req.params.docId);
+    if (!docId) return res.status(400).json({ error: 'Invalid document id' });
+    const existing = await pool.query(
+      `SELECT d.*
+       FROM student_documents d
+       JOIN users u ON u.id = d.student_id
+       WHERE d.id = $1 AND u.source = $2`,
+      [docId, getAppEnv()]
+    );
+    if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!(await canManageStudentDocuments(req.user, existing.rows[0].student_id))) {
+      return res.status(403).json({ error: 'Only assigned instructors or admins can view student documents' });
+    }
+    return sendStoredDocument(res, existing.rows[0]);
+  } catch (err) {
+    console.error('[documents] download:', err.message);
+    return res.status(500).json({ error: 'Failed to download document' });
   }
 });
 
@@ -118,7 +162,7 @@ router.delete('/:docId', authenticateToken, requireRole('owner', 'admin', 'instr
       return res.status(403).json({ error: 'Only assigned instructors or admins can manage student documents' });
     }
     const doc = await documentsDb.deleteDocument(docId, existing.rows[0].student_id);
-    res.json({ ok: true, document: doc });
+    res.json({ ok: true, document: protectedDocument(doc) });
   } catch (err) {
     console.error('[documents] delete:', err.message);
     res.status(500).json({ error: 'Failed to delete document' });
@@ -128,7 +172,7 @@ router.delete('/:docId', authenticateToken, requireRole('owner', 'admin', 'instr
 router.get('/expiring', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   try {
     const days = parseInt(req.query.days, 10) || 30;
-    const documents = await documentsDb.getExpiringDocuments(days);
+    const documents = (await documentsDb.getExpiringDocuments(days)).map(protectedDocument);
     res.json({ documents });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load expiring documents' });

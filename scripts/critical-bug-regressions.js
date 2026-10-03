@@ -997,7 +997,8 @@ function testDelayedAuditSourceAndMeterGuards() {
       && bookingRoutesSrc.includes('Instructor not found in this environment')
       && historySrc.includes('SELECT hourly_rate FROM aircraft WHERE id = $1 AND source = $2')
       && instructorHoursSrc.includes('SELECT id FROM aircraft WHERE id = $1 AND source = $2')
-      && instructorHoursSrc.includes('SELECT id FROM bookings WHERE id = $1 AND source = $2')
+      && (instructorHoursSrc.includes('SELECT id FROM bookings WHERE id = $1 AND source = $2')
+        || instructorHoursSrc.includes('SELECT id, instructor_id FROM bookings WHERE id = $1 AND source = $2'))
       && instructorHoursSrc.includes('SELECT id, tail_number, make_model, hourly_rate FROM aircraft WHERE source = $1 ORDER BY tail_number'),
     'booking create, manual history, and instructor-hours entity lookups must reject cross-source IDs'
   );
@@ -1229,6 +1230,45 @@ function testStagingQaFixturesUseCurrentSource() {
   );
 }
 
+function testProtectedDocumentDownloadsAndInstructorHoursBookingGuard() {
+  const documentsRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'documents.js'), 'utf8');
+  const aircraftRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
+  const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+
+  assert(
+    documentsRoute.includes("router.get('/:docId/file'")
+      && documentsRoute.includes('downloadStoredFile(doc.file_url, doc.file_name)')
+      && documentsRoute.includes('protectedDocument(doc)')
+      && documentsRoute.includes("file_url: doc.file_url ? `/api/documents/${doc.id}/file` : null"),
+    'student document APIs must return protected file routes instead of raw storage URLs'
+  );
+
+  assert(
+    aircraftRoute.includes("router.get('/:id/documents/:docId/file'")
+      && aircraftRoute.includes('downloadStoredFile(doc.file_url, doc.file_name)')
+      && aircraftRoute.includes('protectedAircraftDocument(doc, aircraftId)')
+      && aircraftRoute.includes("file_url: doc.file_url ? `/api/aircraft/${aircraftId}/documents/${doc.id}/file` : null"),
+    'aircraft document APIs must return protected file routes instead of raw storage URLs'
+  );
+
+  assert(
+    serverSrc.includes('protectedDocPath')
+      && serverSrc.includes('student-docs|aircraft-docs')
+      && appSrc.includes('viewProtectedAircraftDocument(event, url, fileName)')
+      && appSrc.includes("Authorization: 'Bearer ' + authToken"),
+    'local document uploads and Fleet document viewing must go through authenticated download paths'
+  );
+
+  assert(
+    instructorHoursSrc.includes('pg_advisory_xact_lock(719601, $1)')
+      && instructorHoursSrc.includes('SELECT id, instructor_id FROM bookings WHERE id = $1 AND source = $2')
+      && instructorHoursSrc.includes('Instructor hours must be logged for the booking assigned instructor'),
+    'linked instructor-hours creation must lock by booking and require the assigned instructor'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1265,6 +1305,7 @@ async function main() {
   testOwnerAndSensitiveDataGuards();
   testTrainingProgressIntegrityGuards();
   testStagingQaFixturesUseCurrentSource();
+  testProtectedDocumentDownloadsAndInstructorHoursBookingGuard();
   console.log('critical bug regressions passed');
 }
 

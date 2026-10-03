@@ -102,62 +102,89 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
     const entryDate = entry_date || new Date().toISOString().slice(0, 10);
     const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
-    if (parsedBookingId && !isNaN(parsedBookingId)) {
-      const bookingCheck = await pool.query(
-        'SELECT id FROM bookings WHERE id = $1 AND source = $2',
-        [parsedBookingId, getAppEnv()]
-      );
-      if (bookingCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Booking not found in this environment' });
-      }
-      const bookingDup = await pool.query(
-        'SELECT id FROM instructor_hours WHERE booking_id = $1 AND source = $2 LIMIT 1',
-        [parsedBookingId, getAppEnv()]
-      );
-      if (bookingDup.rows.length > 0) {
-        return res.status(409).json({ error: 'Instructor hours already exist for this booking. Edit the existing linked entry instead.' });
-      }
-    }
-    const dup = await pool.query(
-      `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
-       AND aircraft_id IS NOT DISTINCT FROM $3 AND ABS(instruction_hours - $4) < 0.01
-       AND source = $5 LIMIT 1`,
-      [instructorId, entryDate, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null, parsedInstrHours.value, getAppEnv()]
-    );
-    if (dup.rows.length > 0) {
-      return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
-    }
+    const linkedBookingId = parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null;
     const acHrsVal = parsedAcHours.value || 0;
     const instrHrsVal = parsedInstrHours.value;
-    const audit = await auditInstructorHoursEntry({
-      instructorId,
-      entryDate,
-      aircraftId: (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
-      aircraftHours: acHrsVal,
-      instructionHours: instrHrsVal,
-      studentName: student_name || null,
-      bookingId: parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
-    });
+    const aircraftIdForEntry = (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null;
+    const client = await pool.connect();
+    let entry;
+    let audit;
+    try {
+      await client.query('BEGIN');
+      if (linkedBookingId) {
+        // Serialize same-booking manual inserts across app instances before duplicate checks.
+        await client.query('SELECT pg_advisory_xact_lock(719601, $1)', [linkedBookingId]);
+        const bookingCheck = await client.query(
+          'SELECT id, instructor_id FROM bookings WHERE id = $1 AND source = $2',
+          [linkedBookingId, getAppEnv()]
+        );
+        if (bookingCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Booking not found in this environment' });
+        }
+        if (!bookingCheck.rows[0].instructor_id) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Linked booking has no assigned instructor' });
+        }
+        if (Number(bookingCheck.rows[0].instructor_id) !== Number(instructorId)) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Instructor hours must be logged for the booking assigned instructor' });
+        }
+        const bookingDup = await client.query(
+          'SELECT id FROM instructor_hours WHERE booking_id = $1 AND source = $2 LIMIT 1',
+          [linkedBookingId, getAppEnv()]
+        );
+        if (bookingDup.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Instructor hours already exist for this booking. Edit the existing linked entry instead.' });
+        }
+      }
+      const dup = await client.query(
+        `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
+         AND aircraft_id IS NOT DISTINCT FROM $3 AND ABS(instruction_hours - $4) < 0.01
+         AND source = $5 LIMIT 1`,
+        [instructorId, entryDate, aircraftIdForEntry, instrHrsVal, getAppEnv()]
+      );
+      if (dup.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
+      }
+      audit = await auditInstructorHoursEntry({
+        instructorId,
+        entryDate,
+        aircraftId: aircraftIdForEntry,
+        aircraftHours: acHrsVal,
+        instructionHours: instrHrsVal,
+        studentName: student_name || null,
+        bookingId: linkedBookingId,
+      });
 
-    const result = await pool.query(`
-      INSERT INTO instructor_hours (instructor_id, aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name, booking_id, audit_status, audit_message, source)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-      [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
-       entryDate, acHrsVal, instrHrsVal,
-       parsedAircraftRate.value,
-       parsedInstructorRate.value,
-       notes || null, student_name || null,
-       parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
-       audit.status, audit.message, getAppEnv()]
-    );
-    const entry = { ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details };
+      const result = await client.query(`
+        INSERT INTO instructor_hours (instructor_id, aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name, booking_id, audit_status, audit_message, source)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        [instructorId, aircraftIdForEntry,
+         entryDate, acHrsVal, instrHrsVal,
+         parsedAircraftRate.value,
+         parsedInstructorRate.value,
+         notes || null, student_name || null,
+         linkedBookingId,
+         audit.status, audit.message, getAppEnv()]
+      );
+      entry = { ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details };
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
 
     // If booking_id + hobbs readings provided, record for discrepancy tracking (fire-and-forget)
-    if (booking_id && hobbs_start != null && hobbs_end != null) {
+    if (linkedBookingId && hobbs_start != null && hobbs_end != null) {
       const hS = parseStrictNumber(hobbs_start, 'hobbs_start').value;
       const hE = parseStrictNumber(hobbs_end, 'hobbs_end').value;
       if (!isNaN(hS) && !isNaN(hE) && hE > hS) {
-        recordHobbsReading(parseInt(booking_id), instructorId, 'instructor', hS, hE)
+        recordHobbsReading(linkedBookingId, instructorId, 'instructor', hS, hE)
           .catch(e => console.error('[instructor-hours] hobbs reading error:', e.message));
       }
     }
