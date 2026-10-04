@@ -3,7 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const documentsDb = require('../db/documents');
-const { uploadBuffer, isConfigured, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
+const { uploadPrivateBuffer, isConfigured, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
 const { authenticateToken, requireRole, getUserPermissions } = require('../middleware/auth');
 const { getAppEnv } = require('../lib/app-env');
 
@@ -96,7 +96,7 @@ router.post('/student/:studentId', authenticateToken, requireRole('owner', 'admi
       if (buffer.length > 8 * 1024 * 1024) {
         return res.status(400).json({ error: 'File too large (max 8MB)' });
       }
-      fileUrl = await uploadBuffer(buffer, file_name, { folder: `student-docs/${studentId}` });
+      fileUrl = await uploadPrivateBuffer(buffer, file_name, { folder: `student-docs/${studentId}` });
       if (!fileUrl) return res.status(500).json({ error: 'Upload failed' });
     }
 

@@ -2,17 +2,16 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
 const { EMAIL_TYPES, getPreferenceCatalog, sendEmailToUser } = require('../lib/notification-prefs');
 const { isRequiredEmailType } = require('../lib/email-types');
 const { profileChangeEmail } = require('../email-templates');
-const { getJwtSecret } = require('../lib/jwt-secret');
+const { getAppEnv } = require('../lib/app-env');
+const { signAuthToken } = require('../lib/auth-token');
 
 const router = express.Router();
-const JWT_SECRET = getJwtSecret();
 
 function formatPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -24,8 +23,8 @@ router.get('/profile', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, email, name, role, phone_number, is_instructor
-       FROM users WHERE id = $1 AND deleted_at IS NULL`,
-      [req.user.id]
+       FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2`,
+      [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const u = result.rows[0];
@@ -49,8 +48,8 @@ router.patch('/profile', authenticateToken, async (req, res) => {
   try {
     const { name, email, phone_number } = req.body || {};
     const before = await pool.query(
-      'SELECT email, phone_number, name FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [req.user.id]
+      'SELECT email, phone_number, name FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     if (before.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const prev = before.rows[0];
@@ -72,8 +71,8 @@ router.patch('/profile', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: 'A valid email address is required' });
       }
       const dup = await pool.query(
-        'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2 AND deleted_at IS NULL',
-        [trimmed, req.user.id]
+        'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2 AND deleted_at IS NULL AND source = $3',
+        [trimmed, req.user.id, getAppEnv()]
       );
       if (dup.rows.length > 0) {
         return res.status(409).json({ error: 'An account with this email already exists' });
@@ -97,9 +96,10 @@ router.patch('/profile', authenticateToken, async (req, res) => {
 
     updates.push('updated_at = NOW()');
     vals.push(req.user.id);
+    vals.push(getAppEnv());
     const result = await pool.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = $${i} AND deleted_at IS NULL
-       RETURNING id, email, name, role, phone_number, is_instructor`,
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $${i} AND deleted_at IS NULL AND source = $${i + 1}
+       RETURNING id, email, name, role, phone_number, is_instructor, password_changed_at`,
       vals
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -107,11 +107,7 @@ router.patch('/profile', authenticateToken, async (req, res) => {
     const u = result.rows[0];
     let token = null;
     if (email !== undefined) {
-      token = jwt.sign(
-        { id: u.id, email: u.email, name: u.name, role: u.role },
-        JWT_SECRET,
-        { expiresIn: '7d' }
-      );
+      token = signAuthToken(u);
       res.cookie('token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',

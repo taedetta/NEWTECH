@@ -2,6 +2,8 @@
 -- Safe to re-run (IF NOT EXISTS / idempotent updates).
 
 -- ── Squawks ──
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
@@ -291,8 +293,15 @@ CREATE TABLE IF NOT EXISTS message_threads (
   instructor_id INTEGER NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(student_id, instructor_id)
+  source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE message_threads ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE message_threads SET source = 'production' WHERE source IS NULL;
+ALTER TABLE message_threads DROP CONSTRAINT IF EXISTS message_threads_student_id_instructor_id_key;
+DROP INDEX IF EXISTS message_threads_student_id_instructor_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS message_threads_student_instructor_source_unique
+  ON message_threads(student_id, instructor_id, source);
+CREATE INDEX IF NOT EXISTS message_threads_source_idx ON message_threads(source);
 CREATE TABLE IF NOT EXISTS messages (
   id SERIAL PRIMARY KEY,
   thread_id INTEGER NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,

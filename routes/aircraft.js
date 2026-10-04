@@ -3,7 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
-const { uploadBuffer, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
+const { uploadPrivateBuffer, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
 const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
 const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
@@ -443,7 +443,7 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
       return res.status(400).json({ error: 'File too large (max 12MB)' });
     }
 
-    const fileUrl = await uploadBuffer(buffer, file_name, {
+    const fileUrl = await uploadPrivateBuffer(buffer, file_name, {
       folder: `aircraft-docs/${aircraftId}`,
       allowLocalDevUrl: true,
     });

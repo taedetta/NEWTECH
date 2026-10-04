@@ -1269,6 +1269,67 @@ function testProtectedDocumentDownloadsAndInstructorHoursBookingGuard() {
   );
 }
 
+function testFollowUpBetaSecurityGuards() {
+  const messagesDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'messages.js'), 'utf8');
+  const authMiddlewareSrc = fs.readFileSync(path.join(__dirname, '..', 'middleware', 'auth.js'), 'utf8');
+  const authRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'auth.js'), 'utf8');
+  const authTokenSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'auth-token.js'), 'utf8');
+  const r2Src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'r2-storage.js'), 'utf8');
+  const documentsRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'documents.js'), 'utf8');
+  const aircraftRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
+  const bookingsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'bookings-routes.js'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'schema-patches.sql'), 'utf8');
+
+  assert(
+    messagesDbSrc.includes('ALTER TABLE message_threads ADD COLUMN IF NOT EXISTS source')
+      && messagesDbSrc.includes('message_threads_student_instructor_source_unique')
+      && messagesDbSrc.includes('WHERE t.id = $1 AND t.source = $2')
+      && messagesDbSrc.includes('WHERE t.source = $2')
+      && messagesDbSrc.includes('WHERE t.instructor_id = $1 AND t.source = $2')
+      && messagesDbSrc.includes('WHERE t.student_id = $1 AND t.source = $2'),
+    'message threads and reads must be source-scoped for shared production/staging databases'
+  );
+
+  assert(
+    authMiddlewareSrc.includes('password_changed_at')
+      && authMiddlewareSrc.includes('tokenMatchesPasswordVersion(decoded, user)')
+      && authRouteSrc.includes('password_changed_at = NOW()')
+      && authRouteSrc.includes('signAuthToken(user)')
+      && authTokenSrc.includes('pwd_at'),
+    'password reset must invalidate existing JWT sessions via password version claims'
+  );
+
+  assert(
+    r2Src.includes("return `r2://${encodeURIComponent(key)}`")
+      && r2Src.includes('opts.private')
+      && documentsRoute.includes('uploadPrivateBuffer(buffer, file_name')
+      && aircraftRoute.includes('uploadPrivateBuffer(buffer, file_name'),
+    'private document vault uploads must store internal R2 references rather than public URLs'
+  );
+
+  assert(
+    bookingsSrc.includes('function durationLimitError')
+      && bookingsSrc.includes('const preflight = await runPreflightChecks(client, {\n      aircraft_id: b.aircraft_id')
+      && bookingsSrc.includes('if (!preflight.ok) return { error: preflight.errors[0], errors: preflight.errors, warnings: preflight.warnings };'),
+    'duplicate and recurring booking paths must enforce duration caps and preflight checks'
+  );
+
+  assert(
+    appSrc.includes("const canDelete = ['owner', 'admin'].includes(currentUser.role);")
+      && appSrc.includes("const showEndorsements = role === 'student';")
+      && appSrc.includes('async function loadBillingForStudent(studentId, overrideData)')
+      && appSrc.includes('await loadBillingForStudent(currentUser.id, { flights, groundSessions: [] });'),
+    'role UI must hide forbidden actions/pages and render instructor billing summaries from my-activity data'
+  );
+
+  assert(
+    schemaPatches.includes('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at')
+      && schemaPatches.includes('ALTER TABLE message_threads ADD COLUMN IF NOT EXISTS source'),
+    'schema patches must provision password_changed_at and message thread source columns'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1306,6 +1367,7 @@ async function main() {
   testTrainingProgressIntegrityGuards();
   testStagingQaFixturesUseCurrentSource();
   testProtectedDocumentDownloadsAndInstructorHoursBookingGuard();
+  testFollowUpBetaSecurityGuards();
   console.log('critical bug regressions passed');
 }
 

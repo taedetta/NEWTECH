@@ -2,7 +2,6 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../db/index');
 const { authenticateToken, getUserPermissions } = require('../middleware/auth');
@@ -14,11 +13,9 @@ const { TERMS_VERSION } = require('../lib/terms');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { enforceCaptcha } = require('../lib/captcha');
-const { getJwtSecret } = require('../lib/jwt-secret');
 const { isPlatformAdminEmail } = require('../lib/platform-admin');
 const { getAppEnv } = require('../lib/app-env');
-
-const JWT_SECRET = getJwtSecret();
+const { signAuthToken } = require('../lib/auth-token');
 
 const router = express.Router();
 
@@ -166,7 +163,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     const result = await pool.query(
-      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor FROM users WHERE LOWER(email) = LOWER($1) AND source = $2',
+      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor, password_changed_at FROM users WHERE LOWER(email) = LOWER($1) AND source = $2',
       [email, getAppEnv()]
     );
     if (result.rows.length === 0) {
@@ -190,11 +187,7 @@ router.post('/login', async (req, res) => {
     if (user.approval_status && user.approval_status !== 'approved') {
       return res.status(403).json({ error: 'account_not_approved', message: 'This account is not approved.' });
     }
-    const token = jwt.sign(
-      { id: user.id, email: user.email, name: user.name, role: user.role },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const token = signAuthToken(user);
     const permissions = await getUserPermissions(user.id, user.role);
     res.cookie('token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     const response = { user: { id: user.id, email: user.email, name: user.name, role: user.role, is_instructor: !!user.is_instructor, permissions }, token };
@@ -286,7 +279,10 @@ router.post('/reset-password', async (req, res) => {
       return res.status(403).json({ error: 'This account is not active.' });
     }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND source = $3', [passwordHash, row.user_id, getAppEnv()]);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 AND source = $3',
+      [passwordHash, row.user_id, getAppEnv()]
+    );
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
     console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
@@ -301,6 +297,7 @@ router.get('/me', authenticateToken, async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.email, u.name, u.role, u.deleted_at, u.approval_status, u.is_instructor,
          u.total_hobbs_hours, u.total_tach_hours, u.phone_number,
+         u.password_changed_at,
          ip.can_manage_aircraft, ip.can_manage_instructors,
          ip.can_manage_permissions, ip.can_manage_students,
          COALESCE(ip.can_edit_website, false) as can_edit_website
@@ -323,11 +320,7 @@ router.get('/me', authenticateToken, async (req, res) => {
         };
     let freshToken = null;
     if (u.role !== req.user.role) {
-      freshToken = jwt.sign(
-        { id: u.id, email: u.email, name: u.name, role: u.role },
-        JWT_SECRET,
-        { expiresIn: '7d' }
-      );
+      freshToken = signAuthToken(u);
       res.cookie('token', freshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     }
     const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' AND source = $1 LIMIT 1", [getAppEnv()]);
@@ -363,13 +356,13 @@ router.post('/claim-owner', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Only an approved platform admin can claim owner role' });
     }
     const result = await pool.query(
-      "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 AND source = $2 RETURNING id, email, name, role",
+      "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 AND source = $2 RETURNING id, email, name, role, password_changed_at",
       [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = result.rows[0];
     const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true, can_edit_website: true };
-    const newToken = jwt.sign({ id: user.id, email: user.email, name: user.name, role: 'owner' }, JWT_SECRET, { expiresIn: '7d' });
+    const newToken = signAuthToken(user);
     res.cookie('token', newToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ user: { ...user, permissions }, token: newToken });
   } catch (err) {

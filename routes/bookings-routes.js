@@ -47,6 +47,13 @@ function shouldRunUpdateConflictCheck({ scheduleChanged, statusChanged, nextStat
   return isScheduleBlockingStatus(nextStatus) && (scheduleChanged || statusChanged);
 }
 
+function durationLimitError(start, end) {
+  const durationHrs = (end - start) / (1000 * 60 * 60);
+  return durationHrs > MAX_BOOKING_DURATION_HOURS
+    ? `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours`
+    : null;
+}
+
 /** Serialize concurrent bookings for the same aircraft/instructor/student. */
 async function lockBookingResources(client, { aircraft_id, instructor_id, student_id }) {
   const acId = aircraft_id != null ? parseInt(aircraft_id, 10) : null;
@@ -570,9 +577,24 @@ router.post('/duplicate/:id', authenticateToken, async (req, res) => {
       start, end, policy, userRole: req.user.role, isAdmin, lesson_type: b.lesson_type,
     });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
+    const durationError = durationLimitError(start, end);
+    if (durationError) return res.status(400).json({ error: durationError });
 
     const grounding = await checkGroundingSquawk(client, b.aircraft_id);
     if (grounding.blocked) return res.status(409).json({ error: 'Aircraft grounded', reason: grounding.reason });
+
+    const preflight = await runPreflightChecks(client, {
+      aircraft_id: b.aircraft_id,
+      student_id: b.student_id,
+      instructor_id: b.instructor_id,
+      start_time,
+      end_time,
+      booking_type: b.booking_type || await deriveBookingType(client, b.student_id, b.instructor_id),
+      lesson_type: b.lesson_type || null,
+    }, req.user.role);
+    if (!preflight.ok) {
+      return res.status(409).json({ error: preflight.errors[0], errors: preflight.errors, warnings: preflight.warnings });
+    }
 
     await client.query('BEGIN');
     await lockBookingResources(client, {
@@ -688,6 +710,8 @@ async function createBookingInternal(client, req) {
   const start = new Date(start_time);
   const end = new Date(end_time);
   if (end <= start) return { error: 'End time must be after start time' };
+  const durationError = durationLimitError(start, end);
+  if (durationError) return { error: durationError };
   const policy = await getPolicySettings();
   const isAdmin = ['owner', 'admin'].includes(req.user.role);
   const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
@@ -707,12 +731,26 @@ async function createBookingInternal(client, req) {
     booking_type = roleRes.rows[0]?.role === 'renter' ? 'renter_solo' : 'student_solo';
   } else if (!sid && iid) booking_type = 'instructor_solo';
 
+  const acId = parseInt(aircraft_id, 10);
+  if (!Number.isFinite(acId)) return { error: 'Invalid aircraft' };
+
+  const preflight = await runPreflightChecks(client, {
+    aircraft_id: acId,
+    student_id: sid,
+    instructor_id: iid,
+    start_time,
+    end_time,
+    booking_type,
+    lesson_type: lesson_type || null,
+    local_date,
+    local_start,
+    local_end,
+  }, req.user.role);
+  if (!preflight.ok) return { error: preflight.errors[0], errors: preflight.errors, warnings: preflight.warnings };
+
   const aircraft = await client.query('SELECT status FROM aircraft WHERE id = $1 AND source = $2', [aircraft_id, getAppEnv()]);
   if (aircraft.rows.length === 0) return { error: 'Aircraft not found' };
   if (aircraft.rows[0].status !== 'available') return { error: `Aircraft is ${aircraft.rows[0].status}` };
-
-  const acId = parseInt(aircraft_id, 10);
-  if (!Number.isFinite(acId)) return { error: 'Invalid aircraft' };
 
   await client.query('BEGIN');
   try {
@@ -784,8 +822,8 @@ router.post('/', authenticateToken, async (req, res) => {
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return res.status(400).json({ error: 'Invalid date format for start or end time' });
     if (end <= start) return res.status(400).json({ error: 'End time must be after start time' });
     // Duration cap — multi-day rentals up to 7 days
-    const durationHrs = (end - start) / (1000 * 60 * 60);
-    if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
+    const durationError = durationLimitError(start, end);
+    if (durationError) return res.status(400).json({ error: durationError });
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
@@ -960,8 +998,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const etIso = enTime.toISOString();
     if (enTime <= stTime) return abortTransaction(400, { error: 'End time must be after start time' });
     // Duration cap on updates
-    const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
-    if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return abortTransaction(400, { error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
+    const durationError = durationLimitError(stTime, enTime);
+    if (durationError) return abortTransaction(400, { error: durationError });
     const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
     const nextStatus = status !== undefined && status !== null && status !== '' ? status : b.status;
     const statusChanged = nextStatus !== b.status;

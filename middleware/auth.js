@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { getJwtSecret } = require('../lib/jwt-secret');
 const { getAppEnv } = require('../lib/app-env');
+const { tokenMatchesPasswordVersion } = require('../lib/auth-token');
 
 const JWT_SECRET = getJwtSecret();
 
@@ -13,7 +14,7 @@ async function authenticateToken(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const result = await pool.query(
-      `SELECT id, email, name, role, is_instructor, approval_status, deleted_at
+      `SELECT id, email, name, role, is_instructor, approval_status, deleted_at, password_changed_at
        FROM users
        WHERE id = $1 AND source = $2`,
       [decoded.id, getAppEnv()]
@@ -26,6 +27,10 @@ async function authenticateToken(req, res, next) {
     if (user.approval_status && user.approval_status !== 'approved') {
       res.clearCookie?.('token');
       return res.status(403).json({ error: 'Account is not approved' });
+    }
+    if (!tokenMatchesPasswordVersion(decoded, user)) {
+      res.clearCookie?.('token');
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     }
     req.user = {
       id: user.id,

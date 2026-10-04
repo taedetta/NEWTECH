@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 let schemaPromise = null;
 
@@ -13,7 +14,7 @@ async function ensureMessagesSchema() {
       instructor_id INTEGER NOT NULL REFERENCES users(id),
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(student_id, instructor_id)
+      source VARCHAR(20) DEFAULT 'production'
     );
     CREATE TABLE IF NOT EXISTS messages (
       id SERIAL PRIMARY KEY,
@@ -23,6 +24,13 @@ async function ensureMessagesSchema() {
       read_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE message_threads ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+    UPDATE message_threads SET source = 'production' WHERE source IS NULL;
+    ALTER TABLE message_threads DROP CONSTRAINT IF EXISTS message_threads_student_id_instructor_id_key;
+    DROP INDEX IF EXISTS message_threads_student_id_instructor_id_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS message_threads_student_instructor_source_unique
+      ON message_threads(student_id, instructor_id, source);
+    CREATE INDEX IF NOT EXISTS message_threads_source_idx ON message_threads(source);
     CREATE INDEX IF NOT EXISTS messages_thread_id_idx ON messages(thread_id);
   `).catch((err) => {
     schemaPromise = null;
@@ -37,14 +45,26 @@ function isStudentSideRole(role) {
 
 async function getOrCreateThread(studentId, instructorId) {
   await ensureMessagesSchema();
+  const participants = await pool.query(
+    `SELECT 1
+     FROM users s
+     JOIN users i ON i.id = $2 AND i.source = $3 AND i.deleted_at IS NULL
+     WHERE s.id = $1 AND s.source = $3 AND s.deleted_at IS NULL`,
+    [studentId, instructorId, getAppEnv()]
+  );
+  if (!participants.rows.length) {
+    const err = new Error('Participants not found in this environment');
+    err.status = 400;
+    throw err;
+  }
   const existing = await pool.query(
-    `SELECT * FROM message_threads WHERE student_id = $1 AND instructor_id = $2`,
-    [studentId, instructorId]
+    `SELECT * FROM message_threads WHERE student_id = $1 AND instructor_id = $2 AND source = $3`,
+    [studentId, instructorId, getAppEnv()]
   );
   if (existing.rows.length) return existing.rows[0];
   const created = await pool.query(
-    `INSERT INTO message_threads (student_id, instructor_id) VALUES ($1, $2) RETURNING *`,
-    [studentId, instructorId]
+    `INSERT INTO message_threads (student_id, instructor_id, source) VALUES ($1, $2, $3) RETURNING *`,
+    [studentId, instructorId, getAppEnv()]
   );
   return created.rows[0];
 }
@@ -52,7 +72,7 @@ async function getOrCreateThread(studentId, instructorId) {
 async function listThreadsForUser(userId, role) {
   await ensureMessagesSchema();
   let query;
-  const params = [userId];
+  const params = [userId, getAppEnv()];
   const selectCols = `
       SELECT t.*,
              s.name AS student_name, i.name AS instructor_name,
@@ -60,20 +80,21 @@ async function listThreadsForUser(userId, role) {
              (SELECT created_at FROM messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at,
              (SELECT COUNT(*)::int FROM messages m WHERE m.thread_id = t.id AND m.read_at IS NULL AND m.sender_id != $1) AS unread_count
       FROM message_threads t
-      JOIN users s ON s.id = t.student_id
-      JOIN users i ON i.id = t.instructor_id`;
+      JOIN users s ON s.id = t.student_id AND s.source = t.source
+      JOIN users i ON i.id = t.instructor_id AND i.source = t.source`;
   if (['owner', 'admin'].includes(role)) {
     query = `${selectCols}
+      WHERE t.source = $2
       ORDER BY t.updated_at DESC
     `;
   } else if (role === 'instructor') {
     query = `${selectCols}
-      WHERE t.instructor_id = $1
+      WHERE t.instructor_id = $1 AND t.source = $2
       ORDER BY t.updated_at DESC
     `;
   } else if (isStudentSideRole(role)) {
     query = `${selectCols}
-      WHERE t.student_id = $1
+      WHERE t.student_id = $1 AND t.source = $2
       ORDER BY t.updated_at DESC
     `;
   } else {
@@ -88,10 +109,10 @@ async function getThreadMessages(threadId, userId, role) {
   const thread = await pool.query(
     `SELECT t.*, s.name AS student_name, i.name AS instructor_name
      FROM message_threads t
-     JOIN users s ON s.id = t.student_id
-     JOIN users i ON i.id = t.instructor_id
-     WHERE t.id = $1`,
-    [threadId]
+     JOIN users s ON s.id = t.student_id AND s.source = t.source
+     JOIN users i ON i.id = t.instructor_id AND i.source = t.source
+     WHERE t.id = $1 AND t.source = $2`,
+    [threadId, getAppEnv()]
   );
   if (!thread.rows.length) return null;
   const t = thread.rows[0];
@@ -103,10 +124,10 @@ async function getThreadMessages(threadId, userId, role) {
   const msgs = await pool.query(
     `SELECT m.*, u.name AS sender_name, u.role AS sender_role
      FROM messages m
-     JOIN users u ON u.id = m.sender_id
+     JOIN users u ON u.id = m.sender_id AND u.source = $2
      WHERE m.thread_id = $1
      ORDER BY m.created_at ASC`,
-    [threadId]
+    [threadId, getAppEnv()]
   );
 
   await pool.query(

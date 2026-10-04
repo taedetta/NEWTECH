@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_plan VARCHAR(255),
   subscription_expires_at TIMESTAMPTZ,
   subscription_updated_at TIMESTAMPTZ,
+  password_changed_at TIMESTAMPTZ,
   source VARCHAR(20) DEFAULT 'production'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users (LOWER(email), source);

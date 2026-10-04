@@ -5898,11 +5898,17 @@ function applyStudentRenterNavLayout() {
     });
   }
 
-  ['progress', 'endorsements', 'messages', 'portal', 'dashboard', 'schedule',
+  ['progress', 'messages', 'portal', 'dashboard', 'schedule',
     'history', 'fleet', 'billing', 'phone-app', 'flight-log'].forEach(function (page) {
     const el = document.querySelector('.sidebar-nav a[data-page="' + page + '"]');
     if (el) { el.classList.remove('hidden'); el.style.display = ''; }
   });
+  const endorsementsNav = document.querySelector('.sidebar-nav a[data-page="endorsements"]');
+  if (endorsementsNav) {
+    const showEndorsements = role === 'student';
+    endorsementsNav.classList.toggle('hidden', !showEndorsements);
+    endorsementsNav.style.display = showEndorsements ? '' : 'none';
+  }
 
   // Never show hours audit to students/renters
   const navAudit = document.getElementById('nav-hours-audit');
@@ -6067,11 +6073,11 @@ async function enterAppBody() {
   const navPortal = document.getElementById('nav-portal');
   if (navPortal) navPortal.classList.toggle('hidden', !['student', 'renter'].includes(currentUser.role));
 
-  // Progress + Endorsements: students/renters see under Operations; staff see both sections
+  // Progress + Endorsements: students see endorsements; renters do not have endorsement API access.
   const navProgress = document.getElementById('nav-progress');
   if (navProgress) navProgress.classList.remove('hidden');
   const navEndorse = document.getElementById('nav-endorsements');
-  if (navEndorse) navEndorse.classList.remove('hidden');
+  if (navEndorse) navEndorse.classList.toggle('hidden', currentUser.role === 'renter');
 
   // Students/renters: hide entire Management block (no separate Management section)
   applyStudentRenterNavLayout();
@@ -6122,7 +6128,7 @@ async function enterAppBody() {
   const rosterBtn = document.getElementById('schedule-roster-btn');
   if (rosterBtn) rosterBtn.classList.toggle('hidden', ['student', 'renter'].includes(currentUser.role));
 
-  // Endorsements: visible to all roles (already ensured above)
+  // Endorsements: renter access is intentionally hidden because the API is student/staff-only.
 
   // Availability: editable page for instructors, admins, owners — NOT students/renters
   const navAvail = document.getElementById('nav-availability');
@@ -11756,7 +11762,7 @@ async function loadFleet() {
   const canEdit = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || perms.can_manage_aircraft;
   const canViewDocs = canEdit;
   const canEditHours = ['owner', 'instructor', 'admin', 'maintenance'].includes(currentUser.role);
-  const canDelete = ['owner', 'admin', 'maintenance'].includes(currentUser.role);
+  const canDelete = ['owner', 'admin'].includes(currentUser.role);
 
   document.getElementById('schedule-downtime-btn').classList.toggle('hidden', !canEdit);
 
@@ -15412,21 +15418,7 @@ async function loadBillingMyActivity() {
       detailEl.classList.add('hidden');
       return;
     }
-    await loadBillingForStudent(currentUser.id);
-    // Re-render with my-activity flights (may include as instructor)
-    currentBillingFlights = flights;
-    var tbody = document.getElementById('billing-flights-table');
-    if (tbody) {
-      tbody.innerHTML = flights.map(function(f) {
-        var hrs = billingHobbsHours(f);
-        var rental = parseFloat(f.aircraft_charge_amount || 0);
-        var instr = parseFloat(f.instruction_charge_amount || 0);
-        var d = new Date(f.start_time);
-        var dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        var roleTag = f.my_role === 'instructor' ? 'Instr' : 'Student';
-        return '<tr><td>' + dateStr + '</td><td>' + escHtml(f.tail_number || '—') + '</td><td><span class="tag tag-sky">' + roleTag + '</span></td><td>' + hrs.toFixed(1) + '</td><td style="color:var(--sky)">$' + rental.toFixed(0) + '</td><td style="color:var(--amber)">$' + instr.toFixed(0) + '</td><td style="font-weight:600">$' + (rental + instr).toFixed(0) + '</td></tr>';
-      }).join('');
-    }
+    await loadBillingForStudent(currentUser.id, { flights, groundSessions: [] });
   } catch (e) {
     emptyEl.classList.remove('hidden');
     emptyEl.querySelector('h3').textContent = 'Could not load activity';
@@ -15518,14 +15510,14 @@ function showBillingOverview() {
   document.getElementById('billing-student-selector').classList.remove('hidden');
 }
 
-async function loadBillingForStudent(studentId) {
+async function loadBillingForStudent(studentId, overrideData) {
   const detailEl = document.getElementById('billing-detail');
   const emptyEl = document.getElementById('billing-empty');
   detailEl.classList.remove('hidden');
   emptyEl.classList.add('hidden');
 
   try {
-    var data = await api('/api/billing/' + studentId);
+    var data = overrideData || await api('/api/billing/' + studentId);
     // Handle both legacy array response and new {flights, groundSessions} response
     var flights = Array.isArray(data) ? data : (data.flights || []);
     var groundSessions = Array.isArray(data) ? [] : (data.groundSessions || []);
