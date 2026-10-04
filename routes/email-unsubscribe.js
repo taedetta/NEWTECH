@@ -33,7 +33,7 @@ function renderPage({ title, message, ok, actionHtml }) {
     .card { max-width: 520px; margin: 0 auto; background: #fff; border-radius: 10px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }
     h1 { font-size: 1.35rem; margin: 0 0 12px; color: ${color}; }
     p { font-size: 0.95rem; line-height: 1.6; color: #475569; margin: 0 0 20px; }
-    a.btn { display: inline-block; background: #0EA5E9; color: #fff; text-decoration: none; padding: 12px 22px; border-radius: 7px; font-weight: 600; font-size: 0.9rem; }
+    .btn, a.btn { display: inline-block; background: #0EA5E9; color: #fff; text-decoration: none; padding: 12px 22px; border-radius: 7px; font-weight: 600; font-size: 0.9rem; }
     a.link { color: #0EA5E9; text-decoration: none; font-size: 0.88rem; }
   </style>
 </head>

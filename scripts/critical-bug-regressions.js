@@ -39,15 +39,27 @@ const {
 
 function testRequiredEmailPreferences() {
   assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
+  assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.account_invite), true);
+  assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.profile_change), true);
   assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(EMAIL_TYPES.password_reset), false);
+  assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(EMAIL_TYPES.account_invite), false);
+  assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(EMAIL_TYPES.profile_change), false);
   assert.strictEqual(rowToPrefs({ password_reset: false }).password_reset, true);
+  assert.strictEqual(rowToPrefs({ account_invite: false }).account_invite, true);
+  assert.strictEqual(rowToPrefs({ profile_change: false }).profile_change, true);
 
   const catalogTypes = getPreferenceCatalog('student', false).flatMap((category) => category.types.map((type) => type.key));
   assert.strictEqual(catalogTypes.includes(EMAIL_TYPES.password_reset), false);
+  assert.strictEqual(catalogTypes.includes(EMAIL_TYPES.account_invite), false);
+  assert.strictEqual(catalogTypes.includes(EMAIL_TYPES.profile_change), false);
 
   const email = appendUnsubscribeFooter('<p>Reset</p>', 'Reset', 42, EMAIL_TYPES.password_reset);
   assert.strictEqual(email.html, '<p>Reset</p>');
   assert.strictEqual(email.text, 'Reset');
+
+  const invite = appendUnsubscribeFooter('<p>Invite</p>', 'Invite', 42, EMAIL_TYPES.account_invite);
+  assert.strictEqual(invite.html, '<p>Invite</p>');
+  assert.strictEqual(invite.text, 'Invite');
 }
 
 function testUnsubscribeTokenScope() {
@@ -58,6 +70,7 @@ function testUnsubscribeTokenScope() {
   });
 
   assert.throws(() => signUnsubscribeToken(42, EMAIL_TYPES.password_reset), /Invalid unsubscribe type/);
+  assert.throws(() => signUnsubscribeToken(42, EMAIL_TYPES.account_invite), /Invalid unsubscribe type/);
 
   const url = new URL(buildUnsubscribeUrl(42, EMAIL_TYPES.booking_cancelled));
   const verified = verifyUnsubscribeToken(url.searchParams.get('token'));
