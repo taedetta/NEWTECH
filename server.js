@@ -87,7 +87,6 @@ const {
 // ── App Setup ─────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
 
 app.use(compression({ threshold: 1024, filter: (req, res) => {
   const ct = res.getHeader('Content-Type');
@@ -166,6 +165,14 @@ app.use('/admin', adminPagesRoutes);
 
 // ── Static Files ───────────────────────────────────────────────────────────────
 const { getUploadRoot } = require('./lib/r2-storage');
+app.use('/uploads', (req, res, next) => {
+  const uploadPath = decodeURIComponent((req.path || '').replace(/^\/+/, ''));
+  const protectedDocPath = /^(staging\/)?(student-docs|aircraft-docs)\//.test(uploadPath);
+  if (protectedDocPath) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  return next();
+});
 app.use('/uploads', express.static(getUploadRoot(), { maxAge: '1d', etag: true }));
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false,

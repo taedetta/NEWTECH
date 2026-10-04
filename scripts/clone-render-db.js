@@ -202,7 +202,11 @@ async function fixAllSequences(client) {
 async function fixCriticalConstraints(client) {
   const stmts = [
     'ALTER TABLE users ADD PRIMARY KEY (id)',
-    'CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (LOWER(email))',
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production'",
+    "UPDATE users SET source = 'production' WHERE source IS NULL",
+    'DROP INDEX IF EXISTS users_email_unique',
+    'DROP INDEX IF EXISTS users_email_unique_idx',
+    'CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users (LOWER(email), source)',
     'ALTER TABLE bookings ADD PRIMARY KEY (id)',
     'ALTER TABLE aircraft ADD PRIMARY KEY (id)',
   ];

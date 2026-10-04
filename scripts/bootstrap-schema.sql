@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_updated_at TIMESTAMPTZ,
   source VARCHAR(20) DEFAULT 'production'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx ON users (LOWER(email));
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users (LOWER(email), source);
 
 CREATE TABLE IF NOT EXISTS user_permissions (
   id SERIAL PRIMARY KEY,
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS site_content (
 
 CREATE TABLE IF NOT EXISTS aircraft (
   id SERIAL PRIMARY KEY,
-  tail_number VARCHAR(20) UNIQUE NOT NULL,
+  tail_number VARCHAR(20) NOT NULL,
   make_model VARCHAR(100) NOT NULL,
   type VARCHAR(50) DEFAULT 'single_engine',
   year INTEGER,
@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS aircraft (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE aircraft DROP CONSTRAINT IF EXISTS aircraft_tail_number_key;
+DROP INDEX IF EXISTS aircraft_tail_number_key;
+CREATE UNIQUE INDEX IF NOT EXISTS aircraft_tail_number_source_unique ON aircraft(tail_number, source);
 
 CREATE TABLE IF NOT EXISTS bookings (
   id SERIAL PRIMARY KEY,
@@ -179,7 +182,8 @@ CREATE TABLE IF NOT EXISTS instructor_hours (
   period_start DATE,
   period_end DATE,
   total_hours DECIMAL(10,2),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS squawks (
@@ -254,11 +258,12 @@ CREATE TABLE IF NOT EXISTS instructor_availability_overrides (
 CREATE TABLE IF NOT EXISTS training_programs (
   id SERIAL PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
-  code VARCHAR(20) UNIQUE,
+  code VARCHAR(20),
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
+CREATE UNIQUE INDEX IF NOT EXISTS training_programs_code_source_unique ON training_programs(code, source);
 
 CREATE TABLE IF NOT EXISTS program_stages (
   id SERIAL PRIMARY KEY,
@@ -297,7 +302,7 @@ CREATE TABLE IF NOT EXISTS student_training (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   source VARCHAR(20) DEFAULT 'production'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);
+CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_source_unique ON student_training(student_id, program_id, source);
 
 CREATE TABLE IF NOT EXISTS student_maneuver_progress (
   id SERIAL PRIMARY KEY,
@@ -306,9 +311,10 @@ CREATE TABLE IF NOT EXISTS student_maneuver_progress (
   status VARCHAR(20),
   notes TEXT,
   proficient_date DATE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
+CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_source_unique ON student_maneuver_progress(student_id, maneuver_id, source);
 
 CREATE TABLE IF NOT EXISTS flight_debriefs (
   id SERIAL PRIMARY KEY,
@@ -321,7 +327,8 @@ CREATE TABLE IF NOT EXISTS flight_debriefs (
   overall_performance INTEGER,
   flight_date DATE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS debrief_grades (
@@ -340,8 +347,19 @@ CREATE TABLE IF NOT EXISTS milestone_completions (
   completed_by INTEGER REFERENCES users(id),
   debrief_id INTEGER REFERENCES flight_debriefs(id),
   notes TEXT,
-  completed_at TIMESTAMPTZ DEFAULT NOW()
+  completed_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE milestone_completions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE milestone_completions SET source = 'production' WHERE source IS NULL;
+DELETE FROM milestone_completions mc
+USING milestone_completions newer
+WHERE mc.student_id = newer.student_id
+  AND mc.stage_id = newer.stage_id
+  AND mc.source = newer.source
+  AND mc.id > newer.id;
+CREATE UNIQUE INDEX IF NOT EXISTS milestone_completions_student_stage_source_unique
+  ON milestone_completions(student_id, stage_id, source);
 
 CREATE TABLE IF NOT EXISTS training_progress (
   id SERIAL PRIMARY KEY,
@@ -382,7 +400,8 @@ CREATE TABLE IF NOT EXISTS at_risk_assessments (
   days_since_last_flight INTEGER,
   last_flight_date DATE,
   manual_override VARCHAR(20),
-  assessed_at TIMESTAMPTZ DEFAULT NOW()
+  assessed_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS student_interventions (
@@ -396,7 +415,8 @@ CREATE TABLE IF NOT EXISTS student_interventions (
   action_date DATE,
   notes TEXT,
   occurred_at TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS school_settings (
@@ -458,13 +478,21 @@ CREATE TABLE IF NOT EXISTS flight_discrepancies (
 
 CREATE TABLE IF NOT EXISTS file_overrides (
   id SERIAL PRIMARY KEY,
-  file_path TEXT UNIQUE NOT NULL,
+  file_path TEXT NOT NULL,
   content TEXT,
   edited_by INTEGER REFERENCES users(id),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   synced_to_github BOOLEAN DEFAULT FALSE,
-  synced_at TIMESTAMPTZ
+  synced_at TIMESTAMPTZ,
+  source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE file_overrides ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE file_overrides SET source = 'production' WHERE source IS NULL;
+ALTER TABLE file_overrides ALTER COLUMN source SET NOT NULL;
+ALTER TABLE file_overrides DROP CONSTRAINT IF EXISTS file_overrides_file_path_key;
+DROP INDEX IF EXISTS file_overrides_file_path_key;
+CREATE UNIQUE INDEX IF NOT EXISTS file_overrides_file_path_source_unique
+  ON file_overrides(file_path, source);
 
 CREATE TABLE IF NOT EXISTS airworthiness_directives (
   id SERIAL PRIMARY KEY,
@@ -484,5 +512,6 @@ CREATE TABLE IF NOT EXISTS feedback (
   user_id INTEGER REFERENCES users(id),
   rating INTEGER,
   comment TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );

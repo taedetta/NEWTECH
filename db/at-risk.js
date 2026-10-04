@@ -5,30 +5,42 @@
 // Does NOT own: users, bookings, flight_logs.
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 /** Ensure upsert target exists (Railway DB may predate schema patch). */
 async function ensureAtRiskUniqueIndex() {
   await pool.query(`
     DELETE FROM at_risk_assessments a
     USING at_risk_assessments b
-    WHERE a.student_id IS NOT NULL AND a.student_id = b.student_id AND a.id > b.id
+    WHERE a.student_id IS NOT NULL
+      AND a.student_id = b.student_id
+      AND COALESCE(a.source, 'production') = COALESCE(b.source, 'production')
+      AND a.id > b.id
   `);
+  await pool.query('DROP INDEX IF EXISTS at_risk_assessments_student_id_unique');
   await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_id_unique
-    ON at_risk_assessments(student_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_source_unique
+    ON at_risk_assessments(student_id, source)
   `);
 }
 
 /** Fetch all at-risk threshold settings from school_settings */
+const THRESHOLD_KEYS = ['at_risk_low_days', 'at_risk_medium_days', 'at_risk_high_days', 'at_risk_critical_days'];
+
+function settingKeyForEnv(key) {
+  return getAppEnv() === 'staging' ? `${key}:staging` : key;
+}
+
 async function getThresholds() {
-  const keys = ['at_risk_low_days', 'at_risk_medium_days', 'at_risk_high_days', 'at_risk_critical_days'];
+  const keyMap = new Map(THRESHOLD_KEYS.map((key) => [settingKeyForEnv(key), key]));
   const result = await pool.query(
-    `SELECT key, value FROM school_settings WHERE key = ANY($1)`, [keys]
+    `SELECT key, value FROM school_settings WHERE key = ANY($1)`, [[...keyMap.keys()]]
   );
   const defaults = { at_risk_low_days: 14, at_risk_medium_days: 21, at_risk_high_days: 30, at_risk_critical_days: 45 };
   const out = { ...defaults };
   for (const row of result.rows) {
-    out[row.key] = parseInt(row.value, 10);
+    const baseKey = keyMap.get(row.key);
+    if (baseKey) out[baseKey] = parseInt(row.value, 10);
   }
   return out;
 }
@@ -45,7 +57,7 @@ async function saveThresholds({ at_risk_low_days, at_risk_medium_days, at_risk_h
     await pool.query(
       `INSERT INTO school_settings (key, value, updated_at) VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-      [key, String(value)]
+      [settingKeyForEnv(key), String(value)]
     );
   }
 }
@@ -67,11 +79,11 @@ async function computeAtRiskStudents() {
         u.id AS student_id,
         u.name AS student_name,
         GREATEST(
-          (SELECT MAX(b.start_time) FROM bookings b WHERE b.student_id = u.id AND b.status = 'completed'),
-          (SELECT MAX(fl.flight_date) FROM flight_logs fl WHERE fl.student_id = u.id)
+          (SELECT MAX(b.start_time) FROM bookings b WHERE b.student_id = u.id AND b.status = 'completed' AND b.source = $1),
+          (SELECT MAX(fl.flight_date) FROM flight_logs fl WHERE fl.student_id = u.id AND fl.source = $1)
         ) AS last_flight_date
       FROM users u
-      WHERE u.role = 'student' AND u.deleted_at IS NULL
+      WHERE u.role = 'student' AND u.deleted_at IS NULL AND u.source = $1
     ),
     assigned_instructor AS (
       SELECT DISTINCT ON (b.student_id)
@@ -80,20 +92,21 @@ async function computeAtRiskStudents() {
         i.name AS instructor_name
       FROM bookings b
       JOIN users i ON i.id = b.instructor_id
-      WHERE b.status IN ('confirmed', 'completed')
+      WHERE b.status IN ('confirmed', 'completed') AND b.source = $1
       ORDER BY b.student_id, b.start_time DESC
     )
     SELECT
       la.student_id,
       la.student_name,
       la.last_flight_date,
+      ai.instructor_id,
       COALESCE(ai.instructor_name, NULL) AS instructor_name,
       ara.manual_override_level,
       ara.manual_override_notes
     FROM last_activity la
     LEFT JOIN assigned_instructor ai ON ai.student_id = la.student_id
-    LEFT JOIN at_risk_assessments ara ON ara.student_id = la.student_id
-  `);
+    LEFT JOIN at_risk_assessments ara ON ara.student_id = la.student_id AND ara.source = $1
+  `, [getAppEnv()]);
 
   const students = [];
 
@@ -117,18 +130,19 @@ async function computeAtRiskStudents() {
 
     // Upsert assessment row
     await pool.query(`
-      INSERT INTO at_risk_assessments (student_id, risk_level, risk_score, days_since_last_flight, last_flight_date, assessed_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
-      ON CONFLICT (student_id) DO UPDATE SET
+      INSERT INTO at_risk_assessments (student_id, risk_level, risk_score, days_since_last_flight, last_flight_date, assessed_at, source)
+      VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+      ON CONFLICT (student_id, source) DO UPDATE SET
         risk_level = $2, risk_score = $3, days_since_last_flight = $4,
         last_flight_date = $5, assessed_at = NOW()
-    `, [row.student_id, effectiveLevel, riskScore, daysSince, row.last_flight_date]);
+    `, [row.student_id, effectiveLevel, riskScore, daysSince, row.last_flight_date, getAppEnv()]);
 
     // Only include students who are at risk
     if (effectiveLevel !== 'none') {
       students.push({
         student_id: row.student_id,
         student_name: row.student_name,
+        instructor_id: row.instructor_id,
         instructor_name: row.instructor_name,
         risk_level: effectiveLevel,
         risk_score: riskScore,
@@ -145,15 +159,50 @@ async function computeAtRiskStudents() {
   return students;
 }
 
+/** Return active student ids that an instructor is allowed to review. */
+async function getInstructorStudentIds(instructorId) {
+  const result = await pool.query(`
+    SELECT DISTINCT student_id
+    FROM (
+      SELECT student_id
+      FROM student_training
+      WHERE instructor_id = $1 AND status = 'active' AND source = $2
+      UNION
+      SELECT student_id
+      FROM bookings
+      WHERE instructor_id = $1
+        AND student_id IS NOT NULL
+        AND status IN ('confirmed', 'completed')
+        AND source = $2
+    ) scoped
+  `, [instructorId, getAppEnv()]);
+  return result.rows.map((row) => row.student_id);
+}
+
+/** Check whether an instructor can review or write at-risk records for a student. */
+async function canInstructorAccessStudent(instructorId, studentId) {
+  const result = await pool.query(`
+    SELECT 1
+    FROM student_training
+    WHERE student_id = $1 AND instructor_id = $2 AND status = 'active' AND source = $3
+    UNION
+    SELECT 1
+    FROM bookings
+    WHERE student_id = $1 AND instructor_id = $2 AND status IN ('confirmed', 'completed') AND source = $3
+    LIMIT 1
+  `, [studentId, instructorId, getAppEnv()]);
+  return result.rows.length > 0;
+}
+
 /** Set manual override for a student's risk level */
 async function setManualOverride(studentId, level, notes, overrideByUserId) {
   await ensureAtRiskUniqueIndex();
   // Ensure assessment row exists first
   await pool.query(`
-    INSERT INTO at_risk_assessments (student_id, risk_level, risk_score, days_since_last_flight)
-    VALUES ($1, 'none', 0, 0)
-    ON CONFLICT (student_id) DO NOTHING
-  `, [studentId]);
+    INSERT INTO at_risk_assessments (student_id, risk_level, risk_score, days_since_last_flight, source)
+    VALUES ($1, 'none', 0, 0, $2)
+    ON CONFLICT (student_id, source) DO NOTHING
+  `, [studentId, getAppEnv()]);
 
   await pool.query(`
     UPDATE at_risk_assessments
@@ -161,8 +210,8 @@ async function setManualOverride(studentId, level, notes, overrideByUserId) {
         manual_override_notes = $2,
         manual_override_by = $3,
         manual_override_at = NOW()
-    WHERE student_id = $4
-  `, [level, notes, overrideByUserId, studentId]);
+    WHERE student_id = $4 AND source = $5
+  `, [level, notes, overrideByUserId, studentId, getAppEnv()]);
 }
 
 /** Get intervention history for a student */
@@ -171,24 +220,26 @@ async function getInterventions(studentId) {
     SELECT si.intervention_type, si.outcome, si.notes, u.name AS logged_by_name, si.occurred_at
     FROM student_interventions si
     JOIN users u ON u.id = si.logged_by
-    WHERE si.student_id = $1
+    WHERE si.student_id = $1 AND si.source = $2
     ORDER BY si.occurred_at DESC
-  `, [studentId]);
+  `, [studentId, getAppEnv()]);
   return result.rows;
 }
 
 /** Log a new intervention for a student */
 async function logIntervention(studentId, loggedByUserId, interventionType, outcome, notes) {
   await pool.query(`
-    INSERT INTO student_interventions (student_id, logged_by, intervention_type, outcome, notes)
-    VALUES ($1, $2, $3, $4, $5)
-  `, [studentId, loggedByUserId, interventionType, outcome, notes]);
+    INSERT INTO student_interventions (student_id, logged_by, intervention_type, outcome, notes, source)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [studentId, loggedByUserId, interventionType, outcome, notes, getAppEnv()]);
 }
 
 module.exports = {
   getThresholds,
   saveThresholds,
   computeAtRiskStudents,
+  getInstructorStudentIds,
+  canInstructorAccessStudent,
   setManualOverride,
   getInterventions,
   logIntervention,

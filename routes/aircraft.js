@@ -3,16 +3,49 @@
 const express = require('express');
 const pool = require('../db/index');
 const aircraftDocsDb = require('../db/aircraft-documents');
-const { uploadBuffer } = require('../lib/r2-storage');
+const { uploadBuffer, downloadStoredFile, guessContentType } = require('../lib/r2-storage');
 const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
 const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
+function parseOptionalNumber(value, fieldName, { max = 99999 } = {}) {
+  if (value == null || value === '') return { value: null };
+  const raw = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(raw)) return { error: `${fieldName} must be a valid non-negative number` };
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return { error: `${fieldName} must be a valid number` };
+  if (num > max) return { error: `${fieldName} exceeds maximum allowed value` };
+  return { value: num };
+}
+
+function protectedAircraftDocument(doc, aircraftId = doc && doc.aircraft_id) {
+  if (!doc) return doc;
+  return {
+    ...doc,
+    file_url: doc.file_url ? `/api/aircraft/${aircraftId}/documents/${doc.id}/file` : null,
+  };
+}
+
+function safeDownloadName(name) {
+  return String(name || 'aircraft-document').replace(/[\r\n"]/g, '_');
+}
+
+async function sendStoredAircraftDocument(res, doc) {
+  if (!doc.file_url) return res.status(404).json({ error: 'Document file not found' });
+  const file = await downloadStoredFile(doc.file_url, doc.file_name);
+  if (!file) return res.status(404).json({ error: 'Document file not found' });
+  res.setHeader('Content-Type', file.contentType || guessContentType(doc.file_name || 'document'));
+  res.setHeader('Content-Disposition', `inline; filename="${safeDownloadName(doc.file_name)}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(file.buffer);
+}
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM aircraft ORDER BY tail_number');
+    const result = await pool.query('SELECT * FROM aircraft WHERE source = $1 ORDER BY tail_number', [getAppEnv()]);
     res.json(result.rows);
   } catch (err) {
     console.error('Aircraft list error:', err);
@@ -26,10 +59,12 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     if (!tail_number || !make_model) {
       return res.status(400).json({ error: 'Tail number and make/model are required' });
     }
+    const rate = parseOptionalNumber(hourly_rate, 'hourly_rate');
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
-      `INSERT INTO aircraft (tail_number, make_model, type, year, hourly_rate, notes)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, hourly_rate, notes]
+      `INSERT INTO aircraft (tail_number, make_model, type, year, hourly_rate, notes, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, rate.value, notes, getAppEnv()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -44,12 +79,14 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { tail_number, make_model, type, year, hourly_rate, status, notes } = req.body;
+    const rate = parseOptionalNumber(hourly_rate, 'hourly_rate');
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
       `UPDATE aircraft SET tail_number = COALESCE($1, tail_number), make_model = COALESCE($2, make_model),
        type = COALESCE($3, type), year = COALESCE($4, year), hourly_rate = COALESCE($5, hourly_rate),
        status = COALESCE($6, status), notes = COALESCE($7, notes), updated_at = NOW()
-       WHERE id = $8 RETURNING *`,
-      [tail_number?.toUpperCase(), make_model, type, year, hourly_rate, status, notes, req.params.id]
+       WHERE id = $8 AND source = $9 RETURNING *`,
+      [tail_number?.toUpperCase(), make_model, type, year, rate.value, status, notes, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     res.json(result.rows[0]);
@@ -60,10 +97,10 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 });
 
 // DELETE /api/aircraft/:id — Owner/Admin only. Cancels future bookings, removes related downtime/squawks, then deletes the aircraft.
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintenance'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
-    const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);
+    const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     if (aircraft.rows.length === 0) {
       return res.status(404).json({ error: 'Aircraft not found' });
     }
@@ -73,22 +110,22 @@ router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintena
 
     // Cancel future uncancelled bookings with reason — aircraft_id scoping is sufficient
     const cancelBookingsSql = `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW()
-       WHERE aircraft_id = $2 AND end_time > NOW() AND status NOT IN ('cancelled', 'completed')`;
-    await client.query(cancelBookingsSql, ['Aircraft removed from fleet', req.params.id]);
+       WHERE aircraft_id = $2 AND source = $3 AND end_time > NOW() AND status NOT IN ('cancelled', 'completed')`;
+    await client.query(cancelBookingsSql, ['Aircraft removed from fleet', req.params.id, getAppEnv()]);
 
     // Count affected bookings for response
     const cancelledBookings = await client.query(
-      `SELECT COUNT(*) FROM bookings WHERE aircraft_id = $1 AND end_time > NOW() AND status = 'cancelled' AND cancellation_reason = 'Aircraft removed from fleet'`,
-      [req.params.id]
+      `SELECT COUNT(*) FROM bookings WHERE aircraft_id = $1 AND source = $2 AND end_time > NOW() AND status = 'cancelled' AND cancellation_reason = 'Aircraft removed from fleet'`,
+      [req.params.id, getAppEnv()]
     );
 
     // Delete related downtime records — aircraft_id scoping is sufficient
-    await client.query('DELETE FROM aircraft_downtime WHERE aircraft_id = $1', [req.params.id]);
+    await client.query('DELETE FROM aircraft_downtime WHERE aircraft_id = $1 AND source = $2', [req.params.id, getAppEnv()]);
 
-    // Delete related squawk records — aircraft_id scoping is sufficient
-    await client.query('DELETE FROM squawks WHERE aircraft_id = $1', [req.params.id]);
+    // Delete related squawk records in the current source only.
+    await client.query('DELETE FROM squawks WHERE aircraft_id = $1 AND source = $2', [req.params.id, getAppEnv()]);
 
-    await client.query('DELETE FROM aircraft WHERE id = $1', [req.params.id]);
+    await client.query('DELETE FROM aircraft WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
 
     await client.query('COMMIT');
 
@@ -115,8 +152,8 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
     }
     const result = await pool.query(
       `UPDATE aircraft SET status = $1, maintenance_reason = $2, updated_at = NOW()
-       WHERE id = $3 RETURNING *`,
-      [status, status === 'maintenance' ? (reason || null) : null, req.params.id]
+       WHERE id = $3 AND source = $4 RETURNING *`,
+      [status, status === 'maintenance' ? (reason || null) : null, req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
 
@@ -129,10 +166,11 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
          LEFT JOIN users s ON s.id = b.student_id
          LEFT JOIN users i ON i.id = b.instructor_id
          WHERE b.aircraft_id = $1
+           AND b.source = $2
            AND b.status NOT IN ('cancelled', 'completed')
            AND b.end_time > NOW()
          ORDER BY b.start_time ASC`,
-        [req.params.id]
+        [req.params.id, getAppEnv()]
       );
       overlapping_bookings = future.rows;
     }
@@ -149,54 +187,69 @@ router.patch('/:id/maintenance', authenticateToken, requirePermission('can_manag
 });
 
 // PATCH /api/aircraft/:id/hobbs
-router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
-  if (!['owner', 'instructor', 'admin', 'maintenance'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Only instructors and above can update aircraft hours' });
-  }
+router.patch('/:id/hobbs', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   const { hobbs, tach, note } = req.body;
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
+  const parsedHobbs = parseOptionalNumber(hobbs, 'hobbs');
+  if (parsedHobbs.error) return res.status(400).json({ error: parsedHobbs.error });
+  const parsedTach = parseOptionalNumber(tach, 'tach');
+  if (parsedTach.error) return res.status(400).json({ error: parsedTach.error });
   const client = await pool.connect();
   try {
-    const current = await client.query(
-      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1',
-      [req.params.id]
-    );
-    if (current.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
-    const acRow = current.rows[0];
     await client.query('BEGIN');
+    const current = await client.query(
+      'SELECT current_hobbs, current_tach, total_hobbs_hours, total_tach_hours FROM aircraft WHERE id = $1 AND source = $2 FOR UPDATE',
+      [req.params.id, getAppEnv()]
+    );
+    if (current.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aircraft not found' });
+    }
+    const acRow = current.rows[0];
+    const currentHobbs = getMeterHobbs(acRow);
+    if (hobbs != null && currentHobbs != null && parsedHobbs.value < currentHobbs) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `hobbs cannot be less than current aircraft reading (${currentHobbs.toFixed(1)})` });
+    }
+    const currentTach = getMeterTach(acRow);
+    if (tach != null && currentTach != null && parsedTach.value < currentTach) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `tach cannot be less than current aircraft reading (${currentTach.toFixed(1)})` });
+    }
     const sets = [];
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
+      const hVal = parsedHobbs.value;
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
+      const tVal = parsedTach.value;
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
     sets.push('updated_at = NOW()');
     vals.push(req.params.id);
+    vals.push(getAppEnv());
     const result = await client.query(
-      `UPDATE aircraft SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE aircraft SET ${sets.join(', ')} WHERE id = $${idx} AND source = $${idx + 1} RETURNING *`,
       vals
     );
     if (hobbs != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), parsedHobbs.value, note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), parsedTach.value, note || null]
       );
     }
     await client.query('COMMIT');
@@ -213,6 +266,10 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
 // GET /api/aircraft/:id/hours-history
 router.get('/:id/hours-history', authenticateToken, async (req, res) => {
   try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const result = await pool.query(
       `SELECT h.id, h.field, h.old_value, h.new_value, h.note, h.created_at,
               h.source, h.booking_id,
@@ -222,7 +279,7 @@ router.get('/:id/hours-history', authenticateToken, async (req, res) => {
        WHERE h.aircraft_id = $1
        ORDER BY h.created_at DESC
        LIMIT 100`,
-      [req.params.id]
+      [aircraftId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -235,14 +292,17 @@ router.get('/:id/hours-history', authenticateToken, async (req, res) => {
 router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { next_100hr_due, next_annual_due } = req.body;
+    const due = parseOptionalNumber(next_100hr_due, 'next_100hr_due');
+    if (due.error) return res.status(400).json({ error: due.error });
     const result = await pool.query(
       `UPDATE aircraft
        SET next_100hr_due = $1, next_annual_due = $2, updated_at = NOW()
-       WHERE id = $3 RETURNING *`,
+       WHERE id = $3 AND source = $4 RETURNING *`,
       [
-        next_100hr_due != null ? parseFloat(next_100hr_due) : null,
+        due.value,
         next_annual_due || null,
-        req.params.id
+        req.params.id,
+        getAppEnv()
       ]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
@@ -256,9 +316,13 @@ router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_
 // GET /api/aircraft/:id/ads
 router.get('/:id/ads', authenticateToken, async (req, res) => {
   try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const result = await pool.query(
       'SELECT * FROM airworthiness_directives WHERE aircraft_id = $1 ORDER BY created_at DESC',
-      [req.params.id]
+      [aircraftId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -270,12 +334,18 @@ router.get('/:id/ads', authenticateToken, async (req, res) => {
 // POST /api/aircraft/:id/ads
 router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const { ad_number, description, due_date, due_hobbs } = req.body;
     if (!description) return res.status(400).json({ error: 'Description is required' });
+    const due = parseOptionalNumber(due_hobbs, 'due_hobbs');
+    if (due.error) return res.status(400).json({ error: due.error });
     const result = await pool.query(
       `INSERT INTO airworthiness_directives (aircraft_id, ad_number, description, due_date, due_hobbs)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, ad_number || null, description, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null]
+      [aircraftId, ad_number || null, description, due_date || null, due.value]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -287,7 +357,13 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
 // PATCH /api/aircraft/:id/ads/:adId
 router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const { status, description, due_date, due_hobbs, ad_number } = req.body;
+    const due = parseOptionalNumber(due_hobbs, 'due_hobbs');
+    if (due.error) return res.status(400).json({ error: due.error });
     const result = await pool.query(
       `UPDATE airworthiness_directives
        SET status = COALESCE($1, status),
@@ -297,7 +373,7 @@ router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_
            ad_number = COALESCE($5, ad_number),
            updated_at = NOW()
        WHERE id = $6 AND aircraft_id = $7 RETURNING *`,
-      [status || null, description || null, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null, ad_number || null, req.params.adId, req.params.id]
+      [status || null, description || null, due_date || null, due.value, ad_number || null, req.params.adId, aircraftId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'AD not found' });
     res.json(result.rows[0]);
@@ -310,9 +386,13 @@ router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_
 // DELETE /api/aircraft/:id/ads/:adId
 router.delete('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
+    const aircraftId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const result = await pool.query(
       'DELETE FROM airworthiness_directives WHERE id = $1 AND aircraft_id = $2 RETURNING id',
-      [req.params.adId, req.params.id]
+      [req.params.adId, aircraftId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'AD not found' });
     res.json({ ok: true });
@@ -328,13 +408,14 @@ router.get('/document-types', authenticateToken, (req, res) => {
   res.json({ types: aircraftDocsDb.DOC_TYPES, labels: aircraftDocsDb.DOC_LABELS });
 });
 
-router.get('/:id/documents', authenticateToken, async (req, res) => {
+router.get('/:id/documents', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const aircraftId = parseInt(req.params.id, 10);
     if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
-    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [aircraftId]);
+    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
     if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
-    const documents = await aircraftDocsDb.listByAircraft(aircraftId);
+    const documents = (await aircraftDocsDb.listByAircraft(aircraftId))
+      .map((doc) => protectedAircraftDocument(doc, aircraftId));
     res.json({ aircraft: ac.rows[0], documents, labels: aircraftDocsDb.DOC_LABELS });
   } catch (err) {
     console.error('[aircraft-docs] list:', err.message);
@@ -346,7 +427,7 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
   try {
     const aircraftId = parseInt(req.params.id, 10);
     if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft id' });
-    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [aircraftId]);
+    const ac = await pool.query('SELECT id, tail_number FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
     if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
 
     const { doc_type, title, file_data, file_name, expiry_date, notes } = req.body;
@@ -364,6 +445,7 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
 
     const fileUrl = await uploadBuffer(buffer, file_name, {
       folder: `aircraft-docs/${aircraftId}`,
+      allowLocalDevUrl: true,
     });
     if (!fileUrl) return res.status(500).json({ error: 'Upload failed' });
 
@@ -378,10 +460,29 @@ router.post('/:id/documents', authenticateToken, requireRole('owner', 'admin'), 
       uploadedBy: req.user.id,
     });
 
-    res.status(201).json({ document: doc });
+    res.status(201).json({ document: protectedAircraftDocument(doc, aircraftId) });
   } catch (err) {
     console.error('[aircraft-docs] create:', err.message);
     res.status(500).json({ error: 'Failed to save document' });
+  }
+});
+
+router.get('/:id/documents/:docId/file', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
+  try {
+    const aircraftId = parseInt(req.params.id, 10);
+    const docId = parseInt(req.params.docId, 10);
+    if (!Number.isFinite(aircraftId) || !Number.isFinite(docId)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
+    const documents = await aircraftDocsDb.listByAircraft(aircraftId);
+    const doc = documents.find((row) => row.id === docId);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    return sendStoredAircraftDocument(res, doc);
+  } catch (err) {
+    console.error('[aircraft-docs] download:', err.message);
+    return res.status(500).json({ error: 'Failed to download document' });
   }
 });
 
@@ -392,9 +493,11 @@ router.delete('/:id/documents/:docId', authenticateToken, requireRole('owner', '
     if (!Number.isFinite(aircraftId) || !Number.isFinite(docId)) {
       return res.status(400).json({ error: 'Invalid id' });
     }
+    const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraftId, getAppEnv()]);
+    if (!ac.rows.length) return res.status(404).json({ error: 'Aircraft not found' });
     const doc = await aircraftDocsDb.deleteDocument(docId, aircraftId);
     if (!doc) return res.status(404).json({ error: 'Document not found' });
-    res.json({ ok: true, document: doc });
+    res.json({ ok: true, document: protectedAircraftDocument(doc, aircraftId) });
   } catch (err) {
     console.error('[aircraft-docs] delete:', err.message);
     res.status(500).json({ error: 'Failed to delete document' });
