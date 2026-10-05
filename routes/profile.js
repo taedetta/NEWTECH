@@ -160,8 +160,8 @@ router.post('/change-password', authenticateToken, async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [req.user.id]
+      'SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
 
@@ -169,11 +169,22 @@ router.post('/change-password', authenticateToken, async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
 
     const passwordHash = await bcrypt.hash(new_password, 12);
-    await pool.query(
-      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-      [passwordHash, req.user.id]
+    const updated = await pool.query(
+      `UPDATE users
+       SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW()
+       WHERE id = $2 AND deleted_at IS NULL AND source = $3
+       RETURNING id, email, name, role, password_changed_at`,
+      [passwordHash, req.user.id, getAppEnv()]
     );
-    res.json({ ok: true });
+    if (updated.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const token = signAuthToken(updated.rows[0]);
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.json({ ok: true, token });
   } catch (err) {
     console.error('[profile] change-password error:', err.message);
     res.status(500).json({ error: 'Failed to change password' });

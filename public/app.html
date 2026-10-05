@@ -1872,7 +1872,7 @@
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
               <button class="btn btn-secondary btn-sm" id="schedule-roster-btn" onclick="toggleDailyRoster()">Daily Roster</button>
               <button class="btn btn-secondary btn-sm" onclick="exportMyCalendar()">Export iCal</button>
-              <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Booking</button>
+              <button class="btn btn-primary btn-sm" id="schedule-new-booking-btn" onclick="openBookingModal()">+ New Booking</button>
             </div>
           </div>
           <div id="daily-roster-panel" class="hidden" style="margin-bottom:1rem;background:var(--navy);border:1px solid var(--border-light);border-radius:12px;padding:1rem;">
@@ -5400,6 +5400,18 @@ async function api(path, opts = {}) {
   return data;
 }
 
+function canCreateBookingsUi() {
+  return !!(currentUser && ['owner', 'admin', 'instructor', 'student', 'renter'].includes(currentUser.role));
+}
+
+function canManageAllTrainingUi() {
+  const perms = currentUser?.permissions || {};
+  return !!(currentUser && (
+    ['owner', 'admin'].includes(currentUser.role) ||
+    (currentUser.role === 'instructor' && (perms.can_manage_students || perms.can_manage_instructors))
+  ));
+}
+
 // ─── MOBILE SIDEBAR ───
 function toggleSidebar() {
   const sidebar = document.querySelector('.sidebar');
@@ -6002,6 +6014,8 @@ async function enterAppBody() {
     if (addAircraftBtnM) addAircraftBtnM.classList.remove('hidden');
     const downtimeBtnM = document.getElementById('schedule-downtime-btn');
     if (downtimeBtnM) downtimeBtnM.classList.remove('hidden');
+    const scheduleNewBookingBtnM = document.getElementById('schedule-new-booking-btn');
+    if (scheduleNewBookingBtnM) scheduleNewBookingBtnM.classList.add('hidden');
     // Load user + aircraft data in parallel with fresh auth check (faster startup)
   const [freshData] = await Promise.all([
     api('/api/auth/me'),
@@ -6081,6 +6095,8 @@ async function enterAppBody() {
 
   // Students/renters: hide entire Management block (no separate Management section)
   applyStudentRenterNavLayout();
+  const scheduleNewBookingBtn = document.getElementById('schedule-new-booking-btn');
+  if (scheduleNewBookingBtn) scheduleNewBookingBtn.classList.toggle('hidden', !canCreateBookingsUi());
 
   // Website Editor: visible to owner or anyone with can_edit_website permission
   const navWebsiteEditor = document.getElementById('nav-website-editor');
@@ -6500,13 +6516,17 @@ async function saveAccountPassword(e) {
   errEl.classList.add('hidden');
   okEl.classList.add('hidden');
   try {
-    await api('/api/account/change-password', {
+    const data = await api('/api/account/change-password', {
       method: 'POST',
       body: JSON.stringify({
         current_password: document.getElementById('account-current-password').value,
         new_password: document.getElementById('account-new-password').value,
       }),
     });
+    if (data.token) {
+      token = data.token;
+      localStorage.setItem('fs_token', token);
+    }
     document.getElementById('account-current-password').value = '';
     document.getElementById('account-new-password').value = '';
     okEl.textContent = 'Password updated.';
@@ -9215,7 +9235,7 @@ function buildBookingActionButtons(b, options) {
   if (!b || !currentUser) return '';
 
   const canAct = (() => {
-    if (['owner', 'admin', 'maintenance'].includes(currentUser.role)) return true;
+    if (['owner', 'admin'].includes(currentUser.role)) return true;
     if (['student', 'renter'].includes(currentUser.role)) return b.student_id === currentUser.id;
     if (currentUser.role === 'instructor') return b.instructor_id === currentUser.id;
     return false;
@@ -14039,8 +14059,8 @@ async function loadProgress() {
   // Show/hide action buttons based on role
   const debriefBtn = document.getElementById('log-debrief-btn');
   const enrollBtn = document.getElementById('enroll-student-btn');
-  if (debriefBtn) debriefBtn.style.display = (role !== 'student') ? '' : 'none';
-  if (enrollBtn) enrollBtn.style.display = (role !== 'student') ? '' : 'none';
+  if (debriefBtn) debriefBtn.style.display = (!['student', 'renter'].includes(role)) ? '' : 'none';
+  if (enrollBtn) enrollBtn.style.display = (!['student', 'renter'].includes(role)) ? '' : 'none';
 
   // Load programs (always needed)
   try { allPrograms = await api('/api/training/programs'); } catch { allPrograms = []; }
@@ -14671,10 +14691,13 @@ async function openProgressDetail(studentId) {
 
     const debriefsHtml = buildInstructorDebriefHtml(allDebriefs, studentId);
 
+    const reassignBtn = canManageAllTrainingUi()
+      ? `<button class="btn btn-secondary btn-sm" onclick="openAssignModal(${studentId}, '${escHtml(s.name).replace(/'/g, "\\'")}')">Reassign Instructor</button>`
+      : '';
     const actionBtns = isInstructor
       ? `<div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="openDebriefModal(${studentId})">+ Log Debrief</button>
-          <button class="btn btn-secondary btn-sm" onclick="openAssignModal(${studentId}, '${escHtml(s.name).replace(/'/g, "\\'")}')">Reassign Instructor</button>
+          ${reassignBtn}
           <button class="btn btn-secondary btn-sm" onclick="viewStudentReadiness(${studentId}, '${escHtml(s.name).replace(/'/g, "\\'")}')">&#127775; Checkride Readiness</button>
         </div>`
       : '';
@@ -14795,25 +14818,36 @@ async function toggleEnrollForm() {
 }
 
 async function populateEnrollForm() {
-  const students = allUsers.filter(u => u.role === 'student');
-  const instructors = allUsers.filter(isBookableInstructor);
+  const canManageTraining = canManageAllTrainingUi();
+  const assignedStudentIds = new Set((allProgressStudents || []).map(s => Number(s.id)));
+  const students = allUsers.filter(u => {
+    if (u.role !== 'student') return false;
+    if (currentUser.role !== 'instructor' || canManageTraining) return true;
+    return assignedStudentIds.has(Number(u.id));
+  });
+  const instructors = canManageTraining
+    ? allUsers.filter(isBookableInstructor)
+    : allUsers.filter(u => Number(u.id) === Number(currentUser.id));
 
   const studentSel = document.getElementById('enroll-student-select');
   const programSel = document.getElementById('enroll-program-select');
   const instrSel = document.getElementById('enroll-instructor-select');
 
   if (studentSel) {
-    studentSel.innerHTML = students.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
+    studentSel.innerHTML = students.length
+      ? students.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')
+      : '<option value="">No assigned students available</option>';
   }
   if (programSel) {
     programSel.innerHTML = allPrograms.map(p => `<option value="${p.id}">${escHtml(p.name)} (${escHtml(p.code)})</option>`).join('');
   }
   if (instrSel) {
-    instrSel.innerHTML = '<option value="">Unassigned</option>' +
+    instrSel.innerHTML = (canManageTraining ? '<option value="">Unassigned</option>' : '') +
       instructors.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
     if (currentUser.role === 'instructor') {
       instrSel.value = String(currentUser.id);
     }
+    instrSel.disabled = currentUser.role === 'instructor' && !canManageTraining;
   }
 }
 

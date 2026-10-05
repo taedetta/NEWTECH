@@ -1330,6 +1330,56 @@ function testFollowUpBetaSecurityGuards() {
   );
 }
 
+function testPostAuditFollowUpGuards() {
+  const profileSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'profile.js'), 'utf8');
+  assert(
+    profileSrc.includes('SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2')
+      && profileSrc.includes('password_changed_at = NOW()')
+      && profileSrc.includes('signAuthToken(updated.rows[0])')
+      && profileSrc.includes('res.json({ ok: true, token })'),
+    'profile password changes must be source-scoped and invalidate old JWT sessions while returning a fresh token'
+  );
+
+  const briefingSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'instructor-briefing.js'), 'utf8');
+  assert(
+    briefingSrc.includes("const { getAppEnv } = require('./app-env')")
+      && briefingSrc.includes('AND b.source = $4')
+      && briefingSrc.includes('AND st.source = $2')
+      && briefingSrc.includes("WHERE s.status = 'open' AND s.source = $1")
+      && briefingSrc.includes('AND source = $1'),
+    'daily instructor briefing emails must be source-scoped on shared staging/production databases'
+  );
+
+  const utilizationSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'instructor-utilization.js'), 'utf8');
+  assert(
+    utilizationSrc.includes('const appEnv = getAppEnv()')
+      && utilizationSrc.includes('AND u.source = $1')
+      && utilizationSrc.includes("st.status = 'active' AND st.source = $1")
+      && utilizationSrc.includes('[appEnv]'),
+    'instructor utilization roster and assigned-student counts must be source-scoped'
+  );
+
+  const instructorHoursSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'instructor-hours.js'), 'utf8');
+  assert(
+    instructorHoursSrc.includes('const duplicateLockKey = [')
+      && instructorHoursSrc.includes('Math.round(instrHrsVal * 100)')
+      && instructorHoursSrc.includes('SELECT pg_advisory_xact_lock(719602, hashtext($1))'),
+    'manual instructor-hours creates must serialize duplicate checks before insert'
+  );
+
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert(
+    appSrc.includes('id="schedule-new-booking-btn"')
+      && appSrc.includes('function canCreateBookingsUi()')
+      && appSrc.includes("['owner', 'admin'].includes(currentUser.role)) return true")
+      && appSrc.includes('function canManageAllTrainingUi()')
+      && appSrc.includes('const reassignBtn = canManageAllTrainingUi()')
+      && appSrc.includes("instrSel.disabled = currentUser.role === 'instructor' && !canManageTraining")
+      && appSrc.includes("localStorage.setItem('fs_token', token);"),
+    'frontend must hide role-rejected schedule/training actions and persist fresh password-change tokens'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1368,6 +1418,7 @@ async function main() {
   testStagingQaFixturesUseCurrentSource();
   testProtectedDocumentDownloadsAndInstructorHoursBookingGuard();
   testFollowUpBetaSecurityGuards();
+  testPostAuditFollowUpGuards();
   console.log('critical bug regressions passed');
 }
 

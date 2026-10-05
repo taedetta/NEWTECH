@@ -111,6 +111,14 @@ router.post('/', authenticateToken, async (req, res) => {
     let audit;
     try {
       await client.query('BEGIN');
+      const duplicateLockKey = [
+        getAppEnv(),
+        instructorId,
+        entryDate,
+        aircraftIdForEntry == null ? 'none' : aircraftIdForEntry,
+        Math.round(instrHrsVal * 100),
+      ].join(':');
+      await client.query('SELECT pg_advisory_xact_lock(719602, hashtext($1))', [duplicateLockKey]);
       if (linkedBookingId) {
         // Serialize same-booking manual inserts across app instances before duplicate checks.
         await client.query('SELECT pg_advisory_xact_lock(719601, $1)', [linkedBookingId]);
