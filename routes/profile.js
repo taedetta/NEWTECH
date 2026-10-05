@@ -4,9 +4,9 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
+const { EMAIL_TYPES, getPreferenceCatalog, isRequiredEmailType } = require('../lib/notification-prefs');
 const { sendEmailToUser } = require('../lib/notification-prefs');
 const { profileChangeEmail } = require('../email-templates');
 
@@ -206,6 +206,7 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
     const patch = {};
     if (body.email_all_off !== undefined) patch.email_all_off = !!body.email_all_off;
     for (const key of Object.keys(EMAIL_TYPES)) {
+      if (isRequiredEmailType(key)) continue;
       if (body[key] !== undefined) patch[key] = !!body[key];
     }
     if (Object.keys(patch).length === 0) {
@@ -216,6 +217,34 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('[profile] PATCH email-preferences error:', err.message);
     res.status(500).json({ error: 'Failed to update email preferences' });
+  }
+});
+
+router.get('/cfi-profile', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT cfi_cert_number, cfi_expiry FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const user = result.rows[0] || {};
+    res.json({ cfi_cert_number: user.cfi_cert_number || '', cfi_expiry: user.cfi_expiry || null });
+  } catch (err) {
+    console.error('[profile] CFI profile GET error:', err.message);
+    res.status(500).json({ error: 'Failed to load CFI profile' });
+  }
+});
+
+router.put('/cfi-profile', authenticateToken, requireRole('instructor', 'owner', 'admin'), async (req, res) => {
+  try {
+    const { cfi_cert_number, cfi_expiry } = req.body || {};
+    await pool.query(
+      'UPDATE users SET cfi_cert_number = $1, cfi_expiry = $2 WHERE id = $3',
+      [cfi_cert_number || null, cfi_expiry || null, req.user.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[profile] CFI profile PUT error:', err.message);
+    res.status(500).json({ error: 'Failed to save CFI profile' });
   }
 });
 
