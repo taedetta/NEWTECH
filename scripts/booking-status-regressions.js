@@ -5,6 +5,10 @@ const {
   bookingBlocksSchedule,
   shouldCheckBookingUpdateConflicts,
 } = require('../lib/booking-status');
+const {
+  EMAIL_TYPES,
+  isRequiredEmailType,
+} = require('../lib/email-types');
 
 function expectConflictCheck(name, input, expected) {
   assert.strictEqual(
@@ -49,4 +53,9 @@ expectConflictCheck(
   false
 );
 
-console.log('booking status conflict-check regression tests passed');
+assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true, 'password reset is required');
+assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.account_approved), true, 'account approval is required');
+assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.welcome), true, 'welcome email is required');
+assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.booking_confirmation), false, 'booking confirmation is optional');
+
+console.log('critical bug regression tests passed');
