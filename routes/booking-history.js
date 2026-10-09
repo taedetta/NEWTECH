@@ -8,6 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { canManageBookingBilling } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -188,6 +189,7 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     if (!canEditBookingHistoryFlight(role, userId, b)) {
       return res.status(403).json({ error: 'You can only edit your own flight records' });
     }
+    const canManageBilling = canManageBookingBilling(role);
 
     const {
       flight_date,
@@ -221,10 +223,12 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     const dateVal = flight_date
       || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
       || new Date().toISOString().slice(0, 10);
-    const effectiveLessonType = inferLessonType(
-      lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
-      b
-    );
+    const effectiveLessonType = canManageBilling
+      ? inferLessonType(
+        lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
+        b
+      )
+      : inferLessonType(b.lesson_type, b);
 
     const client = await pool.connect();
     let inTxn = false;
@@ -239,9 +243,9 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
-        lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
+        lesson_type: canManageBilling ? effectiveLessonType : undefined,
+        aircraft_charge_amount: canManageBilling ? aircraft_charge_amount : undefined,
+        instruction_charge_amount: canManageBilling ? instruction_charge_amount : undefined,
         submitted_by: userId,
       });
 
@@ -278,6 +282,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!canEditGroundSessionHistory(role, userId, gs)) {
       return res.status(403).json({ error: 'You can only edit your own ground session records' });
     }
+    const canManageBilling = canManageBookingBilling(role);
 
     const { flight_date, dual_instruction_hours, instruction_charge_amount } = req.body;
     const sessionDate = flight_date || gs.session_date;
@@ -285,7 +290,7 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
     if (!groundHours || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
-    const instrCharge = instruction_charge_amount != null
+    const instrCharge = canManageBilling && instruction_charge_amount != null
       ? parseFloat(instruction_charge_amount)
       : (gs.instructor_rate != null
         ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
