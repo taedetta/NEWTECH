@@ -2,7 +2,6 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../db/index');
 const { authenticateToken, getUserPermissions } = require('../middleware/auth');
@@ -14,8 +13,9 @@ const { TERMS_VERSION } = require('../lib/terms');
 const { purgeUserPersonalData } = require('../lib/user-lifecycle');
 const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { enforceCaptcha } = require('../lib/captcha');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
+const { isPlatformAdminEmail } = require('../lib/platform-admin');
+const { getAppEnv } = require('../lib/app-env');
+const { signAuthToken } = require('../lib/auth-token');
 
 const router = express.Router();
 
@@ -65,29 +65,40 @@ router.post('/register', async (req, res) => {
     const userRole = validRoles.includes(role) ? role : 'student';
     // Only block ACTIVE (non-deleted) accounts — soft-deleted users can re-signup
     const existingActive = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL',
-      [email]
+      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2',
+      [email, getAppEnv()]
     );
     if (existingActive.rows.length > 0) {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
     // Reuse a soft-deleted user's email: undelete them and treat as new pending signup
     const existingDeleted = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NOT NULL',
-      [email]
+      'SELECT id, email, name, role FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NOT NULL AND source = $2',
+      [email, getAppEnv()]
     );
     if (existingDeleted.rows.length > 0) {
       const oldUser = existingDeleted.rows[0];
       const passwordHash = await bcrypt.hash(password, 12);
-      await purgeUserPersonalData(pool, oldUser.id);
-      await pool.query(
-        `UPDATE users SET deleted_at = NULL, password_hash = $1, name = $2, phone_number = $3,
-         role = $4, approval_status = 'pending',
-         is_instructor = CASE WHEN $4 = 'instructor' THEN TRUE ELSE FALSE END,
-         terms_accepted_at = NOW(), terms_version = $6,
-         updated_at = NOW() WHERE id = $5`,
-        [passwordHash, name, formattedPhone, userRole, oldUser.id, acceptedVersion]
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await purgeUserPersonalData(client, oldUser.id, getAppEnv());
+        await client.query(
+          `UPDATE users SET deleted_at = NULL, password_hash = $1, name = $2, phone_number = $3,
+           role = $4, approval_status = 'pending',
+           is_instructor = CASE WHEN $4 = 'instructor' THEN TRUE ELSE FALSE END,
+           terms_accepted_at = NOW(), terms_version = $6,
+           source = $7,
+           updated_at = NOW() WHERE id = $5`,
+          [passwordHash, name, formattedPhone, userRole, oldUser.id, acceptedVersion, getAppEnv()]
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
       res.json({
         user: { id: oldUser.id, email: oldUser.email, name, role: userRole, approval_status: 'pending' },
         pending: true,
@@ -100,10 +111,10 @@ router.post('/register', async (req, res) => {
     }
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      `INSERT INTO users (email, name, password_hash, role, phone_number, approval_status, is_instructor, terms_accepted_at, terms_version)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7)
+      `INSERT INTO users (email, name, password_hash, role, phone_number, approval_status, is_instructor, terms_accepted_at, terms_version, source)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), $7, $8)
        RETURNING id, email, name, role, phone_number, approval_status, terms_accepted_at, terms_version`,
-      [email.toLowerCase(), name, passwordHash, userRole, formattedPhone, userRole === 'instructor', acceptedVersion]
+      [email.toLowerCase(), name, passwordHash, userRole, formattedPhone, userRole === 'instructor', acceptedVersion, getAppEnv()]
     );
     const user = result.rows[0];
     // New users land on pending-approval screen — no token issued, no app access
@@ -152,31 +163,31 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     const result = await pool.query(
-      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor FROM users WHERE LOWER(email) = LOWER($1)',
-      [email]
+      'SELECT id, email, name, password_hash, role, deleted_at, approval_status, is_instructor, password_changed_at FROM users WHERE LOWER(email) = LOWER($1) AND source = $2',
+      [email, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     const user = result.rows[0];
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
-    }
-    // Reactivate soft-deleted account on successful login
-    if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
     }
     // Account pending approval — correct credentials but not yet activated
     if (user.approval_status === 'pending') {
       return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
     }
-    const token = jwt.sign(
-      { id: user.id, email: user.email, name: user.name, role: user.role },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    if (user.deleted_at || user.approval_status === 'rejected') {
+      return res.status(403).json({ error: 'account_inactive', message: 'This account is not active.' });
+    }
+    if (user.approval_status && user.approval_status !== 'approved') {
+      return res.status(403).json({ error: 'account_not_approved', message: 'This account is not approved.' });
+    }
+    const token = signAuthToken(user);
     const permissions = await getUserPermissions(user.id, user.role);
     res.cookie('token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     const response = { user: { id: user.id, email: user.email, name: user.name, role: user.role, is_instructor: !!user.is_instructor, permissions }, token };
@@ -206,8 +217,9 @@ router.post('/forgot-password', async (req, res) => {
        WHERE LOWER(email) = LOWER($1)
          AND deleted_at IS NULL
          AND password_hash IS NOT NULL
-         AND approval_status = 'approved'`,
-      [email]
+         AND approval_status = 'approved'
+         AND source = $2`,
+      [email, getAppEnv()]
     );
     if (result.rows.length === 0) {
       // No active approved account — do not send email
@@ -250,11 +262,11 @@ router.post('/reset-password', async (req, res) => {
     }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const result = await pool.query(
-      `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name
+      `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name, u.deleted_at, u.approval_status
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
-       WHERE prt.token_hash = $1 AND prt.used_at IS NULL`,
-      [tokenHash]
+       WHERE prt.token_hash = $1 AND prt.used_at IS NULL AND u.source = $2`,
+      [tokenHash, getAppEnv()]
     );
     if (result.rows.length === 0) {
       return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
@@ -263,10 +275,16 @@ router.post('/reset-password', async (req, res) => {
     if (new Date(row.expires_at) < new Date()) {
       return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
     }
+    if (row.deleted_at || (row.approval_status && row.approval_status !== 'approved')) {
+      return res.status(403).json({ error: 'This account is not active.' });
+    }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, deleted_at = NULL, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 AND source = $3',
+      [passwordHash, row.user_id, getAppEnv()]
+    );
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
-    console.log(`[auth] Password reset + account reactivation for user_id=${row.user_id} (${row.email})`);
+    console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[reset-password] error:', err.message);
@@ -279,13 +297,14 @@ router.get('/me', authenticateToken, async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.email, u.name, u.role, u.deleted_at, u.approval_status, u.is_instructor,
          u.total_hobbs_hours, u.total_tach_hours, u.phone_number,
+         u.password_changed_at,
          ip.can_manage_aircraft, ip.can_manage_instructors,
          ip.can_manage_permissions, ip.can_manage_students,
          COALESCE(ip.can_edit_website, false) as can_edit_website
        FROM users u
        LEFT JOIN user_permissions ip ON ip.user_id = u.id
-       WHERE u.id = $1`,
-      [req.user.id]
+       WHERE u.id = $1 AND u.source = $2`,
+      [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (result.rows[0].deleted_at) return res.status(401).json({ error: 'Account has been deleted' });
@@ -301,14 +320,10 @@ router.get('/me', authenticateToken, async (req, res) => {
         };
     let freshToken = null;
     if (u.role !== req.user.role) {
-      freshToken = jwt.sign(
-        { id: u.id, email: u.email, name: u.name, role: u.role },
-        JWT_SECRET,
-        { expiresIn: '7d' }
-      );
+      freshToken = signAuthToken(u);
       res.cookie('token', freshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     }
-    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
+    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' AND source = $1 LIMIT 1", [getAppEnv()]);
     const response = { user: { id: u.id, email: u.email, name: u.name, role: u.role, is_instructor: !!u.is_instructor, permissions,
       approval_status: u.approval_status || 'approved',
       total_hobbs_hours: u.total_hobbs_hours || 0,
@@ -325,22 +340,29 @@ router.get('/me', authenticateToken, async (req, res) => {
 
 router.post('/claim-owner', authenticateToken, async (req, res) => {
   try {
-    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner'");
+    if (!isPlatformAdminEmail(req.user.email)) {
+      return res.status(403).json({ error: 'Only the platform administrator can claim owner role' });
+    }
+    const ownerCheck = await pool.query("SELECT id FROM users WHERE role = 'owner' AND source = $1", [getAppEnv()]);
     if (ownerCheck.rows.length > 0) {
       return res.status(409).json({ error: 'An owner already exists' });
     }
-    const currentRole = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
-    if (['student', 'renter'].includes(currentRole.rows[0]?.role)) {
-      return res.status(403).json({ error: 'Students and renters cannot claim owner role' });
+    const currentRole = await pool.query(
+      'SELECT role, approval_status, deleted_at FROM users WHERE id = $1 AND source = $2',
+      [req.user.id, getAppEnv()]
+    );
+    const currentUser = currentRole.rows[0];
+    if (!currentUser || currentUser.deleted_at || currentUser.approval_status !== 'approved' || currentUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an approved platform admin can claim owner role' });
     }
     const result = await pool.query(
-      "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 RETURNING id, email, name, role",
-      [req.user.id]
+      "UPDATE users SET role = 'owner', updated_at = NOW() WHERE id = $1 AND source = $2 RETURNING id, email, name, role, password_changed_at",
+      [req.user.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = result.rows[0];
-    const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true };
-    const newToken = jwt.sign({ id: user.id, email: user.email, name: user.name, role: 'owner' }, JWT_SECRET, { expiresIn: '7d' });
+    const permissions = { can_manage_aircraft: true, can_manage_instructors: true, can_manage_permissions: true, can_manage_students: true, can_edit_website: true };
+    const newToken = signAuthToken(user);
     res.cookie('token', newToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ user: { ...user, permissions }, token: newToken });
   } catch (err) {

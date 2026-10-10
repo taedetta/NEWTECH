@@ -106,10 +106,10 @@ async function createManualLead({ name, email, phone, preferred_date, experience
     if (!/program_interest|source_label|source/i.test(err.message)) throw err;
     result = await pool.query(
       `INSERT INTO discovery_flight_leads
-         (name, email, phone, preferred_date, experience_level, message, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+         (name, email, phone, preferred_date, experience_level, message, status, created_at, updated_at, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
        RETURNING *`,
-      [name, email, phone, preferred_date || null, experience_level || null, message || null, status || 'new']
+      [name, email, phone, preferred_date || null, experience_level || null, message || null, status || 'new', source]
     );
   }
   const lead = normalizeLeadRow(result.rows[0]);
@@ -219,6 +219,14 @@ async function markLeadConverted(id, userId, convertedUserId) {
   return normalizeLeadRow(result.rows[0]);
 }
 
+async function deleteLead(id) {
+  const result = await queryWithSourceFilter(
+    'DELETE FROM discovery_flight_leads WHERE id = $1 RETURNING id',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   createLead,
   createManualLead,
@@ -231,4 +239,5 @@ module.exports = {
   logLeadActivity,
   recordLeadFollowUp,
   markLeadConverted,
+  deleteLead,
 };

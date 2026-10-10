@@ -2,6 +2,8 @@
 -- Safe to re-run (IF NOT EXISTS / idempotent updates).
 
 -- ── Squawks ──
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
@@ -34,17 +36,25 @@ ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_level V
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_notes TEXT;
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_by INTEGER REFERENCES users(id);
 ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS manual_override_at TIMESTAMPTZ;
+ALTER TABLE at_risk_assessments ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE at_risk_assessments SET source = 'production' WHERE source IS NULL;
 UPDATE at_risk_assessments SET manual_override_level = manual_override WHERE manual_override_level IS NULL AND manual_override IS NOT NULL;
 -- Dedupe before unique index (clone/migration may insert duplicates)
 DELETE FROM at_risk_assessments a
 USING at_risk_assessments b
-WHERE a.student_id IS NOT NULL AND a.student_id = b.student_id AND a.id > b.id;
-CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_id_unique ON at_risk_assessments(student_id);
+WHERE a.student_id IS NOT NULL
+  AND a.student_id = b.student_id
+  AND COALESCE(a.source, 'production') = COALESCE(b.source, 'production')
+  AND a.id > b.id;
+DROP INDEX IF EXISTS at_risk_assessments_student_id_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS at_risk_assessments_student_source_unique ON at_risk_assessments(student_id, source);
 
 -- ── Student interventions ──
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS instructor_id INTEGER REFERENCES users(id);
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS action_taken TEXT;
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS action_date DATE;
+ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE student_interventions SET source = 'production' WHERE source IS NULL;
 
 -- ── Instructor hours (expanded from legacy period-based table) ──
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS entry_date DATE;
@@ -59,13 +69,20 @@ ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS booking_id INTEGER REFEREN
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_status VARCHAR(20) DEFAULT 'pending';
 ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS audit_message TEXT;
+ALTER TABLE instructor_hours ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
 UPDATE instructor_hours SET audit_status = 'pending' WHERE audit_status IS NULL;
+UPDATE instructor_hours SET source = 'production' WHERE source IS NULL;
 UPDATE bookings SET source = 'production' WHERE source IS NULL;
 UPDATE flight_logs SET source = 'production' WHERE source IS NULL;
 
 -- ── Users: terms acceptance audit trail ──
 ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version VARCHAR(32);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE users SET source = 'production' WHERE source IS NULL;
+DROP INDEX IF EXISTS users_email_unique_idx;
+DROP INDEX IF EXISTS users_email_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users(LOWER(email), source);
 
 -- ── Leads: program interest + activity history ──
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS program_interest VARCHAR(100);
@@ -166,6 +183,11 @@ CREATE TABLE IF NOT EXISTS airworthiness_directives (
 CREATE INDEX IF NOT EXISTS airworthiness_directives_aircraft_id_idx ON airworthiness_directives(aircraft_id);
 
 -- ── Training: stage maneuvers + student progress ──
+ALTER TABLE training_programs ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE training_programs SET source = 'production' WHERE source IS NULL;
+ALTER TABLE training_programs DROP CONSTRAINT IF EXISTS training_programs_code_key;
+DROP INDEX IF EXISTS training_programs_code_key;
+CREATE UNIQUE INDEX IF NOT EXISTS training_programs_code_source_unique ON training_programs(code, source);
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS proficiency_standard TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
@@ -174,12 +196,41 @@ ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS module_number INTEGER;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS reading_assignment TEXT;
 ALTER TABLE stage_maneuvers ADD COLUMN IF NOT EXISTS lesson_tasks JSONB DEFAULT '[]';
 ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS notes TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_unique ON student_maneuver_progress(student_id, maneuver_id);
-CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_unique ON student_training(student_id, program_id);
+ALTER TABLE student_maneuver_progress ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE student_maneuver_progress SET source = 'production' WHERE source IS NULL;
+ALTER TABLE student_training ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE student_training SET source = 'production' WHERE source IS NULL;
+ALTER TABLE milestone_completions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE milestone_completions SET source = 'production' WHERE source IS NULL;
+DELETE FROM milestone_completions mc
+USING milestone_completions newer
+WHERE mc.student_id = newer.student_id
+  AND mc.stage_id = newer.stage_id
+  AND mc.source = newer.source
+  AND mc.id > newer.id;
+DROP INDEX IF EXISTS student_maneuver_progress_student_maneuver_unique;
+DROP INDEX IF EXISTS student_training_student_program_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS student_maneuver_progress_student_maneuver_source_unique ON student_maneuver_progress(student_id, maneuver_id, source);
+CREATE UNIQUE INDEX IF NOT EXISTS student_training_student_program_source_unique ON student_training(student_id, program_id, source);
+CREATE UNIQUE INDEX IF NOT EXISTS milestone_completions_student_stage_source_unique ON milestone_completions(student_id, stage_id, source);
+
+-- ── File editor overrides ──
+ALTER TABLE file_overrides ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE file_overrides SET source = 'production' WHERE source IS NULL;
+ALTER TABLE file_overrides ALTER COLUMN source SET NOT NULL;
+ALTER TABLE file_overrides DROP CONSTRAINT IF EXISTS file_overrides_file_path_key;
+DROP INDEX IF EXISTS file_overrides_file_path_key;
+CREATE UNIQUE INDEX IF NOT EXISTS file_overrides_file_path_source_unique ON file_overrides(file_path, source);
 
 -- ── At-risk interventions ──
 ALTER TABLE student_interventions ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ DEFAULT NOW();
 UPDATE student_interventions SET occurred_at = COALESCE(occurred_at, created_at, NOW()) WHERE occurred_at IS NULL;
+
+-- ── Source isolation for legacy student progress/debrief tables ──
+ALTER TABLE flight_debriefs ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE flight_debriefs SET source = 'production' WHERE source IS NULL;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE feedback SET source = 'production' WHERE source IS NULL;
 
 -- ── Ground sessions ──
 ALTER TABLE ground_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
@@ -216,6 +267,9 @@ ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES loc
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES locations(id);
 UPDATE aircraft SET location_id = (SELECT id FROM locations WHERE is_default = true LIMIT 1)
 WHERE location_id IS NULL;
+ALTER TABLE aircraft DROP CONSTRAINT IF EXISTS aircraft_tail_number_key;
+DROP INDEX IF EXISTS aircraft_tail_number_key;
+CREATE UNIQUE INDEX IF NOT EXISTS aircraft_tail_number_source_unique ON aircraft(tail_number, source);
 
 -- ── Student document vault ──
 CREATE TABLE IF NOT EXISTS student_documents (
@@ -239,8 +293,15 @@ CREATE TABLE IF NOT EXISTS message_threads (
   instructor_id INTEGER NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(student_id, instructor_id)
+  source VARCHAR(20) DEFAULT 'production'
 );
+ALTER TABLE message_threads ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE message_threads SET source = 'production' WHERE source IS NULL;
+ALTER TABLE message_threads DROP CONSTRAINT IF EXISTS message_threads_student_id_instructor_id_key;
+DROP INDEX IF EXISTS message_threads_student_id_instructor_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS message_threads_student_instructor_source_unique
+  ON message_threads(student_id, instructor_id, source);
+CREATE INDEX IF NOT EXISTS message_threads_source_idx ON message_threads(source);
 CREATE TABLE IF NOT EXISTS messages (
   id SERIAL PRIMARY KEY,
   thread_id INTEGER NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
