@@ -63,6 +63,11 @@ if (!adminSrc.includes("require('../lib/app-env')") || !adminSrc.includes('isSta
   fail('Reset all data is not blocked on staging');
 } else ok('Reset all data is blocked on staging');
 
+const startupSrc = fs.readFileSync(path.join(root, 'services/startup.js'), 'utf8');
+if (!startupSrc.includes("require('../lib/user-permissions-db')") || !startupSrc.includes('upsertFullUserPermissions')) {
+  fail('Default admin bootstrap permission helper is not imported');
+} else ok('Default admin bootstrap permission helper imported');
+
 // 4. Page div coverage for nav items in app.html
 console.log('\n=== Page div coverage ===');
 const appHtml = fs.readFileSync(path.join(root, 'public/app.html'), 'utf8');

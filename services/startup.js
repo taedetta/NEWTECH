@@ -12,6 +12,7 @@ const fetch = require('node-fetch');
 const { getPlatformAdminEmail } = require('../lib/platform-admin');
 const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
 const { getAppEnv } = require('../lib/app-env');
+const { upsertFullUserPermissions } = require('../lib/user-permissions-db');
 
 // backup-service.js removed from services/ — backup scheduling skipped
 // migrateDataUriImagesToR2 is provided inline below
