@@ -260,12 +260,9 @@ async function resolveDiscrepancy(id, resolvedBy, reading, note) {
   try {
     await client.query('BEGIN');
     const existing = await client.query(
-      `SELECT d.*,
-              fl.aircraft_charge_amount AS existing_aircraft_charge_amount,
-              fl.instruction_charge_amount AS existing_instruction_charge_amount
+      `SELECT d.*
        FROM flight_discrepancies d
        JOIN bookings b ON b.id = d.booking_id
-       LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id AND fl.source = b.source
        WHERE d.id = $1 AND b.source = $2
        FOR UPDATE OF d`,
       [id, getAppEnv()]
@@ -288,12 +285,6 @@ async function resolveDiscrepancy(id, resolvedBy, reading, note) {
       hobbs_end: hobbsEnd,
       preserve_instructor_hours_rates: true,
     };
-    if (discrepancy.existing_aircraft_charge_amount != null) {
-      syncPatch.aircraft_charge_amount = discrepancy.existing_aircraft_charge_amount;
-    }
-    if (discrepancy.existing_instruction_charge_amount != null) {
-      syncPatch.instruction_charge_amount = discrepancy.existing_instruction_charge_amount;
-    }
 
     await syncFlightRecord(client, discrepancy.booking_id, syncPatch);
 

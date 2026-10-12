@@ -748,13 +748,17 @@ function testSubagentFollowUpGuards() {
   assert(
     discrepanciesSrc.includes("const { syncFlightRecord } = require('../lib/sync-flight-record')")
       && discrepanciesSrc.includes('JOIN bookings b ON b.id = d.booking_id')
-      && discrepanciesSrc.includes('LEFT JOIN flight_logs fl ON fl.booking_id = d.booking_id AND fl.source = b.source')
       && discrepanciesSrc.includes('WHERE d.id = $1 AND b.source = $2')
-      && discrepanciesSrc.includes('existing_aircraft_charge_amount')
-      && discrepanciesSrc.includes('syncPatch.aircraft_charge_amount = discrepancy.existing_aircraft_charge_amount')
-      && discrepanciesSrc.includes('syncPatch.instruction_charge_amount = discrepancy.existing_instruction_charge_amount')
+      && discrepanciesSrc.includes('preserve_instructor_hours_rates: true')
       && discrepanciesSrc.includes('await syncFlightRecord(client, discrepancy.booking_id'),
-    'discrepancy resolution must sync selected readings without recomputing existing flight-log charges'
+    'discrepancy resolution must sync selected readings through source-scoped bookings'
+  );
+  assert(
+    !discrepanciesSrc.includes('existing_aircraft_charge_amount')
+      && !discrepanciesSrc.includes('existing_instruction_charge_amount')
+      && !discrepanciesSrc.includes('syncPatch.aircraft_charge_amount')
+      && !discrepanciesSrc.includes('syncPatch.instruction_charge_amount'),
+    'discrepancy resolution must recompute charges from the selected Hobbs reading'
   );
 
   const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
