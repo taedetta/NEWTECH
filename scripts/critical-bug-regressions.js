@@ -1384,6 +1384,30 @@ function testPostAuditFollowUpGuards() {
   );
 }
 
+function testAnalyticsSourceIsolationGuards() {
+  const analyticsDbSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'analytics.js'), 'utf8');
+  const bootstrapSchema = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'bootstrap-schema.sql'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'schema-patches.sql'), 'utf8');
+
+  assert(
+    analyticsDbSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+      && analyticsDbSrc.includes('path, referrer, user_agent, ip_hash, country, source')
+      && analyticsDbSrc.includes('const source = getAppEnv()')
+      && analyticsDbSrc.includes('AND source = $2')
+      && analyticsDbSrc.includes('AND source = $3'),
+    'analytics page-view inserts and reads must be source-scoped for shared staging/production databases'
+  );
+
+  assert(
+    bootstrapSchema.includes("CREATE TABLE IF NOT EXISTS page_views")
+      && bootstrapSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+      && schemaPatches.includes('ALTER TABLE page_views ADD COLUMN IF NOT EXISTS source')
+      && schemaPatches.includes("UPDATE page_views SET source = 'production' WHERE source IS NULL")
+      && schemaPatches.includes('page_views_source_created_at_idx'),
+    'schema setup must provision page_views.source and backfill legacy analytics rows'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1423,6 +1447,7 @@ async function main() {
   testProtectedDocumentDownloadsAndInstructorHoursBookingGuard();
   testFollowUpBetaSecurityGuards();
   testPostAuditFollowUpGuards();
+  testAnalyticsSourceIsolationGuards();
   console.log('critical bug regressions passed');
 }
 

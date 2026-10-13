@@ -440,8 +440,10 @@ CREATE TABLE IF NOT EXISTS page_views (
   user_agent TEXT,
   ip_hash VARCHAR(64),
   country VARCHAR(10),
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
+CREATE INDEX IF NOT EXISTS page_views_source_created_at_idx ON page_views(source, created_at);
 
 CREATE TABLE IF NOT EXISTS aircraft_downtime (
   id SERIAL PRIMARY KEY,

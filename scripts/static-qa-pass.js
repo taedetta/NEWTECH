@@ -422,6 +422,19 @@ if (!instructorHoursSchema.includes("source VARCHAR(20) DEFAULT 'production'")
   fail('Local schema setup does not create instructor_hours.source');
 } else ok('Local schema setup creates instructor_hours.source');
 
+const pageViewsStart = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS page_views');
+const nextCreateAfterPageViews = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS', pageViewsStart + 1);
+const pageViewsSchema = pageViewsStart >= 0
+  ? bootstrapSchema.slice(pageViewsStart, nextCreateAfterPageViews)
+  : '';
+const analyticsDbSrc = fs.readFileSync(path.join(root, 'db', 'analytics.js'), 'utf8');
+if (!pageViewsSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+  || !schemaPatches.includes('ALTER TABLE page_views ADD COLUMN IF NOT EXISTS source')
+  || !analyticsDbSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+  || !analyticsDbSrc.includes('AND source = $')) {
+  fail('Analytics page views are not source-isolated');
+} else ok('Analytics page views are source-isolated');
+
 const seedUsersSrc = fs.readFileSync(path.join(root, 'scripts', 'seed-test-users.js'), 'utf8');
 if (!/for \(const user of TEST_USERS\)[\s\S]*await ensureUserSequence\(pool\);[\s\S]*await ensureSampleAircraft/.test(seedUsersSrc)) {
   fail('QA user seeding does not reset users sequence after explicit IDs');

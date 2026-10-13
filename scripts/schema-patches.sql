@@ -9,6 +9,11 @@ ALTER TABLE squawks ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 ALTER TABLE squawks ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
 UPDATE squawks SET reported_at = COALESCE(reported_at, created_at, NOW()) WHERE reported_at IS NULL;
 
+-- ── Analytics page views ──
+ALTER TABLE page_views ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE page_views SET source = 'production' WHERE source IS NULL;
+CREATE INDEX IF NOT EXISTS page_views_source_created_at_idx ON page_views(source, created_at);
+
 -- ── Aircraft hours history ──
 ALTER TABLE aircraft_hours_history ADD COLUMN IF NOT EXISTS changed_by INTEGER REFERENCES users(id);
 ALTER TABLE aircraft_hours_history ADD COLUMN IF NOT EXISTS note TEXT;
