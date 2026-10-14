@@ -15930,6 +15930,34 @@ function toggleFlogCard(card) {
   card.classList.toggle('expanded');
 }
 
+function canRemoveMissingHoursBooking() {
+  return currentUser && ['owner', 'admin'].includes(currentUser.role);
+}
+
+function missingHoursDeleteBtn(id, tableButton) {
+  if (!canRemoveMissingHoursBooking()) return '';
+  const style = tableButton
+    ? 'font-size:0.72rem;padding:2px 10px;margin-left:4px'
+    : '';
+  return `<button class="btn btn-danger btn-sm" style="${style}" onclick="removeMissingHoursBooking(${id})">Remove</button>`;
+}
+
+async function removeMissingHoursBooking(id) {
+  if (!canRemoveMissingHoursBooking()) return;
+  if (!confirm('Remove this booking from Missing Hours? This cancels the booking without logging hours.')) return;
+  try {
+    await api(`/api/bookings/${id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason: 'Removed from Missing Hours' }),
+    });
+    showToast('Booking removed from Missing Hours', 'success');
+    await loadMissingHours();
+    if (currentPage === 'dashboard') loadDashboard();
+  } catch (err) {
+    showToast(err.error || 'Failed to remove booking', 'error');
+  }
+}
+
 async function loadMissingHours() {
   const emptyEl = document.getElementById('missing-hours-empty');
   const tableWrap = document.getElementById('missing-hours-table-wrap');

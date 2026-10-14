@@ -12,6 +12,9 @@
     "test:qa": "node scripts/seed-test-users.js && node scripts/comprehensive-qa.js",
     "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
     "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
+    "test:booking-conflicts": "node scripts/booking-conflict-regression.js",
+    "test:critical-bugs": "npm run test:booking-conflicts && npm run test:missing-hours && npm run test:unsubscribe-security",
+    "test:missing-hours": "node scripts/missing-hours-regression.js",
     "test:unsubscribe-security": "node scripts/unsubscribe-security-regression.js",
     "test:schema": "node scripts/verify-schema.js --fix",
     "test:pipeline": "node scripts/test-complete-pipeline.js"
