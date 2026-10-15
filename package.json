@@ -12,6 +12,8 @@
     "test:qa": "node scripts/seed-test-users.js && node scripts/comprehensive-qa.js",
     "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
     "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
+    "test:locations-db": "node scripts/test-locations-db.js",
+    "test:training-admin-routes": "node scripts/test-training-admin-routes.js",
     "test:schema": "node scripts/verify-schema.js --fix",
     "test:pipeline": "node scripts/test-complete-pipeline.js"
   },
