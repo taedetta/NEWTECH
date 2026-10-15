@@ -9,9 +9,10 @@ const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notificatio
 const { EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
 const { sendEmailToUser } = require('../lib/notification-prefs');
 const { profileChangeEmail } = require('../email-templates');
+const { getJwtSecret } = require('../lib/jwt-secret');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
+const JWT_SECRET = getJwtSecret();
 
 function formatPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');

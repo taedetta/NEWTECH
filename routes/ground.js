@@ -85,7 +85,7 @@ router.delete('/clear', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    if (role === 'student') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(role)) return res.status(403).json({ error: 'Access denied' });
     const sessionId = parseInt(req.params.id);
     const existing = await pool.query('SELECT instructor_id FROM ground_sessions WHERE id = $1', [sessionId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Ground session not found' });

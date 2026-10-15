@@ -224,11 +224,13 @@ router.get('/', authenticateToken, async (req, res) => {
         params.push(req.user.id);
         query += ` AND e.instructor_id = $${params.length}`;
       }
-    } else {
+    } else if (['owner', 'admin'].includes(req.user.role)) {
       if (student_id) {
         params.push(parseInt(student_id));
         query += ` AND e.student_id = $${params.length}`;
       }
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     if (status === 'active') {

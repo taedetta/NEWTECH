@@ -646,6 +646,8 @@ async function createBookingInternal(client, req) {
   if (end <= start) return { error: 'End time must be after start time' };
   const policy = await getPolicySettings();
   const isAdmin = ['owner', 'admin'].includes(req.user.role);
+  const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+  if (forceBooking && !isAdmin) return { error: 'Only owners and admins can force bookings' };
   const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
   if (timeCheck.errors.length) return { error: timeCheck.errors[0] };
 
@@ -675,6 +677,14 @@ async function createBookingInternal(client, req) {
     if (conflicts.length) {
       await client.query('ROLLBACK');
       return { error: 'Scheduling conflict', conflicts };
+    }
+    if (iid && !forceBooking) {
+      const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
+      const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
+      if (!availCheck.available) {
+        await client.query('ROLLBACK');
+        return { error: 'Instructor not available' };
+      }
     }
     const result = await client.query(
       `INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, created_by, booking_type)
@@ -713,6 +723,10 @@ router.post('/', authenticateToken, async (req, res) => {
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+    if (forceBooking && !isAdmin) {
+      return res.status(403).json({ error: 'Only owners and admins can force bookings' });
+    }
     const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
@@ -766,8 +780,7 @@ router.post('/', authenticateToken, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
-    const selfService = ['student', 'renter', 'instructor'].includes(req.user.role);
-    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+    if (iid && !forceBooking) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
       if (!availCheck.available) {
@@ -840,7 +853,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
@@ -958,21 +971,37 @@ router.put('/:id', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
-    const existing = await client.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
-    if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
-    if (b.status === 'completed') return res.status(400).json({ error: 'Cannot cancel a completed booking' });
+    if (!canAccessBooking(req.user, b)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (b.status !== 'confirmed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be cancelled' });
+    }
     const policy = await getPolicySettings();
     const cancelCheck = validateCancellation({ bookingStart: b.start_time, userRole: req.user.role, isAdmin, policy });
-    if (!cancelCheck.allowed) return res.status(403).json({ error: cancelCheck.error });
+    if (!cancelCheck.allowed) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: cancelCheck.error });
+    }
     const reason = req.body?.reason || null;
-    await client.query('BEGIN');
-    await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2`,
+    const updated = await client.query(
+      `UPDATE bookings SET status = 'cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2 AND status = 'confirmed'`,
       [reason, req.params.id]
     );
+    if (updated.rowCount !== 1) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only confirmed bookings can be cancelled' });
+    }
     await client.query('COMMIT');
     res.json({ ok: true });
 
