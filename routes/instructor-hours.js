@@ -12,6 +12,7 @@ const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 const { inferLessonType } = require('../lib/booking-rules');
+const { parseMeterReading } = require('../lib/aircraft-meter');
 
 const router = express.Router();
 
@@ -208,8 +209,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
     if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
     const row = existing.rows[0];
-    const acHrsVal = parseFloat(aircraft_hours) || 0;
-    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const acHoursParsed = (aircraft_hours === undefined || aircraft_hours === null || aircraft_hours === '')
+      ? { value: 0 }
+      : parseMeterReading(aircraft_hours, 'aircraft_hours');
+    if (acHoursParsed.error) return res.status(400).json({ error: acHoursParsed.error });
+    const instrHoursParsed = parseMeterReading(instruction_hours, 'instruction_hours');
+    if (instrHoursParsed.error) return res.status(400).json({ error: instrHoursParsed.error });
+    const acHrsVal = acHoursParsed.value;
+    const instrHrsVal = instrHoursParsed.value;
     const newDate = entry_date || row.entry_date;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
