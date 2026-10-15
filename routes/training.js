@@ -767,7 +767,8 @@ router.patch('/enroll/:id', authenticateToken, requireRole('owner', 'admin', 'in
     const { instructor_id } = req.body;
     const updated = await trainingDb.reassignInstructor(
       enrollmentId,
-      instructor_id ? parseInt(instructor_id) : null
+      instructor_id ? parseInt(instructor_id) : null,
+      req.user
     );
     res.json(updated);
   } catch (err) {
