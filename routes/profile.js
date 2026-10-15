@@ -6,9 +6,9 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
-const { sendEmailToUser } = require('../lib/notification-prefs');
-const { profileChangeEmail } = require('../email-templates');
+const { EMAIL_TYPES, getPreferenceCatalog, sendEmailToUser } = require('../lib/notification-prefs');
+const { isRequiredEmailType } = require('../lib/email-types');
+const { sendEmail, profileChangeEmail } = require('../email-templates');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED';
@@ -120,7 +120,8 @@ router.patch('/profile', authenticateToken, async (req, res) => {
     }
 
     const changes = [];
-    if (email !== undefined && u.email !== prev.email) {
+    const emailChanged = email !== undefined && u.email !== prev.email;
+    if (emailChanged) {
       changes.push({ label: 'Email', value: u.email });
     }
     if (phone_number !== undefined && u.phone_number !== prev.phone_number) {
@@ -128,6 +129,10 @@ router.patch('/profile', authenticateToken, async (req, res) => {
     }
     if (changes.length > 0) {
       const tpl = profileChangeEmail({ name: u.name, changes });
+      if (emailChanged && prev.email) {
+        sendEmail(prev.email, tpl.subject, tpl.html, tpl.text)
+          .catch((err) => console.error('[profile] profile-change old-email alert error:', err.message));
+      }
       sendEmailToUser(u.id, u.email, EMAIL_TYPES.profile_change, tpl.subject, tpl.html, tpl.text)
         .catch((err) => console.error('[profile] profile-change email error:', err.message));
     }
@@ -206,6 +211,7 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
     const patch = {};
     if (body.email_all_off !== undefined) patch.email_all_off = !!body.email_all_off;
     for (const key of Object.keys(EMAIL_TYPES)) {
+      if (isRequiredEmailType(key)) continue;
       if (body[key] !== undefined) patch[key] = !!body[key];
     }
     if (Object.keys(patch).length === 0) {
