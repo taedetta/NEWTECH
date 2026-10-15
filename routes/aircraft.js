@@ -7,6 +7,7 @@ const { uploadBuffer } = require('../lib/r2-storage');
 const { getMeterHobbs, getMeterTach } = require('../lib/aircraft-meter');
 const { findBookingsOverlappingDowntime } = require('../lib/downtime-overlap');
 const { authenticateToken, requireRole, requirePermission } = require('../middleware/auth');
+const { parseStrictNumber } = require('../lib/number-input');
 
 const router = express.Router();
 
@@ -26,10 +27,14 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
     if (!tail_number || !make_model) {
       return res.status(400).json({ error: 'Tail number and make/model are required' });
     }
+    const rate = hourly_rate != null
+      ? parseStrictNumber(hourly_rate, 'hourly_rate', { allowBlank: true, max: 999999 })
+      : { value: null };
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
       `INSERT INTO aircraft (tail_number, make_model, type, year, hourly_rate, notes)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, hourly_rate, notes]
+      [tail_number.toUpperCase(), make_model, type || 'single_engine', year, rate.value, notes]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -44,12 +49,16 @@ router.post('/', authenticateToken, requirePermission('can_manage_aircraft'), as
 router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { tail_number, make_model, type, year, hourly_rate, status, notes } = req.body;
+    const rate = hourly_rate != null
+      ? parseStrictNumber(hourly_rate, 'hourly_rate', { allowBlank: true, max: 999999 })
+      : { value: null };
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
       `UPDATE aircraft SET tail_number = COALESCE($1, tail_number), make_model = COALESCE($2, make_model),
        type = COALESCE($3, type), year = COALESCE($4, year), hourly_rate = COALESCE($5, hourly_rate),
        status = COALESCE($6, status), notes = COALESCE($7, notes), updated_at = NOW()
        WHERE id = $8 RETURNING *`,
-      [tail_number?.toUpperCase(), make_model, type, year, hourly_rate, status, notes, req.params.id]
+      [tail_number?.toUpperCase(), make_model, type, year, rate.value, status, notes, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     res.json(result.rows[0]);
@@ -157,6 +166,10 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
   if (hobbs == null && tach == null) {
     return res.status(400).json({ error: 'hobbs or tach value is required' });
   }
+  const hParsed = hobbs != null ? parseStrictNumber(hobbs, 'hobbs') : { value: null };
+  if (hParsed.error) return res.status(400).json({ error: hParsed.error });
+  const tParsed = tach != null ? parseStrictNumber(tach, 'tach') : { value: null };
+  if (tParsed.error) return res.status(400).json({ error: tParsed.error });
   const client = await pool.connect();
   try {
     const current = await client.query(
@@ -170,14 +183,12 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     const vals = [];
     let idx = 1;
     if (hobbs != null) {
-      const hVal = parseFloat(hobbs);
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
-      vals.push(hVal, hVal);
+      vals.push(hParsed.value, hParsed.value);
     }
     if (tach != null) {
-      const tVal = parseFloat(tach);
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
-      vals.push(tVal, tVal);
+      vals.push(tParsed.value, tParsed.value);
     }
     sets.push('updated_at = NOW()');
     vals.push(req.params.id);
@@ -189,14 +200,14 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'hobbs', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterHobbs(acRow), parseFloat(hobbs), note || null]
+        [req.params.id, req.user.id, getMeterHobbs(acRow), hParsed.value, note || null]
       );
     }
     if (tach != null) {
       await client.query(
         `INSERT INTO aircraft_hours_history (aircraft_id, changed_by, field, old_value, new_value, note, source)
          VALUES ($1, $2, 'tach', $3, $4, $5, 'manual_edit')`,
-        [req.params.id, req.user.id, getMeterTach(acRow), parseFloat(tach), note || null]
+        [req.params.id, req.user.id, getMeterTach(acRow), tParsed.value, note || null]
       );
     }
     await client.query('COMMIT');
@@ -235,12 +246,16 @@ router.get('/:id/hours-history', authenticateToken, async (req, res) => {
 router.put('/:id/inspections', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { next_100hr_due, next_annual_due } = req.body;
+    const next100 = next_100hr_due != null
+      ? parseStrictNumber(next_100hr_due, 'next_100hr_due', { allowBlank: true })
+      : { value: null };
+    if (next100.error) return res.status(400).json({ error: next100.error });
     const result = await pool.query(
       `UPDATE aircraft
        SET next_100hr_due = $1, next_annual_due = $2, updated_at = NOW()
        WHERE id = $3 RETURNING *`,
       [
-        next_100hr_due != null ? parseFloat(next_100hr_due) : null,
+        next100.value,
         next_annual_due || null,
         req.params.id
       ]
@@ -272,10 +287,14 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
   try {
     const { ad_number, description, due_date, due_hobbs } = req.body;
     if (!description) return res.status(400).json({ error: 'Description is required' });
+    const dueHobbs = due_hobbs != null
+      ? parseStrictNumber(due_hobbs, 'due_hobbs', { allowBlank: true })
+      : { value: null };
+    if (dueHobbs.error) return res.status(400).json({ error: dueHobbs.error });
     const result = await pool.query(
       `INSERT INTO airworthiness_directives (aircraft_id, ad_number, description, due_date, due_hobbs)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, ad_number || null, description, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null]
+      [req.params.id, ad_number || null, description, due_date || null, dueHobbs.value]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -288,6 +307,10 @@ router.post('/:id/ads', authenticateToken, requirePermission('can_manage_aircraf
 router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const { status, description, due_date, due_hobbs, ad_number } = req.body;
+    const dueHobbs = due_hobbs != null
+      ? parseStrictNumber(due_hobbs, 'due_hobbs', { allowBlank: true })
+      : { value: null };
+    if (dueHobbs.error) return res.status(400).json({ error: dueHobbs.error });
     const result = await pool.query(
       `UPDATE airworthiness_directives
        SET status = COALESCE($1, status),
@@ -297,7 +320,7 @@ router.patch('/:id/ads/:adId', authenticateToken, requirePermission('can_manage_
            ad_number = COALESCE($5, ad_number),
            updated_at = NOW()
        WHERE id = $6 AND aircraft_id = $7 RETURNING *`,
-      [status || null, description || null, due_date || null, due_hobbs ? parseFloat(due_hobbs) : null, ad_number || null, req.params.adId, req.params.id]
+      [status || null, description || null, due_date || null, dueHobbs.value, ad_number || null, req.params.adId, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'AD not found' });
     res.json(result.rows[0]);

@@ -98,6 +98,54 @@ router.patch('/squawks/:id', authenticateToken, requirePermission('can_manage_ai
   }
 });
 
+router.put('/squawks/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
+  try {
+    const { aircraft_id, description, severity, status, expected_downtime, resolution_notes } = req.body;
+    const validSeverities = ['minor', 'major', 'grounding'];
+    const validStatuses = ['open', 'reviewed', 'deferred', 'resolved'];
+    const validDowntimes = ['1 day', '2 days', '3 days', '4 days', '5 days', '1 week', '2 weeks', 'Unknown/TBD'];
+    if (severity && !validSeverities.includes(severity)) return res.status(400).json({ error: 'Invalid severity' });
+    if (status && !validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    if (expected_downtime && !validDowntimes.includes(expected_downtime)) return res.status(400).json({ error: 'Invalid expected downtime' });
+    if (description !== undefined && !String(description).trim()) return res.status(400).json({ error: 'Description is required' });
+    if (aircraft_id !== undefined) {
+      const aircraftId = parseInt(aircraft_id, 10);
+      if (!Number.isFinite(aircraftId)) return res.status(400).json({ error: 'Invalid aircraft' });
+      const ac = await pool.query('SELECT id FROM aircraft WHERE id = $1', [aircraftId]);
+      if (ac.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+    }
+    const existing = await pool.query('SELECT * FROM squawks WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Squawk not found' });
+    const result = await pool.query(
+      `UPDATE squawks
+       SET aircraft_id = COALESCE($1, aircraft_id),
+           description = COALESCE($2, description),
+           severity = COALESCE($3, severity),
+           status = COALESCE($4, status),
+           expected_downtime = $5,
+           resolution_notes = COALESCE($6, resolution_notes),
+           reviewed_by = CASE WHEN $4 IS NOT NULL AND $4 != 'open' THEN $7 ELSE reviewed_by END,
+           reviewed_at = CASE WHEN $4 IS NOT NULL AND $4 != 'open' THEN NOW() ELSE reviewed_at END,
+           updated_at = NOW()
+       WHERE id = $8 RETURNING *`,
+      [
+        aircraft_id !== undefined ? parseInt(aircraft_id, 10) : null,
+        description !== undefined ? String(description).trim() : null,
+        severity || null,
+        status || null,
+        expected_downtime || null,
+        resolution_notes || null,
+        req.user.id,
+        req.params.id,
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Squawk full update error:', err);
+    res.status(500).json({ error: 'Failed to update squawk' });
+  }
+});
+
 router.delete('/squawks/:id', authenticateToken, requirePermission('can_manage_aircraft'), async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM squawks WHERE id = $1 RETURNING id', [req.params.id]);

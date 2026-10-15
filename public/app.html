@@ -14642,6 +14642,49 @@ function showProgressList() {
   document.getElementById('progress-detail-view').classList.add('hidden');
 }
 
+async function openEditStudentHoursModal(studentId, studentName, currentHobbs, currentTach) {
+  if (!['owner', 'admin'].includes(currentUser?.role)) return;
+  const hobbsInput = prompt(`Edit Hobbs hours for ${studentName}`, Number(currentHobbs || 0).toFixed(1));
+  if (hobbsInput === null) return;
+  const tachInput = prompt(`Edit Tach hours for ${studentName}`, Number(currentTach || 0).toFixed(1));
+  if (tachInput === null) return;
+  const hobbs = Number(hobbsInput);
+  const tach = Number(tachInput);
+  if (!Number.isFinite(hobbs) || hobbs < 0 || !Number.isFinite(tach) || tach < 0) {
+    showToast('Enter valid non-negative hour values', 'error');
+    return;
+  }
+  try {
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify({ total_hobbs_hours: hobbs, total_tach_hours: tach }),
+    });
+    showToast('Student hours updated', 'success');
+    await loadStudentDetail(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to update student hours', 'error');
+  }
+}
+
+async function confirmResetStudentHours(studentId, studentName, meter) {
+  if (!['owner', 'admin'].includes(currentUser?.role)) return;
+  const label = meter === 'tach' ? 'Tach' : 'Hobbs';
+  if (!confirm(`Reset ${label} hours for ${studentName} to 0.0?`)) return;
+  try {
+    const body = meter === 'tach'
+      ? { total_tach_hours: 0 }
+      : { total_hobbs_hours: 0 };
+    await api(`/api/users/${studentId}/hours`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    showToast(`${label} hours reset`, 'success');
+    await loadStudentDetail(studentId);
+  } catch (err) {
+    showToast(err.error || 'Failed to reset student hours', 'error');
+  }
+}
+
 async function toggleEnrollForm() {
   const container = document.getElementById('enroll-form-container');
   const wasHidden = container.classList.contains('hidden');
@@ -16046,6 +16089,11 @@ function closeEditFlogModal() {
   document.getElementById('edit-flog-modal').classList.add('hidden');
 }
 
+function closeFlogEditModal() {
+  const legacy = document.getElementById('flog-edit-modal');
+  if (legacy) legacy.classList.add('hidden');
+}
+
 async function saveEditFlog() {
   var errEl = document.getElementById('edit-flog-error');
   if (errEl) errEl.classList.add('hidden');
@@ -16139,6 +16187,20 @@ function promptEditAircraftHours(aircraftId, tailNumber, currentHobbs, currentTa
       api('/api/aircraft').then(function(data) { allAircraft = data; loadFlogAircraftHours(); });
     })
     .catch(function(e) { showToast(e.error || 'Failed to update hours', 'error'); });
+}
+
+function closeAircraftHoursEditModal() {
+  const legacy = document.getElementById('ac-hours-edit-modal');
+  if (legacy) legacy.classList.add('hidden');
+}
+
+function closeCompleteFlightModal() {
+  const legacy = document.getElementById('complete-flight-modal');
+  if (legacy) legacy.classList.add('hidden');
+}
+
+function prefillCompletionFromBooking() {
+  // Legacy modal compatibility: current completion uses the post-flight wizard.
 }
 
 // ─── BOOKING HISTORY PAGE ─────────────────────────────────
@@ -17018,6 +17080,7 @@ function populateEditorFields() {
   populateFleetFields();
   renderInstructorEditorItems();
   populateInstructorFields();
+  renderFreeformItems();
   buildDynamicMaps();
 }
 
@@ -17064,6 +17127,7 @@ function collectEditorFields() {
   // Banner show/hide
   var bannerShowEl = document.getElementById('ef-banner_show');
   out.banner_show = bannerShowEl ? (bannerShowEl.checked ? 'true' : 'false') : (editorContent.banner_show || 'true');
+  out.freeform_items = editorContent.freeform_items || '[]';
 
   // Section order and visibility
   out.section_order = JSON.stringify(smSectionOrder);
@@ -17203,6 +17267,106 @@ function toggleEditorSection(section) {
     btn.classList.add('active');
     fields.classList.add('open');
   }
+}
+
+function execRichCmd(command) {
+  try {
+    document.execCommand(command, false, null);
+    markEditorDirty();
+  } catch (err) {
+    showToast('Formatting command failed', 'error');
+  }
+}
+
+function execRichFontSize(size) {
+  if (!size) return;
+  try {
+    document.execCommand('fontSize', false, size);
+    markEditorDirty();
+  } catch (err) {
+    showToast('Font size update failed', 'error');
+  }
+}
+
+function execRichColor(color) {
+  if (!color) return;
+  try {
+    document.execCommand('foreColor', false, color);
+    markEditorDirty();
+  } catch (err) {
+    showToast('Text color update failed', 'error');
+  }
+}
+
+function clearRichFormat() {
+  try {
+    document.execCommand('removeFormat', false, null);
+    markEditorDirty();
+  } catch (err) {
+    showToast('Clear formatting failed', 'error');
+  }
+}
+
+function cancelStyleClone() {
+  window._cmsCopiedStyle = null;
+  const bar = document.getElementById('style-clone-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+function getFreeformItems() {
+  try {
+    const items = JSON.parse(editorContent.freeform_items || '[]');
+    return Array.isArray(items) ? items : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveFreeformItems(items) {
+  editorContent.freeform_items = JSON.stringify(items);
+  markEditorDirty();
+}
+
+function renderFreeformItems() {
+  const list = document.getElementById('freeform-items-list');
+  if (!list) return;
+  const items = getFreeformItems();
+  if (!items.length) {
+    list.innerHTML = '<div style="color:var(--gray-500);font-size:0.78rem">No freeform text boxes yet.</div>';
+    return;
+  }
+  list.innerHTML = items.map((item, idx) => `
+    <div class="freeform-item">
+      <div class="freeform-item-hdr">
+        <span class="freeform-item-label">Text Box ${idx + 1}</span>
+        <span class="freeform-item-actions">
+          <button type="button" class="btn-freeform-del" onclick="removeFreeformItem(${idx})" title="Remove">&times;</button>
+        </span>
+      </div>
+      <textarea class="input-field" rows="3" oninput="updateFreeformItem(${idx}, this.value)">${escHtml(item.text || '')}</textarea>
+    </div>
+  `).join('');
+}
+
+function addFreeformItem() {
+  const items = getFreeformItems();
+  items.push({ text: 'New text box' });
+  saveFreeformItems(items);
+  renderFreeformItems();
+}
+
+function updateFreeformItem(index, text) {
+  const items = getFreeformItems();
+  if (!items[index]) return;
+  items[index].text = text;
+  saveFreeformItems(items);
+}
+
+function removeFreeformItem(index) {
+  const items = getFreeformItems();
+  items.splice(index, 1);
+  saveFreeformItems(items);
+  renderFreeformItems();
 }
 
 async function saveWebsiteContent() {

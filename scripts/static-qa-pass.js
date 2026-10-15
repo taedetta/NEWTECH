@@ -42,7 +42,40 @@ for (const f of jsFiles) {
 }
 if (failures.length === 0) ok(`${jsFiles.length} JS files parse`);
 
-// 2. instructor-availability DAY_NAMES import
+// 2. Strict numeric input guardrails for persisted hours/rates
+console.log('\n=== Numeric input validation ===');
+const { parseStrictNumber } = require('../lib/number-input');
+const validNumber = parseStrictNumber(' 12.5 ', 'hours');
+if (validNumber.error || validNumber.value !== 12.5) fail('Strict parser rejected a valid decimal');
+else ok('Strict parser accepts decimal strings');
+for (const bad of ['12abc', 'Infinity', 'NaN', '', '-1', '100000']) {
+  const parsed = parseStrictNumber(bad, 'hours');
+  if (!parsed.error) fail(`Strict parser accepted invalid value: ${bad}`);
+}
+if (!failures.some((f) => f.includes('Strict parser accepted'))) ok('Strict parser rejects malformed/out-of-range values');
+
+// 3. Critical beta hardening guardrails
+console.log('\n=== Critical hardening guardrails ===');
+const authMwSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
+if (!authMwSrc.includes('approval_status') || !authMwSrc.includes('Account is inactive')) {
+  fail('Auth middleware does not revalidate live account state');
+} else ok('Auth middleware revalidates account state');
+if (authMwSrc.includes("['owner', 'admin', 'maintenance'].includes(req.user.role)")) {
+  fail('Maintenance still bypasses all permission checks');
+} else ok('Maintenance permissions are scoped');
+const approvalsSrc = fs.readFileSync(path.join(root, 'routes/approvals.js'), 'utf8');
+if (approvalsSrc.includes("requireRole('owner', 'admin', 'instructor')")) {
+  fail('Instructor can still access approval routes');
+} else ok('Approvals restricted to owner/admin');
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+if (!trainingSrc.includes("router.post(['/admin/programs', '/programs'], authenticateToken")) {
+  fail('Training admin program alias/auth guard missing');
+} else ok('Training admin aliases are authenticated');
+const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
+if (!completionSrc.includes('FOR UPDATE')) fail('Booking completion does not lock booking row');
+else ok('Booking completion locks booking row');
+
+// 4. instructor-availability DAY_NAMES import
 console.log('\n=== Instructor availability ===');
 const iaSrc = fs.readFileSync(path.join(root, 'lib/instructor-availability.js'), 'utf8');
 if (!iaSrc.includes('DAY_NAMES')) fail('DAY_NAMES missing from instructor-availability.js');
@@ -53,13 +86,13 @@ if (!iaSrc.includes('phone_number') || !iaSrc.includes('email')) {
   fail('contact fields missing from getAllInstructorsDayAvailability query');
 } else ok('contact fields in query');
 
-// 3. admin spawn fix
+// 5. admin spawn fix
 console.log('\n=== Admin routes ===');
 const adminSrc = fs.readFileSync(path.join(root, 'routes/admin.js'), 'utf8');
 if (adminSrc.includes('child.spawn')) fail('child.spawn still present in admin.js');
 else ok('spawn used correctly');
 
-// 4. Page div coverage for nav items in app.html
+// 6. Page div coverage for nav items in app.html
 console.log('\n=== Page div coverage ===');
 const appHtml = fs.readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const pageIds = [...appHtml.matchAll(/id="page-([a-z0-9-]+)"/g)].map((m) => m[1]);
@@ -69,7 +102,7 @@ const missing = [...new Set(navPages)].filter((p) => !skipPages.has(p) && !pageI
 if (missing.length) fail(`Nav pages without page div: ${missing.join(', ')}`);
 else ok(`All ${navPages.length} nav data-page values have page divs (except mgmt aliases)`);
 
-// 5. navigate() handlers
+// 7. navigate() handlers
 console.log('\n=== Navigate handlers ===');
 const navHandlers = [...appHtml.matchAll(/else if \(page === '([a-z0-9-]+)'\)/g)].map((m) => m[1]);
 const pagesWithoutHandler = pageIds.filter((p) => !navHandlers.includes(p) && p !== 'dashboard');
@@ -80,7 +113,7 @@ for (const p of critical) {
 }
 if (!failures.some((f) => f.includes('navigate handler'))) ok('Critical page handlers present');
 
-// 6. MOBILE_PAGE_TITLES
+// 8. MOBILE_PAGE_TITLES
 if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');

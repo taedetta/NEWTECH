@@ -12,6 +12,7 @@ const { auditInstructorHoursEntry } = require('../lib/hours-audit');
 const { syncFlightRecordFromInstructorHours } = require('../lib/sync-flight-record');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
 const { inferLessonType } = require('../lib/booking-rules');
+const { parseStrictNumber } = require('../lib/number-input');
 
 const router = express.Router();
 
@@ -21,43 +22,58 @@ router.post('/', authenticateToken, async (req, res) => {
     if (role === 'student') return res.status(403).json({ error: 'Students cannot submit instructor hours' });
     const { aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name, booking_id, hobbs_start, hobbs_end } = req.body;
     if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
-    // Input sanitization: reject NaN, negative, impossibly large hour values
-    const parsedInstrHours = parseFloat(instruction_hours);
-    if (isNaN(parsedInstrHours) || parsedInstrHours < 0 || parsedInstrHours > 99999) {
-      return res.status(400).json({ error: 'instruction_hours must be a valid non-negative number' });
-    }
-    if (aircraft_hours != null) {
-      const parsedAcHours = parseFloat(aircraft_hours);
-      if (isNaN(parsedAcHours) || parsedAcHours < 0 || parsedAcHours > 99999) {
-        return res.status(400).json({ error: 'aircraft_hours must be a valid non-negative number' });
-      }
-    }
+    const instrParsed = parseStrictNumber(instruction_hours, 'instruction_hours');
+    if (instrParsed.error) return res.status(400).json({ error: instrParsed.error });
+    const acParsed = aircraft_hours != null
+      ? parseStrictNumber(aircraft_hours, 'aircraft_hours', { allowBlank: true })
+      : { value: 0 };
+    if (acParsed.error) return res.status(400).json({ error: acParsed.error });
+    const aircraftRateParsed = aircraft_rate !== undefined
+      ? parseStrictNumber(aircraft_rate, 'aircraft_rate', { allowBlank: true, max: 999999 })
+      : { value: null };
+    if (aircraftRateParsed.error) return res.status(400).json({ error: aircraftRateParsed.error });
+    const instructorRateParsed = instructor_rate !== undefined
+      ? parseStrictNumber(instructor_rate, 'instructor_rate', { allowBlank: true, max: 999999 })
+      : { value: null };
+    if (instructorRateParsed.error) return res.status(400).json({ error: instructorRateParsed.error });
     // Re-verify role from DB — don't trust JWT alone for write operations
     const dbUserCheck = await pool.query('SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL', [userId]);
     if (dbUserCheck.rows.length === 0) return res.status(401).json({ error: 'User account not found' });
     const verifiedRole = dbUserCheck.rows[0].role;
     if (verifiedRole === 'student') return res.status(403).json({ error: 'Students cannot submit instructor hours' });
     let instructorId = userId;
-    if ((verifiedRole === 'owner' || verifiedRole === 'admin') && req.body.instructor_id) instructorId = parseInt(req.body.instructor_id);
-    const parsedAircraftId = aircraft_id ? parseInt(aircraft_id) : null;
-    if (parsedAircraftId && !isNaN(parsedAircraftId)) {
+    if ((verifiedRole === 'owner' || verifiedRole === 'admin') && req.body.instructor_id) {
+      instructorId = parseInt(req.body.instructor_id, 10);
+      if (!Number.isFinite(instructorId)) return res.status(400).json({ error: 'Invalid instructor_id' });
+    }
+    const parsedAircraftId = aircraft_id ? parseInt(aircraft_id, 10) : null;
+    if (aircraft_id && !Number.isFinite(parsedAircraftId)) return res.status(400).json({ error: 'Invalid aircraft_id' });
+    if (parsedAircraftId) {
       const aircraftCheck = await pool.query('SELECT id FROM aircraft WHERE id = $1', [parsedAircraftId]);
       if (aircraftCheck.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
     }
     // Validate submitted Hobbs readings against aircraft's current reading
-    if (parsedAircraftId && hobbs_start != null && hobbs_end != null) {
-      const hS = parseFloat(hobbs_start);
-      const hE = parseFloat(hobbs_end);
-      if (isNaN(hS) || isNaN(hE) || hS < 0 || hE < 0 || hS > 99999 || hE > 99999) {
-        return res.status(400).json({ error: 'Hobbs values must be valid non-negative numbers' });
-      }
+    if ((hobbs_start != null) !== (hobbs_end != null)) {
+      return res.status(400).json({ error: 'Both hobbs_start and hobbs_end are required when logging Hobbs readings' });
+    }
+    let hS = null;
+    let hE = null;
+    if (hobbs_start != null && hobbs_end != null) {
+      const hSParsed = parseStrictNumber(hobbs_start, 'hobbs_start');
+      if (hSParsed.error) return res.status(400).json({ error: hSParsed.error });
+      const hEParsed = parseStrictNumber(hobbs_end, 'hobbs_end');
+      if (hEParsed.error) return res.status(400).json({ error: hEParsed.error });
+      hS = hSParsed.value;
+      hE = hEParsed.value;
       if (hE <= hS) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
-      const acHobbsCheck = await pool.query('SELECT current_hobbs FROM aircraft WHERE id = $1', [parsedAircraftId]);
-      if (acHobbsCheck.rows.length > 0 && acHobbsCheck.rows[0].current_hobbs != null) {
-        const currentHobbs = parseFloat(acHobbsCheck.rows[0].current_hobbs);
-        if (Math.abs(hS - currentHobbs) > 0.5) {
-          console.warn(`[security] Instructor hours Hobbs mismatch: user=${userId} submitted=${hS} aircraft_current=${currentHobbs}`);
-          return res.status(400).json({ error: 'Hobbs reading does not match aircraft current hours' });
+      if (parsedAircraftId) {
+        const acHobbsCheck = await pool.query('SELECT current_hobbs FROM aircraft WHERE id = $1', [parsedAircraftId]);
+        if (acHobbsCheck.rows.length > 0 && acHobbsCheck.rows[0].current_hobbs != null) {
+          const currentHobbs = parseFloat(acHobbsCheck.rows[0].current_hobbs);
+          if (Math.abs(hS - currentHobbs) > 0.5) {
+            console.warn(`[security] Instructor hours Hobbs mismatch: user=${userId} submitted=${hS} aircraft_current=${currentHobbs}`);
+            return res.status(400).json({ error: 'Hobbs reading does not match aircraft current hours' });
+          }
         }
       }
     }
@@ -68,45 +84,42 @@ router.post('/', authenticateToken, async (req, res) => {
     const dup = await pool.query(
       `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
        AND aircraft_id IS NOT DISTINCT FROM $3 AND ABS(instruction_hours - $4) < 0.01 LIMIT 1`,
-      [instructorId, entryDate, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null, parseFloat(instruction_hours) || 0]
+      [instructorId, entryDate, parsedAircraftId || null, instrParsed.value]
     );
     if (dup.rows.length > 0) {
       return res.status(409).json({ error: 'Duplicate instructor hours entry for this date and aircraft' });
     }
     const parsedBookingId = booking_id ? parseInt(booking_id, 10) : null;
-    const acHrsVal = parseFloat(aircraft_hours) || 0;
-    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    if (booking_id && !Number.isFinite(parsedBookingId)) return res.status(400).json({ error: 'Invalid booking_id' });
+    const acHrsVal = acParsed.value || 0;
+    const instrHrsVal = instrParsed.value;
     const audit = await auditInstructorHoursEntry({
       instructorId,
       entryDate,
-      aircraftId: (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
+      aircraftId: parsedAircraftId || null,
       aircraftHours: acHrsVal,
       instructionHours: instrHrsVal,
       studentName: student_name || null,
-      bookingId: parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
+      bookingId: parsedBookingId || null,
     });
 
     const result = await pool.query(`
       INSERT INTO instructor_hours (instructor_id, aircraft_id, entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name, booking_id, audit_status, audit_message)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
+      [instructorId, parsedAircraftId || null,
        entryDate, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraftRateParsed.value,
+       instructorRateParsed.value,
        notes || null, student_name || null,
-       parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
+       parsedBookingId || null,
        audit.status, audit.message]
     );
     const entry = { ...result.rows[0], audit_ok: audit.ok, audit_details: audit.details };
 
     // If booking_id + hobbs readings provided, record for discrepancy tracking (fire-and-forget)
-    if (booking_id && hobbs_start != null && hobbs_end != null) {
-      const hS = parseFloat(hobbs_start);
-      const hE = parseFloat(hobbs_end);
-      if (!isNaN(hS) && !isNaN(hE) && hE > hS) {
-        recordHobbsReading(parseInt(booking_id), instructorId, 'instructor', hS, hE)
-          .catch(e => console.error('[instructor-hours] hobbs reading error:', e.message));
-      }
+    if (parsedBookingId && hS != null && hE != null && hE > hS) {
+      recordHobbsReading(parsedBookingId, instructorId, 'instructor', hS, hE)
+        .catch(e => console.error('[instructor-hours] hobbs reading error:', e.message));
     }
 
     res.status(201).json(entry);
@@ -195,7 +208,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const { role, id: userId } = req.user;
-    const entryId = parseInt(req.params.id);
+    const entryId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(entryId)) return res.status(400).json({ error: 'Invalid entry id' });
     const existing = await client.query('SELECT * FROM instructor_hours WHERE id = $1', [entryId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Entry not found' });
     if (role === 'student') return res.status(403).json({ error: 'Access denied' });
@@ -208,8 +222,22 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { entry_date, aircraft_hours, instruction_hours, aircraft_rate, instructor_rate, notes, student_name } = req.body;
     if (instruction_hours === undefined || instruction_hours === null) return res.status(400).json({ error: 'instruction_hours is required' });
     const row = existing.rows[0];
-    const acHrsVal = parseFloat(aircraft_hours) || 0;
-    const instrHrsVal = parseFloat(instruction_hours) || 0;
+    const acParsed = aircraft_hours != null
+      ? parseStrictNumber(aircraft_hours, 'aircraft_hours', { allowBlank: true })
+      : { value: 0 };
+    if (acParsed.error) return res.status(400).json({ error: acParsed.error });
+    const instrParsed = parseStrictNumber(instruction_hours, 'instruction_hours');
+    if (instrParsed.error) return res.status(400).json({ error: instrParsed.error });
+    const aircraftRateParsed = aircraft_rate !== undefined
+      ? parseStrictNumber(aircraft_rate, 'aircraft_rate', { allowBlank: true, max: 999999 })
+      : { value: null };
+    if (aircraftRateParsed.error) return res.status(400).json({ error: aircraftRateParsed.error });
+    const instructorRateParsed = instructor_rate !== undefined
+      ? parseStrictNumber(instructor_rate, 'instructor_rate', { allowBlank: true, max: 999999 })
+      : { value: null };
+    if (instructorRateParsed.error) return res.status(400).json({ error: instructorRateParsed.error });
+    const acHrsVal = acParsed.value || 0;
+    const instrHrsVal = instrParsed.value;
     const newDate = entry_date || row.entry_date;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
@@ -228,8 +256,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraftRateParsed.value,
+       instructorRateParsed.value,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );

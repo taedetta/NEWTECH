@@ -8,6 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { parseStrictNumber } = require('../lib/number-input');
 
 const router = express.Router();
 
@@ -19,6 +20,12 @@ function canEditBookingHistoryFlight(role, userId, booking) {
 function canEditGroundSessionHistory(role, userId, session) {
   if (['owner', 'admin'].includes(role)) return true;
   return role === 'instructor' && session.instructor_id === userId;
+}
+
+function storedNumber(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 // GET /api/booking-history — completed flights + ground sessions, role-scoped, with totals
@@ -201,15 +208,27 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       lesson_type,
     } = req.body;
 
-    const hStart = hobbs_start != null ? parseFloat(hobbs_start) : (b.hobbs_start != null ? parseFloat(b.hobbs_start) : null);
-    const hEnd = hobbs_end != null ? parseFloat(hobbs_end) : (b.hobbs_end != null ? parseFloat(b.hobbs_end) : null);
-    if (hStart == null || hEnd == null || Number.isNaN(hStart) || Number.isNaN(hEnd)) {
+    const hStartParsed = hobbs_start != null ? parseStrictNumber(hobbs_start, 'hobbs_start') : { value: storedNumber(b.hobbs_start) };
+    if (hStartParsed.error) return res.status(400).json({ error: hStartParsed.error });
+    const hEndParsed = hobbs_end != null ? parseStrictNumber(hobbs_end, 'hobbs_end') : { value: storedNumber(b.hobbs_end) };
+    if (hEndParsed.error) return res.status(400).json({ error: hEndParsed.error });
+    const hStart = hStartParsed.value;
+    const hEnd = hEndParsed.value;
+    if (hStart == null || hEnd == null) {
       return res.status(400).json({ error: 'hobbs_start and hobbs_end are required' });
     }
     if (hEnd <= hStart) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
 
-    const tStart = tach_start != null ? parseFloat(tach_start) : (b.tach_start != null ? parseFloat(b.tach_start) : null);
-    const tEnd = tach_end != null ? parseFloat(tach_end) : (b.tach_end != null ? parseFloat(b.tach_end) : null);
+    const tStartParsed = tach_start != null
+      ? parseStrictNumber(tach_start, 'tach_start', { allowBlank: true })
+      : { value: storedNumber(b.tach_start) };
+    if (tStartParsed.error) return res.status(400).json({ error: tStartParsed.error });
+    const tEndParsed = tach_end != null
+      ? parseStrictNumber(tach_end, 'tach_end', { allowBlank: true })
+      : { value: storedNumber(b.tach_end) };
+    if (tEndParsed.error) return res.status(400).json({ error: tEndParsed.error });
+    const tStart = tStartParsed.value;
+    const tEnd = tEndParsed.value;
     if ((tStart != null) !== (tEnd != null)) {
       return res.status(400).json({ error: 'Provide both tach_start and tach_end, or leave both empty' });
     }
@@ -217,7 +236,21 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
     }
 
-    const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
+    const dualParsed = dual_instruction_hours != null
+      ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours', { allowBlank: true })
+      : { value: undefined };
+    if (dualParsed.error) return res.status(400).json({ error: dualParsed.error });
+    const aircraftCharge = aircraft_charge_amount != null
+      ? parseStrictNumber(aircraft_charge_amount, 'aircraft_charge_amount', { allowBlank: true, max: 999999 })
+      : { value: undefined };
+    if (aircraftCharge.error) return res.status(400).json({ error: aircraftCharge.error });
+    const instructionCharge = instruction_charge_amount != null
+      ? parseStrictNumber(instruction_charge_amount, 'instruction_charge_amount', { allowBlank: true, max: 999999 })
+      : { value: undefined };
+    if (instructionCharge.error) return res.status(400).json({ error: instructionCharge.error });
+    const dualHrs = dual_instruction_hours != null
+      ? (dualParsed.value == null ? 0 : dualParsed.value)
+      : undefined;
     const dateVal = flight_date
       || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
       || new Date().toISOString().slice(0, 10);
@@ -240,8 +273,8 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
         lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
+        aircraft_charge_amount: aircraftCharge.value,
+        instruction_charge_amount: instructionCharge.value,
         submitted_by: userId,
       });
 
@@ -281,12 +314,20 @@ router.patch('/ground-sessions/:id', authenticateToken, async (req, res) => {
 
     const { flight_date, dual_instruction_hours, instruction_charge_amount } = req.body;
     const sessionDate = flight_date || gs.session_date;
-    const groundHours = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : parseFloat(gs.ground_hours);
-    if (!groundHours || groundHours <= 0) {
+    const groundParsed = dual_instruction_hours != null
+      ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours', { min: 0.1 })
+      : { value: storedNumber(gs.ground_hours) };
+    if (groundParsed.error) return res.status(400).json({ error: groundParsed.error });
+    const groundHours = groundParsed.value;
+    if (groundHours == null || groundHours <= 0) {
       return res.status(400).json({ error: 'Instruction hours must be greater than 0' });
     }
+    const chargeParsed = instruction_charge_amount != null
+      ? parseStrictNumber(instruction_charge_amount, 'instruction_charge_amount', { allowBlank: true, max: 999999 })
+      : { value: undefined };
+    if (chargeParsed.error) return res.status(400).json({ error: chargeParsed.error });
     const instrCharge = instruction_charge_amount != null
-      ? parseFloat(instruction_charge_amount)
+      ? chargeParsed.value
       : (gs.instructor_rate != null
         ? Math.round(groundHours * parseFloat(gs.instructor_rate) * 100) / 100
         : gs.instruction_charge_amount);
@@ -360,22 +401,47 @@ router.post('/manual', authenticateToken, async (req, res) => {
     const { session_type, flight_date, student_id, instructor_id, aircraft_id, hobbs_start, hobbs_end, tach_start, tach_end, dual_instruction_hours, ground_hours, lesson_type, notes } = req.body;
     if (!session_type || !flight_date || !student_id) return res.status(400).json({ error: 'session_type, flight_date, and student_id are required' });
     if (!['flight', 'ground'].includes(session_type)) return res.status(400).json({ error: 'session_type must be "flight" or "ground"' });
-    const sid = parseInt(student_id);
-    const iid = instructor_id ? parseInt(instructor_id) : null;
-    const acId = aircraft_id ? parseInt(aircraft_id) : null;
+    const sid = parseInt(student_id, 10);
+    if (!Number.isFinite(sid)) return res.status(400).json({ error: 'Invalid student_id' });
+    const iid = instructor_id ? parseInt(instructor_id, 10) : null;
+    if (instructor_id && !Number.isFinite(iid)) return res.status(400).json({ error: 'Invalid instructor_id' });
+    const acId = aircraft_id ? parseInt(aircraft_id, 10) : null;
+    if (aircraft_id && !Number.isFinite(acId)) return res.status(400).json({ error: 'Invalid aircraft_id' });
     const startTime = new Date(flight_date + 'T12:00:00Z');
     if (session_type === 'flight') {
       if (!acId || hobbs_start == null || hobbs_end == null) return res.status(400).json({ error: 'Aircraft, hobbs_start, and hobbs_end are required for flight sessions' });
-      const hStart = parseFloat(hobbs_start);
-      const hEnd = parseFloat(hobbs_end);
+      const hStartParsed = parseStrictNumber(hobbs_start, 'hobbs_start');
+      if (hStartParsed.error) return res.status(400).json({ error: hStartParsed.error });
+      const hEndParsed = parseStrictNumber(hobbs_end, 'hobbs_end');
+      if (hEndParsed.error) return res.status(400).json({ error: hEndParsed.error });
+      const hStart = hStartParsed.value;
+      const hEnd = hEndParsed.value;
       if (hEnd <= hStart) return res.status(400).json({ error: 'hobbs_end must be greater than hobbs_start' });
-      const tStart = tach_start != null ? parseFloat(tach_start) : null;
-      const tEnd = tach_end != null ? parseFloat(tach_end) : null;
+      const tStartParsed = tach_start != null
+        ? parseStrictNumber(tach_start, 'tach_start', { allowBlank: true })
+        : { value: null };
+      if (tStartParsed.error) return res.status(400).json({ error: tStartParsed.error });
+      const tEndParsed = tach_end != null
+        ? parseStrictNumber(tach_end, 'tach_end', { allowBlank: true })
+        : { value: null };
+      if (tEndParsed.error) return res.status(400).json({ error: tEndParsed.error });
+      const tStart = tStartParsed.value;
+      const tEnd = tEndParsed.value;
+      if ((tStart != null) !== (tEnd != null)) {
+        return res.status(400).json({ error: 'Provide both tach_start and tach_end, or leave both empty' });
+      }
+      if (tStart != null && tEnd != null && tEnd <= tStart) {
+        return res.status(400).json({ error: 'tach_end must be greater than tach_start' });
+      }
       const tS = tStart != null ? tStart : null;
       const tE = tEnd != null ? tEnd : null;
       const hDelta = hEnd - hStart;
       const tDelta = (tS != null && tE != null) ? (tE - tS) : null;
-      const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : 0;
+      const dualParsed = dual_instruction_hours != null
+        ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours', { allowBlank: true })
+        : { value: 0 };
+      if (dualParsed.error) return res.status(400).json({ error: dualParsed.error });
+      const dualHrs = dualParsed.value || 0;
       const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
       const client = await pool.connect();
       try {
@@ -410,8 +476,9 @@ router.post('/manual', authenticateToken, async (req, res) => {
       }
     } else {
       if (!iid) return res.status(400).json({ error: 'instructor_id is required for ground sessions' });
-      if (!ground_hours || parseFloat(ground_hours) <= 0) return res.status(400).json({ error: 'ground_hours must be > 0' });
-      const hrs = parseFloat(ground_hours);
+      const hoursParsed = parseStrictNumber(ground_hours, 'ground_hours', { min: 0.1 });
+      if (hoursParsed.error) return res.status(400).json({ error: hoursParsed.error });
+      const hrs = hoursParsed.value;
       const instrRate = (await pool.query('SELECT instructor_rate FROM users WHERE id = $1', [iid])).rows[0]?.instructor_rate;
       const chargeAmount = instrRate != null ? Math.round(hrs * parseFloat(instrRate) * 100) / 100 : 0;
       const gsResult = await pool.query(

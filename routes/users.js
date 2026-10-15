@@ -11,6 +11,7 @@ const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 const { ensureDefaultPrefs } = require('../db/notification-prefs');
 const { BOOKABLE_INSTRUCTOR_WHERE } = require('../lib/instructors');
 const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
+const { parseStrictNumber } = require('../lib/number-input');
 
 const router = express.Router();
 
@@ -182,12 +183,15 @@ router.post('/invite', authenticateToken, async (req, res) => {
 router.patch('/:id/rate', authenticateToken, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Only the owner or admin can set instructor rates' });
-    const targetId = parseInt(req.params.id);
+    const targetId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
     const { instructor_rate } = req.body;
     if (instructor_rate === undefined) return res.status(400).json({ error: 'instructor_rate is required' });
+    const rate = parseStrictNumber(instructor_rate, 'instructor_rate');
+    if (rate.error) return res.status(400).json({ error: rate.error });
     const result = await pool.query(
       `UPDATE users SET instructor_rate = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, instructor_rate`,
-      [parseFloat(instructor_rate), targetId]
+      [rate.value, targetId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
@@ -471,7 +475,8 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     if (!['owner', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Only owners and admins can edit student hours' });
     }
-    const userId = parseInt(req.params.id);
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) return res.status(400).json({ error: 'Invalid user id' });
     const { total_hobbs_hours, total_tach_hours } = req.body;
     if (total_hobbs_hours === undefined && total_tach_hours === undefined) {
       return res.status(400).json({ error: 'No hours provided' });
@@ -479,8 +484,18 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    if (total_hobbs_hours !== undefined) {
+      const parsed = parseStrictNumber(total_hobbs_hours, 'total_hobbs_hours');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      updates.push(`total_hobbs_hours = $${idx++}`);
+      vals.push(parsed.value);
+    }
+    if (total_tach_hours !== undefined) {
+      const parsed = parseStrictNumber(total_tach_hours, 'total_tach_hours');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      updates.push(`total_tach_hours = $${idx++}`);
+      vals.push(parsed.value);
+    }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
