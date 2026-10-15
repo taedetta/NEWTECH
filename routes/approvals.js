@@ -13,8 +13,8 @@ const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 
 const router = express.Router();
 
-// All approval endpoints require auth; accessible to owner/admin/instructor
-const canApprove = [authenticateToken, requireRole('owner', 'admin', 'instructor')];
+// All approval endpoints require auth; only owner/admin may activate or reject accounts.
+const canApprove = [authenticateToken, requireRole('owner', 'admin')];
 
 // GET /api/approvals/pending — list all pending users
 router.get('/pending', ...canApprove, async (req, res) => {
