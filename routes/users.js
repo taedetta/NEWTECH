@@ -14,6 +14,28 @@ const { buildFspWorkbook, buildFspCsv } = require('../lib/fsp-people-export');
 
 const router = express.Router();
 
+function parseHoursValue(value, fieldName) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') {
+    const err = new Error(`${fieldName} is required`);
+    err.status = 400;
+    throw err;
+  }
+  const text = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(text)) {
+    const err = new Error(`${fieldName} must be a valid non-negative number`);
+    err.status = 400;
+    throw err;
+  }
+  const num = Number(text);
+  if (!Number.isFinite(num) || num > 99999) {
+    const err = new Error(`${fieldName} exceeds maximum allowed value`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
 // GET /api/users
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -479,8 +501,10 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     const updates = [];
     const vals = [];
     let idx = 1;
-    if (total_hobbs_hours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(parseFloat(total_hobbs_hours)); }
-    if (total_tach_hours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(parseFloat(total_tach_hours)); }
+    const hobbsHours = parseHoursValue(total_hobbs_hours, 'total_hobbs_hours');
+    const tachHours = parseHoursValue(total_tach_hours, 'total_tach_hours');
+    if (hobbsHours !== undefined) { updates.push(`total_hobbs_hours = $${idx++}`); vals.push(hobbsHours); }
+    if (tachHours !== undefined)  { updates.push(`total_tach_hours = $${idx++}`);  vals.push(tachHours); }
     vals.push(userId);
     const result = await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, total_hobbs_hours, total_tach_hours`,
@@ -490,7 +514,7 @@ router.put('/:id/hours', authenticateToken, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('User hours update error:', err);
-    res.status(500).json({ error: 'Failed to update user hours' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to update user hours' });
   }
 });
 
