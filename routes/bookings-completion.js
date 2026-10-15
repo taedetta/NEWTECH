@@ -17,6 +17,14 @@ const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../
 
 const router = express.Router();
 
+const METER_DELTA_BUFFER_HOURS = 0.5;
+
+/** Who may view or operate on a booking detail record. */
+function canAccessBooking(user, booking) {
+  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  return user.id === booking.instructor_id || user.id === booking.student_id;
+}
+
 // ── Hobbs submission rate limiter: >5 failed attempts in 10 min → block 15 min ──
 const hobbsFailMap = new Map();
 const HOBBS_FAIL_WINDOW = 10 * 60 * 1000; // 10 minutes
@@ -65,6 +73,24 @@ function validateHobbsValue(val, fieldName) {
   if (isNaN(num)) return `${fieldName} must be a valid number`;
   if (num < 0) return `${fieldName} cannot be negative`;
   if (num > 99999) return `${fieldName} exceeds maximum allowed value`;
+  return null;
+}
+
+function scheduledDurationHours(booking) {
+  const start = new Date(booking.start_time);
+  const end = new Date(completionEndTime(booking));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  if (end <= start) return 0;
+  return (end - start) / (1000 * 60 * 60);
+}
+
+function validateMeterDelta(delta, booking, fieldName) {
+  const scheduledHours = scheduledDurationHours(booking);
+  if (scheduledHours == null) return null;
+  const maxAllowed = scheduledHours + METER_DELTA_BUFFER_HOURS;
+  if (delta > maxAllowed) {
+    return `${fieldName} (${delta.toFixed(1)} hrs) exceeds the scheduled booking duration (${scheduledHours.toFixed(1)} hrs). Verify the meter readings.`;
+  }
   return null;
 }
 
@@ -276,6 +302,8 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     }
 
     const hobbsFlown = hEnd - hStart;
+    const hobbsDeltaErr = validateMeterDelta(hobbsFlown, b, 'Hobbs time');
+    if (hobbsDeltaErr) { recordHobbsFail(req.user.id); return res.status(400).json({ error: hobbsDeltaErr }); }
 
     // Dual instruction hours may exceed Hobbs (preflight, ground, debrief billed separately)
     if (dual_instruction_hours != null) {
@@ -283,6 +311,10 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
       if (dualErr) return res.status(400).json({ error: dualErr });
     }
     const tachFlown = (tStart != null && tEnd != null) ? (tEnd - tStart) : null;
+    if (tachFlown != null) {
+      const tachDeltaErr = validateMeterDelta(tachFlown, b, 'Tach time');
+      if (tachDeltaErr) return res.status(400).json({ error: tachDeltaErr });
+    }
     const dualHrs = (dual_instruction_hours != null) ? parseFloat(dual_instruction_hours) : 0;
     const flight_date = new Date(b.start_time).toISOString().slice(0, 10);
     // Flight type flags from post-flight wizard
@@ -508,6 +540,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       WHERE b.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+    if (!canAccessBooking(req.user, result.rows[0])) return res.status(403).json({ error: 'Access denied' });
     res.json(result.rows[0]);
   } catch (err) {
     const ts = new Date().toISOString();

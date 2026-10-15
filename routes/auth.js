@@ -163,14 +163,18 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    // Reactivate soft-deleted account on successful login
-    if (user.deleted_at) {
-      await pool.query('UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
-      console.log(`[auth] Reactivated soft-deleted account: ${user.email} (id=${user.id})`);
-    }
     // Account pending approval — correct credentials but not yet activated
     if (user.approval_status === 'pending') {
       return res.status(403).json({ error: 'pending_approval', message: 'Your account is pending approval by an administrator.' });
+    }
+    if (user.approval_status === 'rejected') {
+      return res.status(403).json({ error: 'account_rejected', message: 'Your account request was rejected. Contact the flight school if you believe this is an error.' });
+    }
+    if (user.approval_status !== 'approved') {
+      return res.status(403).json({ error: 'account_not_approved', message: 'Your account is not approved for access.' });
+    }
+    if (user.deleted_at) {
+      return res.status(403).json({ error: 'account_removed', message: 'This account has been removed. Contact an administrator for access.' });
     }
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role },
@@ -250,7 +254,7 @@ router.post('/reset-password', async (req, res) => {
     }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const result = await pool.query(
-      `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name
+      `SELECT prt.id, prt.user_id, prt.expires_at, u.email, u.name, u.deleted_at, u.approval_status
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
        WHERE prt.token_hash = $1 AND prt.used_at IS NULL`,
@@ -263,10 +267,13 @@ router.post('/reset-password', async (req, res) => {
     if (new Date(row.expires_at) < new Date()) {
       return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
     }
+    if (row.deleted_at || row.approval_status !== 'approved') {
+      return res.status(403).json({ error: 'Account is not eligible for password reset. Contact an administrator.' });
+    }
     const passwordHash = await bcrypt.hash(password, 12);
-    await pool.query('UPDATE users SET password_hash = $1, deleted_at = NULL, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
     await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [row.id]);
-    console.log(`[auth] Password reset + account reactivation for user_id=${row.user_id} (${row.email})`);
+    console.log(`[auth] Password reset for user_id=${row.user_id} (${row.email})`);
     res.json({ ok: true });
   } catch (err) {
     console.error('[reset-password] error:', err.message);
