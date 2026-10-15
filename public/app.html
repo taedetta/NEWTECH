@@ -10063,8 +10063,6 @@ function staffEditingHistoricalBooking() {
 
 function shouldSkipBookingConflictChecks() {
   if (!bookingEditId) return false;
-  if (adminEditingBooking()) return true;
-  if (currentUser?.role === 'instructor' && ['completed', 'cancelled'].includes(bookingEditStatus)) return true;
   return ['completed', 'cancelled'].includes(bookingEditStatus);
 }
 
