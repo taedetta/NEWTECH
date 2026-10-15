@@ -41,8 +41,9 @@ function instrChargeExpr() {
 
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role === 'student') return res.status(403).json({ error: 'Access denied' });
-    if (req.user.role === 'renter') return res.status(403).json({ error: 'Access denied' });
+    if (!['owner', 'admin', 'instructor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     let extra = '';
     const params = [];
     if (req.user.role === 'instructor') {
@@ -125,6 +126,9 @@ router.get('/audit-flags', authenticateToken, async (req, res) => {
 router.get('/:studentId', authenticateToken, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
+    if (!['owner', 'admin', 'instructor', 'student', 'renter'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     if (req.user.role === 'student' && req.user.id !== studentId) {
       return res.status(403).json({ error: 'Access denied' });
     }
