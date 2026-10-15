@@ -13,7 +13,8 @@
     "test:flows": "node scripts/seed-test-users.js && node scripts/flow-qa.js",
     "test:hardening": "node scripts/seed-test-users.js && node scripts/test-hardening.js",
     "test:schema": "node scripts/verify-schema.js --fix",
-    "test:pipeline": "node scripts/test-complete-pipeline.js"
+    "test:pipeline": "node scripts/test-complete-pipeline.js",
+    "test:critical-bugs": "node scripts/critical-bugs-regression.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",
