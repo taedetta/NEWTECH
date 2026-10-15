@@ -7,23 +7,25 @@
  */
 const pool = require('../db/index');
 const syllabus = require('../data/ppl-pm-syllabus');
+const { getAppEnv } = require('../lib/app-env');
 
 const SYLLABUS_REF = syllabus.program.syllabus_ref || 'PM-S-P9-PD';
 
 async function seedPplPmSyllabus() {
   const client = await pool.connect();
+  const source = getAppEnv();
   try {
     await client.query('BEGIN');
 
     // Ensure program exists / update description
     let progResult = await client.query(
-      `INSERT INTO training_programs (name, code, description)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (code) DO UPDATE SET
+      `INSERT INTO training_programs (name, code, description, source)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (code, source) DO UPDATE SET
          name = EXCLUDED.name,
          description = EXCLUDED.description
        RETURNING id`,
-      [syllabus.program.name, syllabus.program.code, syllabus.program.description]
+      [syllabus.program.name, syllabus.program.code, syllabus.program.description, source]
     );
     const programId = progResult.rows[0].id;
 
@@ -50,14 +52,16 @@ async function seedPplPmSyllabus() {
          SELECT sm.id FROM stage_maneuvers sm
          JOIN program_stages ps ON ps.id = sm.stage_id
          WHERE ps.program_id = $1
-       )`,
-      [programId]
+       )
+       AND source = $2`,
+      [programId, source]
     );
 
     await client.query(
       `DELETE FROM milestone_completions
-       WHERE stage_id IN (SELECT id FROM program_stages WHERE program_id = $1)`,
-      [programId]
+       WHERE stage_id IN (SELECT id FROM program_stages WHERE program_id = $1)
+         AND source = $2`,
+      [programId, source]
     );
 
     await client.query(
@@ -111,8 +115,8 @@ async function seedPplPmSyllabus() {
     if (firstStageId) {
       await client.query(
         `UPDATE student_training SET current_stage_id = $1, updated_at = NOW()
-         WHERE program_id = $2 AND status = 'active'`,
-        [firstStageId, programId]
+         WHERE program_id = $2 AND status = 'active' AND source = $3`,
+        [firstStageId, programId, source]
       );
     }
 

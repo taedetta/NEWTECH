@@ -1,25 +1,29 @@
 /**
- * db/source-wrapper.js — Legacy source-tag helpers (isolation disabled).
- * Filters are no-ops so all environments share one dataset.
+ * db/source-wrapper.js — Source-tag helpers for staging/production data isolation.
  */
 
 const pool = require('./index');
-
-function getAppEnv() {
-  return 'production';
-}
+const { getAppEnv } = require('../lib/app-env');
 
 function buildSourceParam() {
-  return { source: 'production' };
+  return { source: getAppEnv() };
 }
 
-/** No-op: returns query unchanged (source isolation removed). */
 function addSourceFilter(sql, params = []) {
-  return { sql, params: [...params] };
+  const nextParams = [...params, getAppEnv()];
+  const placeholder = `$${nextParams.length}`;
+  const suffixMatch = sql.match(/\s+(ORDER\s+BY|GROUP\s+BY|LIMIT|RETURNING)\b/i);
+  const insertAt = suffixMatch ? suffixMatch.index : sql.length;
+  const head = sql.slice(0, insertAt);
+  const tail = sql.slice(insertAt);
+  const hasWhere = /\bWHERE\b/i.test(head);
+  const sourceClause = `${hasWhere ? ' AND' : ' WHERE'} source = ${placeholder}`;
+  return { sql: `${head}${sourceClause}${tail}`, params: nextParams };
 }
 
 async function queryWithSourceFilter(sql, params = []) {
-  return pool.query(sql, params);
+  const filtered = addSourceFilter(sql, params);
+  return pool.query(filtered.sql, filtered.params);
 }
 
 async function queryRaw(sql, params = []) {

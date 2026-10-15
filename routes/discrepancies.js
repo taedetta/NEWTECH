@@ -65,6 +65,7 @@ router.post('/:id/resolve', authenticateToken, requireRole('owner', 'admin'), as
     );
     res.json(updated);
   } catch (err) {
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
     if (err.statusCode === 404) return res.status(404).json({ error: 'Discrepancy not found' });
     console.error('[discrepancies] resolve error:', err.message);
     res.status(500).json({ error: 'Failed to resolve discrepancy' });

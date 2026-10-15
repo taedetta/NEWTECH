@@ -1,19 +1,19 @@
 'use strict';
 
 /**
- * API E2E: upload aircraft document as admin, verify view for all roles.
+ * API E2E: upload aircraft document as admin, verify only fleet managers can view URLs.
  * Usage: QA_BASE=https://flightslate-staging-production.up.railway.app node scripts/e2e-aircraft-docs-api.js
  */
 const BASE = process.env.QA_BASE || 'http://localhost:3000';
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 
 const ACCOUNTS = [
-  { email: 'qa-admin@test.local', role: 'admin', canUpload: true },
-  { email: 'evaughntaemw@gmail.com', role: 'owner', canUpload: true, optional: true },
-  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false },
-  { email: 'qa-student@test.local', role: 'student', canUpload: false },
-  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false },
-  { email: 'qa-renter@test.local', role: 'renter', canUpload: false },
+  { email: 'qa-admin@test.local', role: 'admin', canUpload: true, canList: true },
+  { email: 'evaughntaemw@gmail.com', role: 'owner', canUpload: true, canList: true, optional: true },
+  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false, canList: true },
+  { email: 'qa-student@test.local', role: 'student', canUpload: false, canList: false },
+  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false, canList: true },
+  { email: 'qa-renter@test.local', role: 'renter', canUpload: false, canList: false },
 ];
 
 const failures = [];
@@ -102,15 +102,20 @@ async function main() {
     process.exit(1);
   }
 
-  // Verify file is fetchable (public URL)
+  const fileHref = () => new URL(fileUrl, BASE).toString();
+
+  // Verify file is protected from anonymous access and fetchable with auth.
   try {
-    const fileRes = await fetch(fileUrl, { redirect: 'follow' });
+    const anonRes = await fetch(fileHref(), { redirect: 'follow' });
+    ok('document URL blocks anonymous fetch', anonRes.status === 401 || anonRes.status === 403, `status=${anonRes.status}`);
+
+    const fileRes = await fetch(fileHref(), { headers: auth(adminToken), redirect: 'follow' });
     const ct = fileRes.headers.get('content-type') || '';
     const buf = Buffer.from(await fileRes.arrayBuffer());
-    ok('document URL fetchable', fileRes.ok && buf.length > 50, `status=${fileRes.status} bytes=${buf.length}`);
+    ok('document URL fetchable with auth', fileRes.ok && buf.length > 50, `status=${fileRes.status} bytes=${buf.length}`);
     ok('document is PDF', buf.slice(0, 4).toString() === '%PDF' || ct.includes('pdf'), ct);
   } catch (e) {
-    ok('document URL fetchable', false, e.message);
+    ok('document URL protection/fetch', false, e.message);
   }
 
   for (const acct of ACCOUNTS) {
@@ -130,13 +135,15 @@ async function main() {
       const data = await api(`/api/aircraft/${aircraftId}/documents`, { headers: auth(token) });
       const docs = data.documents || [];
       const found = docs.some((d) => d.id === docId);
-      ok(`${acct.role} can list documents`, found, `docs=${docs.length}`);
+      ok(`${acct.role} can list documents`, acct.canList && found, `docs=${docs.length}`);
       if (found) {
         const doc = docs.find((d) => d.id === docId);
         ok(`${acct.role} has file_url`, !!doc.file_url);
+        const fileRes = await fetch(new URL(doc.file_url, BASE).toString(), { headers: auth(token) });
+        ok(`${acct.role} can fetch document with auth`, fileRes.ok, `status=${fileRes.status}`);
       }
     } catch (e) {
-      ok(`${acct.role} can list documents`, false, e.message);
+      ok(`${acct.role} document list blocked`, !acct.canList && (e.status === 403 || e.status === 401), `${e.status || ''} ${e.message}`);
     }
 
     if (!acct.canUpload) {
