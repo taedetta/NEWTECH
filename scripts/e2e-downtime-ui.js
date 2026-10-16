@@ -70,6 +70,9 @@ async function main() {
   ok('downtime entries load (not failed message)', !entriesHtml.includes('Failed to load entries'), entriesHtml.slice(0, 120));
 
   // Schedule downtime
+  const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  await page.fill('#downtime-start', futureDate);
+  await page.fill('#downtime-end', futureDate);
   await page.fill('#downtime-reason', 'Playwright UI test');
   await page.click('#downtime-form button[type="submit"]');
   await page.waitForTimeout(2000);
@@ -103,7 +106,9 @@ async function main() {
   const maintErr = await page.locator('#maint-status-error:not(.hidden)').innerText().catch(() => '');
   ok('mark down saved without error', !maintErr, maintErr);
 
-  const modalHidden = await page.locator('#maint-status-modal.hidden').isVisible().catch(() => false);
+  const modalHidden = await page.locator('#maint-status-modal').evaluate((el) => (
+    el.classList.contains('hidden') || getComputedStyle(el).display === 'none'
+  )).catch(() => false);
   ok('maint modal closed after save', modalHidden);
 
   await browser.close();

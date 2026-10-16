@@ -10,6 +10,7 @@
 const fs = require('fs');
 const { Pool } = require('pg');
 const { TERMS_VERSION } = require('../lib/terms');
+const { getInspectionHours, hoursUntilDue } = require('../lib/aircraft-inspection-hours');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
@@ -349,23 +350,28 @@ async function testMaintenanceRole(tokens, ac) {
 }
 
 async function ensureFleetBookable(adminTok, acList) {
-  console.log('\n=== Ensure fleet bookable (annual dates) ===');
+  console.log('\n=== Ensure fleet bookable (inspection dates/hours) ===');
   const todayStr = new Date().toISOString().slice(0, 10);
   const nextAnnual = `${new Date().getFullYear() + 1}-05-30`;
   for (const ac of acList) {
     if (ac.status !== 'available') continue;
     const due = ac.next_annual_due ? String(ac.next_annual_due).slice(0, 10) : null;
-    if (!due || due <= todayStr) {
+    const tach = getInspectionHours(ac);
+    const current100 = parseFloat(ac.next_100hr_due || 0);
+    const next100 = tach == null ? (current100 || 125) : Math.ceil(tach + 100);
+    const needsAnnual = !due || due <= todayStr;
+    const needs100 = tach != null && (!current100 || hoursUntilDue(ac, current100) <= 10);
+    if (needsAnnual || needs100) {
       const res = await api(adminTok, `/api/aircraft/${ac.id}/inspections`, {
         method: 'PUT',
         body: JSON.stringify({
-          next_100hr_due: ac.next_100hr_due || 125,
-          next_annual_due: nextAnnual,
+          next_100hr_due: needs100 ? next100 : current100,
+          next_annual_due: needsAnnual ? nextAnnual : due,
         }),
       });
-      ok(`${ac.tail_number} annual updated to ${nextAnnual}`, res.status === 200, JSON.stringify(res.data));
+      ok(`${ac.tail_number} inspections updated`, res.status === 200, JSON.stringify(res.data));
     } else {
-      ok(`${ac.tail_number} annual OK (${due})`, true);
+      ok(`${ac.tail_number} inspections OK`, true);
     }
   }
 }
