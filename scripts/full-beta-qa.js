@@ -349,23 +349,28 @@ async function testMaintenanceRole(tokens, ac) {
 }
 
 async function ensureFleetBookable(adminTok, acList) {
-  console.log('\n=== Ensure fleet bookable (annual dates) ===');
+  console.log('\n=== Ensure fleet bookable (inspection dates/hours) ===');
   const todayStr = new Date().toISOString().slice(0, 10);
   const nextAnnual = `${new Date().getFullYear() + 1}-05-30`;
   for (const ac of acList) {
     if (ac.status !== 'available') continue;
     const due = ac.next_annual_due ? String(ac.next_annual_due).slice(0, 10) : null;
-    if (!due || due <= todayStr) {
+    const tach = parseFloat(ac.current_tach || ac.total_tach_hours || 0);
+    const next100 = parseFloat(ac.next_100hr_due || 0);
+    const next100Target = Number.isFinite(tach) ? Number((tach + 100).toFixed(1)) : 125;
+    const needsAnnual = !due || due <= todayStr;
+    const needs100hr = !next100 || (Number.isFinite(tach) && tach >= next100);
+    if (needsAnnual || needs100hr) {
       const res = await api(adminTok, `/api/aircraft/${ac.id}/inspections`, {
         method: 'PUT',
         body: JSON.stringify({
-          next_100hr_due: ac.next_100hr_due || 125,
-          next_annual_due: nextAnnual,
+          next_100hr_due: needs100hr ? next100Target : next100,
+          next_annual_due: needsAnnual ? nextAnnual : due,
         }),
       });
-      ok(`${ac.tail_number} annual updated to ${nextAnnual}`, res.status === 200, JSON.stringify(res.data));
+      ok(`${ac.tail_number} inspections updated`, res.status === 200, JSON.stringify(res.data));
     } else {
-      ok(`${ac.tail_number} annual OK (${due})`, true);
+      ok(`${ac.tail_number} inspections OK (${due}, 100hr ${next100.toFixed(1)})`, true);
     }
   }
 }

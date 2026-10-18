@@ -70,6 +70,9 @@ async function main() {
   ok('downtime entries load (not failed message)', !entriesHtml.includes('Failed to load entries'), entriesHtml.slice(0, 120));
 
   // Schedule downtime
+  const futureDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  await page.fill('#downtime-start', futureDate);
+  await page.fill('#downtime-end', futureDate);
   await page.fill('#downtime-reason', 'Playwright UI test');
   await page.click('#downtime-form button[type="submit"]');
   await page.waitForTimeout(2000);
@@ -91,7 +94,18 @@ async function main() {
   });
   await page.waitForTimeout(1500);
 
-  const markDownBtn = page.locator('button:has-text("Mark Down")').first();
+  let markDownBtn = page.locator('button:has-text("Mark Down")').first();
+  if (!(await markDownBtn.isVisible().catch(() => false))) {
+    const markAvailableBtn = page.locator('button:has-text("Mark Available")').first();
+    if (await markAvailableBtn.isVisible().catch(() => false)) {
+      await markAvailableBtn.click();
+      await page.waitForSelector('#maint-status-modal:not(.hidden)', { timeout: 5000 });
+      await page.click('#maint-status-form button[type="submit"]');
+      await page.waitForSelector('#maint-status-modal.hidden', { state: 'attached', timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+      markDownBtn = page.locator('button:has-text("Mark Down")').first();
+    }
+  }
   ok('mark down button visible', await markDownBtn.isVisible().catch(() => false));
   await markDownBtn.click();
   await page.waitForSelector('#maint-status-modal:not(.hidden)', { timeout: 5000 });
@@ -103,8 +117,18 @@ async function main() {
   const maintErr = await page.locator('#maint-status-error:not(.hidden)').innerText().catch(() => '');
   ok('mark down saved without error', !maintErr, maintErr);
 
-  const modalHidden = await page.locator('#maint-status-modal.hidden').isVisible().catch(() => false);
+  const modalHidden = await page.locator('#maint-status-modal').evaluate((el) => el.classList.contains('hidden')).catch(() => false);
   ok('maint modal closed after save', modalHidden);
+
+  await page.evaluate(async () => {
+    const token = localStorage.getItem('fs_token');
+    const headers = { Authorization: `Bearer ${token}` };
+    const rows = await fetch('/api/downtime', { headers }).then((r) => r.json()).catch(() => []);
+    const cleanupReasons = new Set(['Playwright UI test', 'Playwright mark down']);
+    await Promise.all((rows || [])
+      .filter((row) => cleanupReasons.has(row.reason))
+      .map((row) => fetch(`/api/downtime/${row.id}`, { method: 'DELETE', headers }).catch(() => null)));
+  });
 
   await browser.close();
 
