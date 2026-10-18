@@ -25,12 +25,11 @@
     "form-data": "^4.0.5",
     "jsonwebtoken": "^9.0.3",
     "node-fetch": "^2.7.0",
-    "nodemailer": "^8.0.8",
+    "nodemailer": "^10.1.6",
     "openai": "^4.77.0",
     "pdfkit": "^0.15.0",
     "pg": "^8.11.3",
-    "web-push": "^3.6.7",
-    "xlsx": "^0.18.5"
+    "web-push": "^3.6.7"
   },
   "description": "Flight school management platform — Express.js + PostgreSQL + vanilla JS frontend.",
   "keywords": [],
@@ -38,5 +37,8 @@
   "license": "ISC",
   "devDependencies": {
     "playwright": "^1.60.0"
+  },
+  "overrides": {
+    "qs": "6.16.1"
   }
 }
