@@ -19,18 +19,17 @@
     "@aws-sdk/client-s3": "^3.1053.0",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
-    "compression": "^1.8.1",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "express": "^4.18.2",
-    "form-data": "^4.0.5",
+    "form-data": "^4.0.6",
     "jsonwebtoken": "^9.0.3",
     "node-fetch": "^2.7.0",
-    "nodemailer": "^8.0.8",
+    "nodemailer": "^10.1.7",
     "openai": "^4.77.0",
     "pdfkit": "^0.15.0",
     "pg": "^8.11.3",
-    "web-push": "^3.6.7",
-    "xlsx": "^0.18.5"
+    "web-push": "^3.6.7"
   },
   "description": "Flight school management platform — Express.js + PostgreSQL + vanilla JS frontend.",
   "keywords": [],
@@ -38,5 +37,8 @@
   "license": "ISC",
   "devDependencies": {
     "playwright": "^1.60.0"
+  },
+  "overrides": {
+    "qs": "6.16.1"
   }
 }
