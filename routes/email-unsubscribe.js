@@ -3,15 +3,19 @@
 const express = require('express');
 const { verifyUnsubscribeToken, typeLabel, buildManagePrefsUrl } = require('../lib/unsubscribe-token');
 const { updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES } = require('../lib/email-types');
+const { EMAIL_TYPES, isRequiredEmailType } = require('../lib/email-types');
 const { getAppUrl } = require('../lib/app-url');
 
 const router = express.Router();
 
-function renderPage({ title, message, ok }) {
+function renderPage({ title, message, ok, confirm }) {
   const color = ok ? '#059669' : '#DC2626';
   const manageUrl = buildManagePrefsUrl();
   const appUrl = `${getAppUrl()}/app`;
+  const confirmHtml = confirm ? `
+    <form method="POST" action="${confirm.action}" style="margin:0 0 20px;">
+      <button type="submit" style="display:inline-block;background:#DC2626;color:#fff;border:0;text-decoration:none;padding:12px 22px;border-radius:7px;font-weight:600;font-size:0.9rem;cursor:pointer;">${confirm.label}</button>
+    </form>` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -31,6 +35,7 @@ function renderPage({ title, message, ok }) {
   <div class="card">
     <h1>${title}</h1>
     <p>${message}</p>
+    ${confirmHtml}
     <a class="btn" href="${manageUrl}">Manage email preferences</a>
     <p style="margin-top:20px"><a class="link" href="${appUrl}">Open FlightSlate</a></p>
   </div>
@@ -38,49 +43,85 @@ function renderPage({ title, message, ok }) {
 </html>`;
 }
 
+function readAndValidateToken(req, res) {
+  const token = req.query.token;
+  const rawType = req.query.type === undefined ? null : String(req.query.type).trim();
+  if (!token) {
+    res.status(400).send(renderPage({
+      ok: false,
+      title: 'Invalid link',
+      message: 'This unsubscribe link is missing required information. Sign in and open My Account to manage email preferences.',
+    }));
+    return null;
+  }
+
+  const verified = verifyUnsubscribeToken(token);
+  if (!verified) {
+    res.status(400).send(renderPage({
+      ok: false,
+      title: 'Link expired or invalid',
+      message: 'This unsubscribe link is no longer valid. Sign in and open My Account to manage your email preferences.',
+    }));
+    return null;
+  }
+
+  const tokenType = verified.type;
+  if ((rawType && rawType !== tokenType) || (tokenType !== 'all' && !EMAIL_TYPES[tokenType]) || isRequiredEmailType(tokenType)) {
+    res.status(400).send(renderPage({
+      ok: false,
+      title: 'Invalid preference type',
+      message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
+    }));
+    return null;
+  }
+
+  return { token, userId: verified.userId, type: tokenType };
+}
+
 router.get('/unsubscribe', async (req, res) => {
   try {
-    const token = req.query.token;
-    const rawType = String(req.query.type || 'all').trim();
-    if (!token) {
-      return res.status(400).send(renderPage({
-        ok: false,
-        title: 'Invalid link',
-        message: 'This unsubscribe link is missing required information. Sign in and open My Account to manage email preferences.',
-      }));
-    }
+    const verified = readAndValidateToken(req, res);
+    if (!verified) return;
 
-    const verified = verifyUnsubscribeToken(token);
-    if (!verified) {
-      return res.status(400).send(renderPage({
-        ok: false,
-        title: 'Link expired or invalid',
-        message: 'This unsubscribe link is no longer valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
+    const label = typeLabel(verified.type);
+    const action = `/api/email/unsubscribe?token=${encodeURIComponent(verified.token)}&type=${encodeURIComponent(verified.type)}`;
+    return res.send(renderPage({
+      ok: true,
+      title: 'Confirm unsubscribe',
+      message: verified.type === 'all'
+        ? 'Please confirm that you want to turn off optional email notifications from New Tech Aviation.'
+        : `Please confirm that you want to unsubscribe from <strong>${label}</strong>.`,
+      confirm: { action, label: 'Confirm unsubscribe' },
+    }));
+  } catch (err) {
+    console.error('[email-unsubscribe] error:', err.message);
+    res.status(500).send(renderPage({
+      ok: false,
+      title: 'Something went wrong',
+      message: 'We could not process your unsubscribe request. Please try again or manage preferences in My Account.',
+    }));
+  }
+});
 
-    if (rawType !== 'all' && !EMAIL_TYPES[rawType]) {
-      return res.status(400).send(renderPage({
-        ok: false,
-        title: 'Invalid preference type',
-        message: 'This unsubscribe link is not valid. Sign in and open My Account to manage your email preferences.',
-      }));
-    }
+router.post('/unsubscribe', async (req, res) => {
+  try {
+    const verified = readAndValidateToken(req, res);
+    if (!verified) return;
 
     await ensureDefaultPrefs(verified.userId);
 
-    if (rawType === 'all') {
+    if (verified.type === 'all') {
       await updatePrefs(verified.userId, { email_all_off: true });
     } else {
-      await updatePrefs(verified.userId, { [rawType]: false });
+      await updatePrefs(verified.userId, { [verified.type]: false });
     }
 
-    const label = typeLabel(rawType);
+    const label = typeLabel(verified.type);
     return res.send(renderPage({
       ok: true,
       title: 'Unsubscribed',
-      message: rawType === 'all'
-        ? 'You will no longer receive email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
+      message: verified.type === 'all'
+        ? 'You will no longer receive optional email notifications from New Tech Aviation. Sign in and open My Account to turn individual types back on.'
         : `You have been unsubscribed from <strong>${label}</strong>. Other notification types are unchanged. Sign in to review all settings in My Account.`,
     }));
   } catch (err) {
