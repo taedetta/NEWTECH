@@ -198,6 +198,9 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
     );
     if (bkResult.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = bkResult.rows[0];
+    if (b.status !== 'completed') {
+      return res.status(400).json({ error: 'Only completed flight records can be edited from history' });
+    }
     if (!canEditBookingHistoryFlight(role, userId, b)) {
       return res.status(403).json({ error: 'You can only edit your own flight records' });
     }

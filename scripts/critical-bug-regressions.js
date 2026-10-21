@@ -445,6 +445,21 @@ function testHistoryGroundDeleteRoute() {
   assert(appSrc.includes("'/api/booking-history/flights/' + id"), 'flight history delete must still call flights endpoint');
 }
 
+function testHistoryFlightEditsRequireCompletedBookings() {
+  const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
+  const routeStart = historySrc.indexOf("router.patch('/flights/:id'");
+  const routeEnd = historySrc.indexOf("// PATCH /api/booking-history/ground-sessions", routeStart);
+  assert(routeStart >= 0 && routeEnd > routeStart, 'booking-history flight PATCH route not found');
+
+  const routeSrc = historySrc.slice(routeStart, routeEnd);
+  assert(
+    routeSrc.includes("b.status !== 'completed'")
+      && routeSrc.includes('Only completed flight records can be edited from history')
+      && routeSrc.indexOf("b.status !== 'completed'") < routeSrc.indexOf('syncFlightRecord(client, bookingId, patch)'),
+    'history flight edits must reject non-completed bookings before syncing flight records'
+  );
+}
+
 async function testHistoryDeleteMeterRollbackHelper() {
   const updates = [];
   const makeClient = (aircraft) => ({
@@ -1427,6 +1442,7 @@ async function main() {
   testCompletionNoChangeAuthorizationGuard();
   await testSyncFlightRecordStrictNumbers();
   testHistoryGroundDeleteRoute();
+  testHistoryFlightEditsRequireCompletedBookings();
   await testHistoryDeleteMeterRollbackHelper();
   await testApplyMeterReadingsLocksAircraftRow();
   testSyncFlightRecordLocksRowsAndReconcilesMeters();
