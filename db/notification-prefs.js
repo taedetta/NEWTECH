@@ -1,6 +1,12 @@
 'use strict';
 
-const pool = require('./index');
+const { isRequiredEmailType } = require('../lib/email-types');
+
+let defaultPool = null;
+function getDefaultPool() {
+  if (!defaultPool) defaultPool = require('./index');
+  return defaultPool;
+}
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -26,7 +32,7 @@ const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
 
 let schemaPromise = null;
 
-async function ensureEmailPrefsSchema(db = pool) {
+async function ensureEmailPrefsSchema(db = getDefaultPool()) {
   if (!schemaPromise) {
     schemaPromise = (async () => {
       await db.query(`
@@ -67,12 +73,16 @@ function rowToPrefs(row) {
   if (!row) return { ...DEFAULT_PREFS };
   const out = {};
   for (const col of PREF_COLUMNS) {
+    if (isRequiredEmailType(col)) {
+      out[col] = true;
+      continue;
+    }
     out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
   }
   return out;
 }
 
-async function ensureDefaultPrefs(userId, db = pool) {
+async function ensureDefaultPrefs(userId, db = getDefaultPool()) {
   await ensureEmailPrefsSchema(db);
   await db.query(
     `INSERT INTO user_email_preferences (user_id)
@@ -82,7 +92,7 @@ async function ensureDefaultPrefs(userId, db = pool) {
   );
 }
 
-async function getPrefs(userId, db = pool) {
+async function getPrefs(userId, db = getDefaultPool()) {
   await ensureDefaultPrefs(userId, db);
   const result = await db.query(
     'SELECT * FROM user_email_preferences WHERE user_id = $1',
@@ -91,12 +101,13 @@ async function getPrefs(userId, db = pool) {
   return rowToPrefs(result.rows[0]);
 }
 
-async function updatePrefs(userId, patch, db = pool) {
+async function updatePrefs(userId, patch, db = getDefaultPool()) {
   await ensureDefaultPrefs(userId, db);
   const sets = [];
   const vals = [];
   let i = 1;
   for (const col of PREF_COLUMNS) {
+    if (isRequiredEmailType(col)) continue;
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
