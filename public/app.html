@@ -13297,8 +13297,11 @@ async function loadMaintenanceFleet() {
     const h100Display = hRem == null ? 'Not set' : (hRem <= 0 ? `${Math.abs(hRem.toFixed(1))} Tach OVERDUE` : `${hRem.toFixed(1)} Tach hrs`);
     const annualDisplay = dayRem == null ? 'Not set' : (dayRem <= 0 ? `${Math.abs(dayRem)} days OVERDUE` : `${dayRem}d`);
 
+    // Scheduled downtime can make an otherwise available aircraft appear down;
+    // this button controls only the persistent aircraft.status toggle.
+    const isPersistentlyDown = a.status === 'maintenance';
     const maintBtn = canManage
-      ? `<button class="btn btn-sm ${isDown ? 'btn-secondary' : 'btn-danger'}" onclick="openMaintStatusModal(${a.id}, '${escHtml(a.tail_number)}', '${a.status}')">${isDown ? 'Mark Available' : 'Mark Down'}</button>`
+      ? `<button class="btn btn-sm ${isPersistentlyDown ? 'btn-secondary' : 'btn-danger'}" onclick="openMaintStatusModal(${a.id}, '${escHtml(a.tail_number)}', '${a.status}')">${isPersistentlyDown ? 'Mark Available' : 'Mark Down'}</button>`
       : '';
     const editBtn = canEditHours
       ? `<button class="btn btn-secondary btn-sm" onclick="openInspectionModal(${a.id}, '${escHtml(a.tail_number)}')">Edit Hours</button>`

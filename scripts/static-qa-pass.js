@@ -371,6 +371,10 @@ if (!appHtml.includes('function aircraftTypeLabel')
   || /a\.type\.replace\(/.test(appHtml)) {
   fail('Fleet aircraft type rendering can throw when type is missing');
 } else ok('Fleet aircraft type rendering tolerates missing type');
+if (!appHtml.includes('const isPersistentlyDown = a.status === \'maintenance\'')
+  || !appHtml.includes('${isPersistentlyDown ? \'Mark Available\' : \'Mark Down\'}')) {
+  fail('Maintenance status button label follows scheduled downtime instead of aircraft.status');
+} else ok('Maintenance status button label follows persistent status');
 if (!aircraftSrc.includes('FOR UPDATE')
   || !aircraftSrc.includes('hobbs cannot be less than current aircraft reading')
   || !aircraftSrc.includes('tach cannot be less than current aircraft reading')) {
