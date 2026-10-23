@@ -28,6 +28,7 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const { shouldCheckBookingConflicts } = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -865,6 +866,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const updDurationHrs = (enTime - stTime) / (1000 * 60 * 60);
     if (updDurationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const effectiveLessonType = lesson_type !== undefined ? lesson_type : b.lesson_type;
+    const effectiveStatus = status !== undefined && status !== null ? status : b.status;
     const isDiscovery = isDiscoveryLessonType(effectiveLessonType);
     const policy = await getPolicySettings();
     const timeCheck = validateBookingTimes({
@@ -885,18 +887,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const needsConflictCheck = shouldCheckBookingConflicts({
+      existingStatus: b.status,
+      nextStatus: effectiveStatus,
+      scheduleChanged,
+    });
+    if (needsConflictCheck) {
       await client.query('BEGIN');
       try {
-        if (needsConflictCheck) {
-          await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
-          const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
-          if (conflicts.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Scheduling conflict', conflicts });
-          }
+        await lockBookingResources(client, { aircraft_id: acId, instructor_id: iid, student_id: sid });
+        const conflicts = await checkConflicts(client, { aircraft_id: acId, instructor_id: iid, student_id: sid, start_time: stIso, end_time: etIso, excludeBookingId: bookingId });
+        if (conflicts.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Scheduling conflict', conflicts });
         }
         const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
         let booking_type = await deriveBookingType(client, sid, iid);
@@ -924,7 +927,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       }
     }
     await client.query('BEGIN');
-    // Metadata-only updates (lesson type, notes) — no conflict check needed
+    // Non-blocking updates (metadata or completed/cancelled schedules) do not hold schedule capacity.
     const timeChanged = stIso !== new Date(b.start_time).toISOString() || etIso !== new Date(b.end_time).toISOString();
     let booking_type = await deriveBookingType(client, sid, iid);
     if (isAdmin && req.body.booking_type) {
