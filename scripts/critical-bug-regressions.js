@@ -1423,6 +1423,21 @@ function testAnalyticsSourceIsolationGuards() {
   );
 }
 
+function testDeployedUploadsDoNotUseLocalFallback() {
+  const r2Src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'r2-storage.js'), 'utf8');
+  assert(
+    r2Src.includes('function isHostedRuntime()')
+      && r2Src.includes('process.env.RAILWAY_ENVIRONMENT')
+      && r2Src.includes('process.env.RAILWAY_PUBLIC_DOMAIN')
+      && r2Src.includes("process.env.NODE_ENV === 'production'")
+      && r2Src.includes("process.env.APP_ENV === 'staging'")
+      && r2Src.includes('function canUseLocalUploadFallback(opts = {})')
+      && r2Src.includes('return !!opts.allowLocalDevUrl && !isHostedRuntime()')
+      && r2Src.includes('Refusing non-durable local upload fallback'),
+    'deployed uploads must fail closed instead of returning ephemeral /uploads URLs'
+  );
+}
+
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
@@ -1464,6 +1479,7 @@ async function main() {
   testFollowUpBetaSecurityGuards();
   testPostAuditFollowUpGuards();
   testAnalyticsSourceIsolationGuards();
+  testDeployedUploadsDoNotUseLocalFallback();
   console.log('critical bug regressions passed');
 }
 
