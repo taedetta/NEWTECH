@@ -13,8 +13,8 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE = process.argv[2] || process.env.QA_BASE || 'http://localhost:3000';
-const EMAIL = process.env.QA_EMAIL || 'evaughntaemw@gmail.com';
-const PASSWORD = process.env.QA_PASSWORD || process.env.TEST_USER_PASSWORD || 'NewTech2026!';
+const EMAIL = process.env.QA_EMAIL || 'qa-admin@test.local';
+const PASSWORD = process.env.QA_PASSWORD || process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const OUT_DIR = path.join(__dirname, '..', 'screenshots', 'mobile-' + new Date().toISOString().slice(0, 10));
 
 const VIEWPORTS = [

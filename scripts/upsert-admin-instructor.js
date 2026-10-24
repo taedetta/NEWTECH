@@ -24,8 +24,13 @@ try {
 
 const EMAIL = process.env.ADMIN_EMAIL || 'evaughntaemw@gmail.com';
 const NAME = process.env.ADMIN_NAME || 'Evaughntae White';
-const PASSWORD = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD || 'NewTech2026!';
+const PASSWORD = process.env.ADMIN_PASSWORD || process.env.OWNER_PASSWORD;
 const ROLE = process.env.ADMIN_ROLE || 'admin';
+
+if (!PASSWORD) {
+  console.error('ADMIN_PASSWORD or OWNER_PASSWORD is required.');
+  process.exit(1);
+}
 
 async function main() {
   const poolConfig = { connectionString: process.env.DATABASE_URL };

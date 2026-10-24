@@ -1374,6 +1374,7 @@
         select.journey-input { cursor: pointer; }
         .journey-submit { width: 100%; background: #D97706; color: #fff; border: none; padding: 12px; border-radius: 8px; font-size: 0.9rem; font-weight: 700; font-family: 'Inter', sans-serif; cursor: pointer; transition: background 0.2s, transform 0.15s; }
         .journey-submit:hover { background: #B45309; transform: translateY(-1px); }
+        .journey-captcha { margin: 0.5rem 0 0.75rem; min-height: 65px; }
         .journey-form-note { margin-top: 0.75rem; font-size: 0.75rem; color: #475569; text-align: center; }
         @media (max-width: 768px) { .journey-grid { grid-template-columns: 1fr; } .journey-right { order: -1; } .journey-form-row { grid-template-columns: 1fr; } }
 
@@ -1552,6 +1553,8 @@
     }
     </script>
 __CMS_INJECT__
+    <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin>
+    <script src="/js/captcha.js"></script>
 </head>
 <body>
 
@@ -1739,6 +1742,7 @@ __CMS_INJECT__
                         <div class="journey-form-row full">
                             <textarea name="message" placeholder="Tell us what you're looking for (optional)" class="journey-input journey-textarea" rows="3"></textarea>
                         </div>
+                        <div id="journey-captcha" class="journey-captcha"></div>
                         <button type="submit" class="journey-submit">Send Me Info — No Commitment</button>
                         <p class="journey-form-note">We'll reply within 1 business day.</p>
                     </form>
@@ -2594,6 +2598,32 @@ __CMS_INJECT__
             }
           }
 
+          // ── Freeform Text Boxes ─────────────────────────────────────────────
+          if (c.freeform_items) {
+            try {
+              var freeformItems = JSON.parse(c.freeform_items);
+              if (Array.isArray(freeformItems)) {
+                freeformItems.forEach(function(item) {
+                  if (!item || !item.text) return;
+                  var sectionId = item.section || 'hero';
+                  var target = document.getElementById(SECTION_EL_MAP[sectionId] || sectionId);
+                  if (!target) return;
+                  if (window.getComputedStyle(target).position === 'static') {
+                    target.style.position = 'relative';
+                  }
+                  var top = Math.max(0, Math.min(100, parseFloat(item.top || 18)));
+                  var left = Math.max(0, Math.min(100, parseFloat(item.left || 8)));
+                  var width = Math.max(120, Math.min(900, parseFloat(item.width || 320)));
+                  var box = document.createElement('div');
+                  box.className = 'cms-freeform-box';
+                  box.style.cssText = 'position:absolute;z-index:20;top:' + top + '%;left:' + left + '%;max-width:min(' + width + 'px,90vw);background:rgba(15,29,47,0.88);border:1px solid rgba(56,189,248,0.35);box-shadow:0 12px 30px rgba(0,0,0,0.28);border-radius:14px;padding:0.85rem 1rem;color:#fff;line-height:1.5;font-size:0.95rem;backdrop-filter:blur(8px);';
+                  box.innerHTML = cmsEsc(item.text).replace(/\n/g, '<br>');
+                  target.appendChild(box);
+                });
+              }
+            } catch(e) {}
+          }
+
           // ── Orphan Text Edits (inline edits on non-CMS elements) ────────────
           // These are saved by the editor as orphan_text_N keys using the same
           // DOM tree-walker ordinal as tagAllElements() in the editor.
@@ -2832,7 +2862,13 @@ __CMS_INJECT__
         lbObserver.observe(document.body, { childList: true, subtree: true });
 
         // Journey CTA form handler
-        window.handleJourneyForm = function(e) {
+        if (window.FSCaptcha) {
+            FSCaptcha.init().then(function () {
+                if (FSCaptcha.isEnabled()) FSCaptcha.mount('journey-captcha');
+            });
+        }
+
+        window.handleJourneyForm = async function(e) {
             e.preventDefault();
             var form = e.target;
             var btn = form.querySelector('.journey-submit');
@@ -2854,6 +2890,18 @@ __CMS_INJECT__
             btn.textContent = 'Sending…';
             btn.disabled = true;
 
+            var captchaToken = null;
+            try {
+                if (window.FSCaptcha) {
+                    await FSCaptcha.init();
+                    if (FSCaptcha.isEnabled()) captchaToken = await FSCaptcha.requireToken('journey-captcha');
+                }
+            } catch (captchaErr) {
+                btn.textContent = captchaErr.message || 'Complete security check';
+                btn.disabled = false;
+                return;
+            }
+
             fetch('/api/leads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2864,7 +2912,8 @@ __CMS_INJECT__
                     experience: 'beginner',
                     program_interest: data.programInterest || null,
                     message: data.message || null,
-                    source: 'index-journey-cta'
+                    source: 'index-journey-cta',
+                    captchaToken: captchaToken
                 })
             })
             .then(function(res) {
@@ -2872,14 +2921,17 @@ __CMS_INJECT__
                     btn.textContent = '\u2713 Sent!';
                     btn.style.background = '#059669';
                     form.innerHTML = '<p style="text-align:center;color:#fff;font-weight:700;font-size:1rem;padding:1.5rem;">Thanks — we will be in touch within 1 business day.</p>';
-                } else {
-                    throw new Error('Failed');
+                    return null;
                 }
+                return res.json().catch(function() { return {}; }).then(function(data) {
+                    throw new Error(data.error || 'Failed');
+                });
             })
-            .catch(function() {
-                btn.textContent = 'Try again';
+            .catch(function(err) {
+                btn.textContent = err.message && err.message !== 'Failed' ? err.message : 'Try again';
                 btn.disabled = false;
                 btn.style.background = '';
+                if (window.FSCaptcha) FSCaptcha.reset('journey-captcha');
             });
         };
     })();
