@@ -6964,33 +6964,16 @@ async function createNewProgram() {
 // ─── END TRAINING PROGRAMS ADMIN ─────────────────────────
 
 function navigate(page) {
-  console.log('[NAV] navigate called with:', page);
   closeSidebar(); // close mobile sidebar on navigation
   const wasVisited = visitedPages.has(page);
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   const targetPage = document.getElementById('page-' + page);
-  console.log('[NAV] targetPage element:', targetPage);
-  console.log('[NAV] targetPage innerHTML length:', targetPage ? targetPage.innerHTML.length : 'NULL');
   if (targetPage) {
     targetPage.classList.remove('hidden');
     targetPage.style.display = '';  // clear any inline display:none
     targetPage.style.visibility = 'visible';  // force visible
     targetPage.style.opacity = '1';  // force opaque
-    console.log('[NAV] Removed hidden class. classList now:', targetPage.className);
-    console.log('[NAV] computed display:', window.getComputedStyle(targetPage).display);
-    console.log('[NAV] computed visibility:', window.getComputedStyle(targetPage).visibility);
-    // Force-check parent visibility
-    var parent = targetPage.parentElement;
-    var depth = 0;
-    while (parent && depth < 5) {
-      var pStyle = window.getComputedStyle(parent);
-      if (pStyle.display === 'none' || pStyle.visibility === 'hidden') {
-        console.error('[NAV] PARENT HIDDEN! id=' + parent.id + ' class=' + parent.className + ' display=' + pStyle.display + ' visibility=' + pStyle.visibility);
-      }
-      parent = parent.parentElement;
-      depth++;
-    }
   } else {
     console.error('[NAV] page not found:', page);
   }

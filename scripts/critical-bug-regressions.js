@@ -31,6 +31,7 @@ const { syncFlightRecord, shiftBookingTimesToFlightDate } = require('../lib/sync
 const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
+const { getAppEnv } = require('../lib/app-env');
 const {
   applyAircraftMeterReadings,
   reconcileAircraftMeterForFlightEdit,
@@ -497,7 +498,7 @@ async function testHistoryDeleteMeterRollbackHelper() {
     tach_start: 50,
     tach_end: 51,
   });
-  assert.deepStrictEqual(updates[0].params, [100, 50, 7, 'production']);
+  assert.deepStrictEqual(updates[0].params, [100, 50, 7, getAppEnv()]);
 
   updates.length = 0;
   await rollbackAircraftMeterForDeletedBooking(makeClient({
@@ -670,7 +671,7 @@ async function testMeterDecreaseEditRollsBackCurrentAircraftMeter() {
     source: 'critical_regression',
   });
 
-  assert.deepStrictEqual(updates[0].params, [100.5, 50.5, 7, 'production']);
+  assert.deepStrictEqual(updates[0].params, [100.5, 50.5, 7, getAppEnv()]);
   assert.strictEqual(inserts.length, 2, 'meter decrease corrections should be audit logged');
 }
 
