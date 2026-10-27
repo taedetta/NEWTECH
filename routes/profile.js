@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrefs, updatePrefs, ensureDefaultPrefs } = require('../db/notification-prefs');
-const { EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
+const { EMAIL_TYPES, REQUIRED_EMAIL_TYPES, getPreferenceCatalog } = require('../lib/notification-prefs');
 const { sendEmailToUser } = require('../lib/notification-prefs');
 const { profileChangeEmail } = require('../email-templates');
 
@@ -204,8 +204,10 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
   try {
     const body = req.body || {};
     const patch = {};
+    const requiredEmailTypes = new Set(REQUIRED_EMAIL_TYPES);
     if (body.email_all_off !== undefined) patch.email_all_off = !!body.email_all_off;
     for (const key of Object.keys(EMAIL_TYPES)) {
+      if (requiredEmailTypes.has(key)) continue;
       if (body[key] !== undefined) patch[key] = !!body[key];
     }
     if (Object.keys(patch).length === 0) {
