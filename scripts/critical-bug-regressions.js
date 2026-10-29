@@ -1176,12 +1176,31 @@ function testOwnerAndSensitiveDataGuards() {
       && deleteRoute.includes('Cannot remove the last owner'),
     'only owners may delete owner accounts, and the last owner must be protected'
   );
+  assert(
+    usersSrc.includes('async function lockOwnerInvariant')
+      && usersSrc.includes('pg_advisory_xact_lock')
+      && usersSrc.includes('async function countActiveOwners')
+      && deleteRoute.includes('FOR UPDATE')
+      && deleteRoute.includes('await lockOwnerInvariant(client)')
+      && deleteRoute.includes('await countActiveOwners(client)'),
+    'owner deletion must serialize the last-owner invariant inside the deletion transaction'
+  );
 
   const roleRoute = usersSrc.slice(usersSrc.indexOf("router.patch('/:id/role'"), usersSrc.indexOf("// PATCH /api/users/:id/instructor-status"));
   assert(
     roleRoute.includes("target.role === 'owner' && role !== 'owner' && requester.rows[0].role !== 'owner'")
       && roleRoute.includes('Only owners can revoke owner access'),
     'only owners may revoke owner access through the role endpoint'
+  );
+  const privilegesRoute = usersSrc.slice(usersSrc.indexOf("router.patch('/:id/privileges'"), usersSrc.indexOf("// PATCH /api/users/:id/role"));
+  assert(
+    privilegesRoute.includes('FOR UPDATE')
+      && privilegesRoute.includes('await lockOwnerInvariant(client)')
+      && privilegesRoute.includes('await countActiveOwners(client)')
+      && roleRoute.includes('FOR UPDATE')
+      && roleRoute.includes('await lockOwnerInvariant(client)')
+      && roleRoute.includes('await countActiveOwners(client)'),
+    'owner role/privilege changes must serialize the last-owner invariant before demoting owners'
   );
 
   const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');

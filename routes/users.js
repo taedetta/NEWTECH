@@ -28,6 +28,24 @@ function parseUserHours(value, field) {
   return { value: parsed };
 }
 
+const OWNER_INVARIANT_LOCK_NAMESPACE = 752023;
+const OWNER_INVARIANT_LOCK_KEY = 1;
+
+async function lockOwnerInvariant(client) {
+  await client.query('SELECT pg_advisory_xact_lock($1, $2)', [
+    OWNER_INVARIANT_LOCK_NAMESPACE,
+    OWNER_INVARIANT_LOCK_KEY,
+  ]);
+}
+
+async function countActiveOwners(client) {
+  const result = await client.query(
+    "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
+    [getAppEnv()]
+  );
+  return parseInt(result.rows[0].count, 10);
+}
+
 // GET /api/users
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -247,39 +265,45 @@ router.patch('/:id/rate', authenticateToken, async (req, res) => {
 // DELETE /api/users/:id
 router.delete('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();
+  let transactionStarted = false;
+  const abortTransaction = async (statusCode, payload) => {
+    if (transactionStarted) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+    }
+    return res.status(statusCode).json(payload);
+  };
   try {
     const targetId = parseInt(req.params.id);
     if (targetId === req.user.id) return res.status(403).json({ error: 'Cannot delete your own account' });
+    await client.query('BEGIN');
+    transactionStarted = true;
     const targetResult = await client.query(
-      'SELECT id, role, name, email, deleted_at FROM users WHERE id = $1 AND source = $2', [targetId, getAppEnv()]
+      'SELECT id, role, name, email, deleted_at FROM users WHERE id = $1 AND source = $2 FOR UPDATE',
+      [targetId, getAppEnv()]
     );
-    if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    if (targetResult.rows[0].deleted_at) return res.status(404).json({ error: 'User not found' });
+    if (targetResult.rows.length === 0) return abortTransaction(404, { error: 'User not found' });
+    if (targetResult.rows[0].deleted_at) return abortTransaction(404, { error: 'User not found' });
     const target = targetResult.rows[0];
     if (isPlatformAdminEmail(target.email)) {
-      return res.status(403).json({ error: 'Cannot remove the platform administrator account' });
+      return abortTransaction(403, { error: 'Cannot remove the platform administrator account' });
     }
     const requesterResult = await client.query(
       'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [req.user.id, getAppEnv()]
     );
     const requesterRole = requesterResult.rows[0]?.role;
     if (target.role === 'owner' && requesterRole !== 'owner') {
-      return res.status(403).json({ error: 'Only owners can remove owner accounts' });
+      return abortTransaction(403, { error: 'Only owners can remove owner accounts' });
     }
     const requesterPerms = await getUserPermissions(req.user.id, requesterRole);
     const allowed = ['owner', 'admin'].includes(requesterRole) ||
       (target.role === 'instructor' && requesterPerms.can_manage_instructors) ||
       (target.role === 'student' && requesterPerms.can_manage_students);
-    if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to remove this user' });
-    await client.query('BEGIN');
+    if (!allowed) return abortTransaction(403, { error: 'Insufficient permissions to remove this user' });
     if (target.role === 'owner') {
-      const ownerCount = await client.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
-        [getAppEnv()]
-      );
-      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
-        await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      await lockOwnerInvariant(client);
+      if (await countActiveOwners(client) <= 1) {
+        return abortTransaction(403, { error: 'Cannot remove the last owner' });
       }
     }
     const futureBookings = await client.query(
@@ -306,9 +330,10 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       [targetId, getAppEnv()]
     );
     await client.query('COMMIT');
+    transactionStarted = false;
     res.json({ ok: true });
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
+    if (transactionStarted) await client.query('ROLLBACK').catch(() => {});
     console.error('Delete user error:', err);
     res.status(500).json({ error: 'Failed to remove user' });
   } finally {
@@ -318,13 +343,25 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
 // PATCH /api/users/:id/privileges — toggle admin/owner access (owners manage both; admins manage admin only)
 router.patch('/:id/privileges', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  let transactionStarted = false;
+  const abortTransaction = async (statusCode, payload) => {
+    if (transactionStarted) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+    }
+    return res.status(statusCode).json(payload);
+  };
   try {
-    const requesterResult = await pool.query(
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const requesterResult = await client.query(
       'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
       [req.user.id, getAppEnv()]
     );
     if (!requesterResult.rows.length) {
-      return res.status(403).json({ error: 'Not authorized' });
+      return abortTransaction(403, { error: 'Not authorized' });
     }
     const requesterRole = requesterResult.rows[0].role;
     const canGrantAdmin = ['owner', 'admin'].includes(requesterRole);
@@ -332,32 +369,36 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
 
     const targetId = parseInt(req.params.id, 10);
     if (!Number.isFinite(targetId)) {
-      return res.status(400).json({ error: 'Invalid user id' });
+      return abortTransaction(400, { error: 'Invalid user id' });
     }
     if (targetId === req.user.id) {
-      return res.status(403).json({ error: 'You cannot change your own privileges' });
+      return abortTransaction(403, { error: 'You cannot change your own privileges' });
     }
 
     const { admin_access, owner_access } = req.body;
     if (admin_access === undefined && owner_access === undefined) {
-      return res.status(400).json({ error: 'Provide admin_access and/or owner_access' });
+      return abortTransaction(400, { error: 'Provide admin_access and/or owner_access' });
     }
     if (owner_access !== undefined && !canGrantOwner) {
-      return res.status(403).json({ error: 'Only owners can grant or revoke owner access' });
+      return abortTransaction(403, { error: 'Only owners can grant or revoke owner access' });
     }
     if (admin_access !== undefined && !canGrantAdmin) {
-      return res.status(403).json({ error: 'Insufficient permissions to change admin access' });
+      return abortTransaction(403, { error: 'Insufficient permissions to change admin access' });
     }
 
-    const targetResult = await pool.query(
-      'SELECT id, role, name, email, is_instructor FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+    const targetResult = await client.query(
+      'SELECT id, role, name, email, is_instructor FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2 FOR UPDATE',
       [targetId, getAppEnv()]
     );
-    if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (targetResult.rows.length === 0) return abortTransaction(404, { error: 'User not found' });
     const target = targetResult.rows[0];
 
     if (isPlatformAdminEmail(target.email) && owner_access === true) {
-      return res.status(403).json({ error: 'This account stays Admin/Instructor in the UI; it already has full management access' });
+      return abortTransaction(403, { error: 'This account stays Admin/Instructor in the UI; it already has full management access' });
+    }
+
+    if (target.role === 'owner' || owner_access !== undefined) {
+      await lockOwnerInvariant(client);
     }
 
     let newRole = target.role;
@@ -365,12 +406,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
     if (owner_access === true) {
       newRole = 'owner';
     } else if (owner_access === false && target.role === 'owner') {
-      const ownerCount = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
-        [getAppEnv()]
-      );
-      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
-        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      if (await countActiveOwners(client) <= 1) {
+        return abortTransaction(403, { error: 'Cannot remove the last owner' });
       }
       newRole = target.is_instructor ? 'instructor' : 'admin';
     } else if (admin_access === true && target.role !== 'owner') {
@@ -380,6 +417,8 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
     }
 
     if (newRole === target.role) {
+      await client.query('COMMIT');
+      transactionStarted = false;
       return res.json({
         ok: true,
         id: targetId,
@@ -391,23 +430,22 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
     }
 
     if (target.role === 'owner' && newRole !== 'owner') {
-      const ownerCount = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
-        [getAppEnv()]
-      );
-      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
-        return res.status(403).json({ error: 'Cannot remove the last owner' });
+      if (await countActiveOwners(client) <= 1) {
+        return abortTransaction(403, { error: 'Cannot remove the last owner' });
       }
     }
 
     const setInstructor = newRole === 'instructor';
-    await pool.query(
+    await client.query(
       `UPDATE users SET role = $1,
         is_instructor = CASE WHEN $3 THEN TRUE ELSE is_instructor END,
         updated_at = NOW()
        WHERE id = $2 AND source = $4`,
       [newRole, targetId, setInstructor, getAppEnv()]
     );
+    await client.query('COMMIT');
+    transactionStarted = false;
+
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
       ['change_privileges', req.user.id, JSON.stringify({
@@ -428,76 +466,99 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
       owner_access: newRole === 'owner',
     });
   } catch (err) {
+    if (transactionStarted) await client.query('ROLLBACK').catch(() => {});
     console.error('Privilege change error:', err);
     res.status(500).json({ error: 'Failed to update privileges' });
+  } finally {
+    client.release();
   }
 });
 
 // PATCH /api/users/:id/role — owner/admin: change a user's role
 router.patch('/:id/role', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  let transactionStarted = false;
+  const abortTransaction = async (statusCode, payload) => {
+    if (transactionStarted) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+    }
+    return res.status(statusCode).json(payload);
+  };
   try {
-    const requester = await pool.query(
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const requester = await client.query(
       'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
       [req.user.id, getAppEnv()]
     );
     if (!requester.rows.length || !['owner', 'admin'].includes(requester.rows[0].role)) {
-      return res.status(403).json({ error: 'Only owners and admins can change user roles' });
+      return abortTransaction(403, { error: 'Only owners and admins can change user roles' });
     }
     const targetId = parseInt(req.params.id, 10);
     if (!Number.isFinite(targetId)) {
-      return res.status(400).json({ error: 'Invalid user id' });
+      return abortTransaction(400, { error: 'Invalid user id' });
     }
     if (targetId === req.user.id) {
-      return res.status(403).json({ error: 'You cannot change your own role' });
+      return abortTransaction(403, { error: 'You cannot change your own role' });
     }
     const { role } = req.body;
     const validRoles = ['student', 'instructor', 'admin', 'renter', 'owner', 'maintenance'];
     if (!role || !validRoles.includes(role)) {
-      return res.status(400).json({ error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
+      return abortTransaction(400, { error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
     }
     if (role === 'owner' && requester.rows[0].role !== 'owner') {
-      return res.status(403).json({ error: 'Only owners can grant owner access' });
+      return abortTransaction(403, { error: 'Only owners can grant owner access' });
     }
-    const targetResult = await pool.query(
-      'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2', [targetId, getAppEnv()]
+    const targetResult = await client.query(
+      'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2 FOR UPDATE',
+      [targetId, getAppEnv()]
     );
-    if (targetResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (targetResult.rows.length === 0) return abortTransaction(404, { error: 'User not found' });
     const target = targetResult.rows[0];
     if (isPlatformAdminEmail(target.email) && role === 'owner') {
-      return res.status(403).json({ error: 'This account stays Admin/Instructor in the UI; it already has full management access' });
+      return abortTransaction(403, { error: 'This account stays Admin/Instructor in the UI; it already has full management access' });
+    }
+    if (target.role === 'owner' || role === 'owner') {
+      await lockOwnerInvariant(client);
     }
     if (target.role === role) {
+      await client.query('COMMIT');
+      transactionStarted = false;
       return res.json({ ok: true, id: targetId, role, unchanged: true });
     }
     if (target.role === 'owner' && role !== 'owner' && requester.rows[0].role !== 'owner') {
-      return res.status(403).json({ error: 'Only owners can revoke owner access' });
+      return abortTransaction(403, { error: 'Only owners can revoke owner access' });
     }
     // Protect last owner
     if (target.role === 'owner' && role !== 'owner') {
-      const ownerCount = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = 'owner' AND deleted_at IS NULL AND source = $1",
-        [getAppEnv()]
-      );
-      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
-        return res.status(403).json({ error: 'Cannot change the last owner\'s role' });
+      if (await countActiveOwners(client) <= 1) {
+        return abortTransaction(403, { error: 'Cannot change the last owner\'s role' });
       }
     }
     const setInstructor = role === 'instructor';
-    await pool.query(
+    await client.query(
       `UPDATE users SET role = $1,
         is_instructor = CASE WHEN $3 THEN TRUE ELSE is_instructor END,
         updated_at = NOW()
        WHERE id = $2 AND source = $4`,
       [role, targetId, setInstructor, getAppEnv()]
     );
+    await client.query('COMMIT');
+    transactionStarted = false;
+
     pool.query(
       `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
       ['change_role', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, from: target.role, to: role })]
     ).catch(e => console.error('[audit] role change log failed:', e.message));
     res.json({ ok: true, id: targetId, role });
   } catch (err) {
+    if (transactionStarted) await client.query('ROLLBACK').catch(() => {});
     console.error('Role change error:', err);
     res.status(500).json({ error: 'Failed to change role' });
+  } finally {
+    client.release();
   }
 });
 
