@@ -6,22 +6,24 @@
 'use strict';
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 /**
  * Upsert a file override. Called when the editor saves a file.
  */
 async function saveFileOverride(filePath, content, editedBy) {
+  const source = getAppEnv();
   const result = await pool.query(
-    `INSERT INTO file_overrides (file_path, content, edited_by, updated_at, synced_to_github)
-     VALUES ($1, $2, $3, NOW(), FALSE)
-     ON CONFLICT (file_path) DO UPDATE SET
-       content = $2,
-       edited_by = $3,
+    `INSERT INTO file_overrides (file_path, content, edited_by, updated_at, synced_to_github, source)
+     VALUES ($1, $2, $3, NOW(), FALSE, $4)
+     ON CONFLICT (file_path, source) DO UPDATE SET
+       content = EXCLUDED.content,
+       edited_by = EXCLUDED.edited_by,
        updated_at = NOW(),
        synced_to_github = FALSE,
        synced_at = NULL
      RETURNING *`,
-    [filePath, content, editedBy || null]
+    [filePath, content, editedBy || null, source]
   );
   return result.rows[0];
 }
@@ -31,7 +33,8 @@ async function saveFileOverride(filePath, content, editedBy) {
  */
 async function getAllOverrides() {
   const result = await pool.query(
-    'SELECT file_path, content, updated_at FROM file_overrides ORDER BY updated_at ASC'
+    'SELECT file_path, content, updated_at FROM file_overrides WHERE source = $1 ORDER BY updated_at ASC',
+    [getAppEnv()]
   );
   return result.rows;
 }
@@ -43,8 +46,9 @@ async function getUnsyncedOverrides() {
   const result = await pool.query(
     `SELECT id, file_path, content, edited_by, updated_at
      FROM file_overrides
-     WHERE synced_to_github = FALSE
-     ORDER BY updated_at ASC`
+     WHERE synced_to_github = FALSE AND source = $1
+     ORDER BY updated_at ASC`,
+    [getAppEnv()]
   );
   return result.rows;
 }
@@ -56,8 +60,8 @@ async function markSynced(ids) {
   if (!ids || ids.length === 0) return;
   await pool.query(
     `UPDATE file_overrides SET synced_to_github = TRUE, synced_at = NOW()
-     WHERE id = ANY($1)`,
-    [ids]
+     WHERE id = ANY($1) AND source = $2`,
+    [ids, getAppEnv()]
   );
 }
 
@@ -65,14 +69,14 @@ async function markSynced(ids) {
  * Remove an override (e.g. when reverting to repo version).
  */
 async function removeOverride(filePath) {
-  await pool.query('DELETE FROM file_overrides WHERE file_path = $1', [filePath]);
+  await pool.query('DELETE FROM file_overrides WHERE file_path = $1 AND source = $2', [filePath, getAppEnv()]);
 }
 
 /**
  * Remove all overrides (bulk reset).
  */
 async function clearAllOverrides() {
-  const result = await pool.query('DELETE FROM file_overrides RETURNING file_path');
+  const result = await pool.query('DELETE FROM file_overrides WHERE source = $1 RETURNING file_path', [getAppEnv()]);
   return result.rows.map(r => r.file_path);
 }
 
@@ -81,7 +85,8 @@ async function clearAllOverrides() {
  */
 async function countUnsynced() {
   const result = await pool.query(
-    'SELECT COUNT(*) as cnt FROM file_overrides WHERE synced_to_github = FALSE'
+    'SELECT COUNT(*) as cnt FROM file_overrides WHERE synced_to_github = FALSE AND source = $1',
+    [getAppEnv()]
   );
   return parseInt(result.rows[0].cnt);
 }
