@@ -128,7 +128,41 @@ NODE`, { cwd: root, stdio: 'pipe' });
   fail(`FSP workbook generation failed: ${err.message}`);
 }
 
-// 8. Critical auth/permission guardrails
+// 8. Source/backup ZIP generation should avoid the vulnerable archiver glob chain
+console.log('\n=== ZIP archive generation ===');
+if (packageJson.dependencies?.archiver || packageJson.devDependencies?.archiver) {
+  fail('Vulnerable archiver dependency still declared');
+} else if (!packageJson.dependencies?.yazl) {
+  fail('ZIP generation dependency yazl is not declared');
+} else {
+  ok('ZIP generation uses yazl instead of archiver');
+}
+const adminArchiveSrc = fs.readFileSync(path.join(root, 'routes/admin.js'), 'utf8');
+const cmsArchiveSrc = fs.readFileSync(path.join(root, 'routes/cms.js'), 'utf8');
+const backupZipSrc = fs.readFileSync(path.join(root, 'lib/backup-zip.js'), 'utf8');
+if (/require\(['"]archiver['"]\)|archive\.append|archive\.file|archive\.finalize/.test(`${adminArchiveSrc}\n${cmsArchiveSrc}\n${backupZipSrc}`)) {
+  fail('Source/backup ZIP code still uses the old archiver API');
+} else {
+  ok('Source/backup ZIP code uses shared yazl helper');
+}
+try {
+  execSync(`node - <<'NODE'
+(async () => {
+  const { buildZipBuffer } = require('./lib/backup-zip');
+  const zip = await buildZipBuffer([{ name: 'qa.txt', content: 'ok' }], 'readme');
+  if (!Buffer.isBuffer(zip) || zip.readUInt32LE(0) !== 0x04034b50) throw new Error('not zip');
+  if (zip.length < 100) throw new Error('zip too small');
+})().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});
+NODE`, { cwd: root, stdio: 'pipe' });
+  ok('Backup ZIP helper generated archive');
+} catch (err) {
+  fail(`Backup ZIP generation failed: ${err.message}`);
+}
+
+// 9. Critical auth/permission guardrails
 console.log('\n=== Critical auth guardrails ===');
 const authMiddlewareSrc = fs.readFileSync(path.join(root, 'middleware/auth.js'), 'utf8');
 if (!/SELECT id, email, name, role, is_instructor, approval_status, deleted_at[\s\S]+FROM users/.test(authMiddlewareSrc)) {

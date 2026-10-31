@@ -3,11 +3,11 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const archiver = require('archiver');
 const pool = require('../db/index');
 const { saveFileOverride, removeOverride, getUnsyncedOverrides, getAllOverrides, markSynced, clearAllOverrides, countUnsynced } = require('../db/file-overrides');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { isStaging } = require('../lib/app-env');
+const { createZipFile, addBuffer, addFile, pipeToResponse } = require('../lib/zip-archive');
 
 const router = express.Router();
 
@@ -221,9 +221,8 @@ router.get('/download-source', authenticateToken, requirePermission('can_edit_we
     const overrideMap = {};
     for (const o of overrides) overrideMap[o.file_path] = o.content;
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => { console.error('Archive error:', err); if (!res.headersSent) res.status(500).json({ error: 'Archive failed' }); });
-    archive.pipe(res);
+    const archive = createZipFile();
+    pipeToResponse(archive, res, (err) => { console.error('Archive error:', err); if (!res.headersSent) res.status(500).json({ error: 'Archive failed' }); });
     const skipPatterns = [/node_modules/, /\.git/, /\.env/, /session-env/, /shell-snapshots/, /test-fixtures/, /\.DS_Store/];
     const addedPaths = new Set();
 
@@ -237,9 +236,9 @@ router.get('/download-source', authenticateToken, requirePermission('can_edit_we
         addedPaths.add(relPath);
         // Use DB override content when available (guaranteed fresh)
         if (overrideMap[relPath] !== undefined) {
-          archive.append(Buffer.from(overrideMap[relPath], 'utf8'), { name: relPath });
+          addBuffer(archive, overrideMap[relPath], relPath);
         } else {
-          archive.file(full, { name: relPath });
+          addFile(archive, full, relPath);
         }
       }
     }
@@ -248,11 +247,11 @@ router.get('/download-source', authenticateToken, requirePermission('can_edit_we
     // Add any override files that don't exist on disk (editor-created files)
     for (const [fp, content] of Object.entries(overrideMap)) {
       if (!addedPaths.has(fp)) {
-        archive.append(Buffer.from(content, 'utf8'), { name: fp });
+        addBuffer(archive, content, fp);
       }
     }
 
-    archive.finalize();
+    archive.end();
   } catch (err) {
     console.error('download-source error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to create download' });

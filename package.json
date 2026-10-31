@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",
-    "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
@@ -30,7 +29,8 @@
     "openai": "^4.77.0",
     "pdfkit": "^0.15.0",
     "pg": "^8.11.3",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "yazl": "^3.3.1"
   },
   "description": "Flight school management platform — Express.js + PostgreSQL + vanilla JS frontend.",
   "keywords": [],
