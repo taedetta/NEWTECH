@@ -8,6 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { inferLessonType } = require('../lib/booking-rules');
+const { calendarDateFromDate } = require('../lib/school-timezone');
 
 const router = express.Router();
 
@@ -219,12 +220,13 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
 
     const dualHrs = dual_instruction_hours != null ? parseFloat(dual_instruction_hours) : undefined;
     const dateVal = flight_date
-      || (b.start_time ? new Date(b.start_time).toISOString().slice(0, 10) : null)
-      || new Date().toISOString().slice(0, 10);
+      ? String(flight_date).slice(0, 10)
+      : (b.start_time ? calendarDateFromDate(new Date(b.start_time)) : null);
     const effectiveLessonType = inferLessonType(
       lesson_type !== undefined && lesson_type !== '' && lesson_type !== null ? lesson_type : b.lesson_type,
       b
     );
+    const canOverrideBilling = ['owner', 'admin'].includes(role);
 
     const client = await pool.connect();
     let inTxn = false;
@@ -232,18 +234,20 @@ router.patch('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('BEGIN');
       inTxn = true;
 
-      const synced = await syncFlightRecord(client, bookingId, {
-        flight_date: dateVal,
+      const patch = {
         hobbs_start: hStart,
         hobbs_end: hEnd,
         tach_start: tStart,
         tach_end: tEnd,
         dual_instruction_hours: dualHrs,
-        lesson_type: effectiveLessonType,
-        aircraft_charge_amount,
-        instruction_charge_amount,
+        lesson_type: canOverrideBilling ? effectiveLessonType : undefined,
+        aircraft_charge_amount: canOverrideBilling ? aircraft_charge_amount : undefined,
+        instruction_charge_amount: canOverrideBilling ? instruction_charge_amount : undefined,
         submitted_by: userId,
-      });
+      };
+      if (flight_date) patch.flight_date = dateVal;
+
+      const synced = await syncFlightRecord(client, bookingId, patch);
 
       await client.query('COMMIT');
       inTxn = false;

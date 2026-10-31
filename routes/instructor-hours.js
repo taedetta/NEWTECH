@@ -40,9 +40,11 @@ router.post('/', authenticateToken, async (req, res) => {
     let instructorId = userId;
     if ((verifiedRole === 'owner' || verifiedRole === 'admin') && req.body.instructor_id) instructorId = parseInt(req.body.instructor_id);
     const parsedAircraftId = aircraft_id ? parseInt(aircraft_id) : null;
+    let defaultAircraftRate = null;
     if (parsedAircraftId && !isNaN(parsedAircraftId)) {
-      const aircraftCheck = await pool.query('SELECT id FROM aircraft WHERE id = $1', [parsedAircraftId]);
+      const aircraftCheck = await pool.query('SELECT id, hourly_rate FROM aircraft WHERE id = $1', [parsedAircraftId]);
       if (aircraftCheck.rows.length === 0) return res.status(404).json({ error: 'Aircraft not found' });
+      defaultAircraftRate = aircraftCheck.rows[0].hourly_rate != null ? parseFloat(aircraftCheck.rows[0].hourly_rate) : null;
     }
     // Validate submitted Hobbs readings against aircraft's current reading
     if (parsedAircraftId && hobbs_start != null && hobbs_end != null) {
@@ -64,6 +66,10 @@ router.post('/', authenticateToken, async (req, res) => {
     const instructorCheck = await pool.query(`SELECT id, is_instructor, instructor_rate FROM users WHERE id = $1 AND deleted_at IS NULL`, [instructorId]);
     if (instructorCheck.rows.length === 0) return res.status(404).json({ error: 'Instructor not found' });
     if (!instructorCheck.rows[0].is_instructor) return res.status(400).json({ error: 'User is not an instructor' });
+    const canOverrideRates = ['owner', 'admin'].includes(verifiedRole);
+    const defaultInstructorRate = instructorCheck.rows[0].instructor_rate != null ? parseFloat(instructorCheck.rows[0].instructor_rate) : null;
+    const aircraftRateValue = canOverrideRates && aircraft_rate !== undefined ? parseFloat(aircraft_rate) : defaultAircraftRate;
+    const instructorRateValue = canOverrideRates && instructor_rate !== undefined ? parseFloat(instructor_rate) : defaultInstructorRate;
     const entryDate = entry_date || new Date().toISOString().slice(0, 10);
     const dup = await pool.query(
       `SELECT id FROM instructor_hours WHERE instructor_id = $1 AND entry_date = $2
@@ -91,8 +97,8 @@ router.post('/', authenticateToken, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [instructorId, (parsedAircraftId && !isNaN(parsedAircraftId)) ? parsedAircraftId : null,
        entryDate, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       aircraftRateValue,
+       instructorRateValue,
        notes || null, student_name || null,
        parsedBookingId && !isNaN(parsedBookingId) ? parsedBookingId : null,
        audit.status, audit.message]
@@ -211,6 +217,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const acHrsVal = parseFloat(aircraft_hours) || 0;
     const instrHrsVal = parseFloat(instruction_hours) || 0;
     const newDate = entry_date || row.entry_date;
+    const canOverrideRates = ['owner', 'admin'].includes(role);
+    const nextAircraftRate = canOverrideRates && aircraft_rate !== undefined ? parseFloat(aircraft_rate) : row.aircraft_rate;
+    const nextInstructorRate = canOverrideRates && instructor_rate !== undefined ? parseFloat(instructor_rate) : row.instructor_rate;
     const audit = await auditInstructorHoursEntry({
       instructorId: row.instructor_id,
       entryDate: newDate,
@@ -228,8 +237,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
         audit_status = $8, audit_message = $9, updated_at = NOW()
       WHERE id = $10 RETURNING *`,
       [entry_date || null, acHrsVal, instrHrsVal,
-       aircraft_rate !== undefined ? parseFloat(aircraft_rate) : null,
-       instructor_rate !== undefined ? parseFloat(instructor_rate) : null,
+       nextAircraftRate,
+       nextInstructorRate,
        notes || null, student_name || null,
        audit.status, audit.message, entryId]
     );
