@@ -78,24 +78,32 @@ async function sendMessageReply(e, threadId) {
   e.preventDefault();
   var body = document.getElementById('msg-reply-input').value.trim();
   if (!body) return;
-  await api('/api/messages/threads/' + threadId, { method: 'POST', body: JSON.stringify({ body: body }) });
-  document.getElementById('msg-reply-input').value = '';
-  openMessageThread(threadId);
+  try {
+    await api('/api/messages/threads/' + threadId, { method: 'POST', body: JSON.stringify({ body: body }) });
+    document.getElementById('msg-reply-input').value = '';
+    openMessageThread(threadId);
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to send reply', 'error');
+  }
 }
 
 async function startNewMessageThread(e) {
   e.preventDefault();
-  await api('/api/messages/threads', {
-    method: 'POST',
-    body: JSON.stringify({
-      student_id: parseInt(document.getElementById('msg-new-student').value, 10),
-      instructor_id: parseInt(document.getElementById('msg-new-instructor').value, 10),
-      body: document.getElementById('msg-new-body').value.trim(),
-    }),
-  });
-  document.getElementById('msg-new-body').value = '';
-  showToast('Message sent', 'success');
-  loadMessagesPage();
+  try {
+    await api('/api/messages/threads', {
+      method: 'POST',
+      body: JSON.stringify({
+        student_id: parseInt(document.getElementById('msg-new-student').value, 10),
+        instructor_id: parseInt(document.getElementById('msg-new-instructor').value, 10),
+        body: document.getElementById('msg-new-body').value.trim(),
+      }),
+    });
+    document.getElementById('msg-new-body').value = '';
+    showToast('Message sent', 'success');
+    loadMessagesPage();
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to send message', 'error');
+  }
 }
 
 function populateMessageNewForm() {
@@ -121,11 +129,16 @@ function populateMessageNewForm() {
 async function loadCfiUtilizationPage() {
   var el = document.getElementById('cfi-util-content');
   if (!el) return;
-  var data = await api('/api/instructor-utilization');
-  el.innerHTML = '<div class="table-card scroll-x-wrap"><table class="data-table"><thead><tr><th>Instructor</th><th>Students</th><th>Booked</th><th>Available</th><th>Util %</th><th>Dual hrs</th><th>Est revenue</th></tr></thead><tbody>' +
-    (data.instructors || []).map(function(i) {
-      return '<tr><td>' + escHtml(i.name) + '</td><td>' + i.assigned_students + '</td><td>' + i.booked_hours + '</td><td>' + i.available_hours + '</td><td>' + i.utilization_pct + '%</td><td>' + i.dual_hobbs_logged + '</td><td>$' + i.est_instruction_revenue.toFixed(2) + '</td></tr>';
-    }).join('') + '</tbody></table></div>';
+  el.innerHTML = '<div style="padding:1rem;color:var(--gray-500)">Loading…</div>';
+  try {
+    var data = await api('/api/instructor-utilization');
+    el.innerHTML = '<div class="table-card scroll-x-wrap"><table class="data-table"><thead><tr><th>Instructor</th><th>Students</th><th>Booked</th><th>Available</th><th>Util %</th><th>Dual hrs</th><th>Est revenue</th></tr></thead><tbody>' +
+      (data.instructors || []).map(function(i) {
+        return '<tr><td>' + escHtml(i.name) + '</td><td>' + i.assigned_students + '</td><td>' + i.booked_hours + '</td><td>' + i.available_hours + '</td><td>' + i.utilization_pct + '%</td><td>' + i.dual_hobbs_logged + '</td><td>$' + i.est_instruction_revenue.toFixed(2) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (err) {
+    el.innerHTML = '<div style="padding:1rem;color:var(--red)">' + escHtml(err.error || err.message || 'Failed to load CFI utilization') + '</div>';
+  }
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -245,16 +258,26 @@ async function checkPushStatus() {
 }
 
 async function sendLeadFollowUp(leadId) {
-  var data = await api('/api/leads/' + leadId + '/follow-up', { method: 'POST' });
-  showToast('Follow-up sent', 'success');
-  if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+  try {
+    var data = await api('/api/leads/' + leadId + '/follow-up', { method: 'POST' });
+    showToast('Follow-up sent', 'success');
+    if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+  } catch (err) {
+    console.error('[leads] follow-up failed:', err);
+    showToast(err.error || err.message || 'Failed to send follow-up', 'error');
+  }
 }
 
 async function convertLead(leadId) {
-  var data = await api('/api/leads/' + leadId + '/convert', { method: 'POST' });
-  showToast(data.needs_account ? 'Converted — create account in People' : 'Lead linked to user', 'success');
-  if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
-  loadLeads();
+  try {
+    var data = await api('/api/leads/' + leadId + '/convert', { method: 'POST' });
+    showToast(data.needs_account ? 'Converted — create account in People' : 'Lead linked to user', 'success');
+    if (typeof renderLeadDetail === 'function') renderLeadDetail(data.lead, data.activity || []);
+    loadLeads();
+  } catch (err) {
+    console.error('[leads] conversion failed:', err);
+    showToast(err.error || err.message || 'Failed to convert lead', 'error');
+  }
 }
 
 async function loadLocationsAdmin() {
@@ -268,7 +291,11 @@ async function loadLocationsAdmin() {
 
 async function addLocation(e) {
   e.preventDefault();
-  await api('/api/locations', { method: 'POST', body: JSON.stringify({ code: document.getElementById('loc-code').value, name: document.getElementById('loc-name').value, weather_station: document.getElementById('loc-wx').value, is_default: document.getElementById('loc-default').checked }) });
-  loadLocationsAdmin();
-  showToast('Location added', 'success');
+  try {
+    await api('/api/locations', { method: 'POST', body: JSON.stringify({ code: document.getElementById('loc-code').value, name: document.getElementById('loc-name').value, weather_station: document.getElementById('loc-wx').value, is_default: document.getElementById('loc-default').checked }) });
+    loadLocationsAdmin();
+    showToast('Location added', 'success');
+  } catch (err) {
+    showToast(err.error || err.message || 'Failed to add location', 'error');
+  }
 }

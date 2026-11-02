@@ -10,17 +10,18 @@
 const fs = require('fs');
 const { Pool } = require('pg');
 const { TERMS_VERSION } = require('../lib/terms');
+const { getAppEnv } = require('../lib/app-env');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
   : (process.env.QA_BASE || 'https://www.newtechaviation.com');
 
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'qa-admin@test.local';
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || PASS;
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
-  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null)
-  || 'postgresql://postgres:cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij@shortline.proxy.rlwy.net:26871/railway';
+  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);
 
 const failures = [];
 const ok = (name, cond, detail = '') => {
@@ -95,7 +96,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
   const slot = pastSlot(hoursAgo, 90);
   const r = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, $8)
     RETURNING id
   `, [
     studentId || null,
@@ -105,6 +106,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
     slot.end_time,
     type,
     instructorId || studentId,
+    getAppEnv(),
   ]);
   return r.rows[0].id;
 }
@@ -292,9 +294,9 @@ async function testEndEarlyFlow(pool, tokens, users, ac) {
 
   const ins = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time]);
+  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time, getAppEnv()]);
   const bid = ins.rows[0].id;
 
   const early = await api(adminTok, `/api/bookings/${bid}/end-early`, {
@@ -349,23 +351,26 @@ async function testMaintenanceRole(tokens, ac) {
 }
 
 async function ensureFleetBookable(adminTok, acList) {
-  console.log('\n=== Ensure fleet bookable (annual dates) ===');
+  console.log('\n=== Ensure fleet bookable (inspection dates) ===');
   const todayStr = new Date().toISOString().slice(0, 10);
   const nextAnnual = `${new Date().getFullYear() + 1}-05-30`;
   for (const ac of acList) {
     if (ac.status !== 'available') continue;
     const due = ac.next_annual_due ? String(ac.next_annual_due).slice(0, 10) : null;
-    if (!due || due <= todayStr) {
+    const tach = parseFloat(ac.total_tach_hours ?? ac.current_tach ?? 0) || 0;
+    const due100 = parseFloat(ac.next_100hr_due ?? 0) || 0;
+    const next100 = due100 > tach ? due100 : Math.ceil(tach + 100);
+    if (!due || due <= todayStr || due100 <= tach) {
       const res = await api(adminTok, `/api/aircraft/${ac.id}/inspections`, {
         method: 'PUT',
         body: JSON.stringify({
-          next_100hr_due: ac.next_100hr_due || 125,
+          next_100hr_due: next100,
           next_annual_due: nextAnnual,
         }),
       });
-      ok(`${ac.tail_number} annual updated to ${nextAnnual}`, res.status === 200, JSON.stringify(res.data));
+      ok(`${ac.tail_number} inspections updated`, res.status === 200, JSON.stringify(res.data));
     } else {
-      ok(`${ac.tail_number} annual OK (${due})`, true);
+      ok(`${ac.tail_number} inspections OK`, true);
     }
   }
 }
@@ -430,12 +435,15 @@ async function testStudentDualBooking(tokens, users, ac) {
 
 async function main() {
   console.log('Full beta QA —', BASE);
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for full-beta-qa because it creates and cleans up test data.');
+  }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
 
   await testLegalPages();
   await testTermsSignup(pool);
 
-  const adminTok = await login('evaughntaemw@gmail.com', ADMIN_PASS);
+  const adminTok = await login(ADMIN_EMAIL, ADMIN_PASS);
   const studentTok = await login('qa-student@test.local', PASS);
   const instructorTok = await login('qa-instructor@test.local', PASS);
   const renterTok = await login('qa-renter@test.local', PASS);
@@ -444,7 +452,7 @@ async function main() {
   const users = (await api(adminTok, '/api/users')).data;
   const student = users.find((u) => u.email === 'qa-student@test.local');
   const instructor = users.find((u) => u.email === 'qa-instructor@test.local')
-    || users.find((u) => u.email === 'evaughntaemw@gmail.com');
+    || users.find((u) => u.email === ADMIN_EMAIL);
   const renter = users.find((u) => u.email === 'qa-renter@test.local');
   const acList = (await api(adminTok, '/api/aircraft')).data;
   await ensureFleetBookable(adminTok, acList);

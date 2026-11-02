@@ -5,12 +5,14 @@
  */
 const fs = require('fs');
 const { Pool } = require('pg');
+const { getAppEnv } = require('../lib/app-env');
 
 const BASE = process.argv.includes('--base')
   ? process.argv[process.argv.indexOf('--base') + 1]
   : (process.env.QA_BASE || 'https://www.newtechaviation.com');
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
-const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'qa-admin@test.local';
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || PASS;
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
   || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);
@@ -90,8 +92,11 @@ async function main() {
     else { failures.push(name); console.log('  FAIL', name, detail); }
   };
 
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for user-flow-e2e because it creates and cleans up test data.');
+  }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  const adminTok = await login('evaughntaemw@gmail.com', ADMIN_PASS);
+  const adminTok = await login(ADMIN_EMAIL, ADMIN_PASS);
   const studentTok = await login('qa-student@test.local', PASS);
   const renterTok = await login('qa-renter@test.local', PASS);
   let instructorTok;
@@ -105,7 +110,7 @@ async function main() {
   const student = users.find((u) => u.email === 'qa-student@test.local');
   const renter = users.find((u) => u.email === 'qa-renter@test.local');
   const instructor = users.find((u) => u.email === 'qa-instructor@test.local')
-    || users.find((u) => u.email === 'evaughntaemw@gmail.com');
+    || users.find((u) => u.email === ADMIN_EMAIL);
   const acList = (await api(adminTok, '/api/aircraft')).data;
   const ac = acList.find((a) => a.status === 'available');
   if (!ac || !student || !renter || !instructor) throw new Error('Missing test users or aircraft');
@@ -150,9 +155,9 @@ async function main() {
   const dualPast = pastSlot(3, 90);
   const dualIns = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, COALESCE((SELECT source FROM bookings LIMIT 1), 'production'))
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, dualPast.start_time, dualPast.end_time]);
+  `, [student.id, instructor.id, ac.id, dualPast.start_time, dualPast.end_time, getAppEnv()]);
   const dualId = dualIns.rows[0].id;
   created.push(dualId);
 
@@ -180,9 +185,9 @@ async function main() {
   const soloPast = pastSlot(5, 60);
   const soloIns = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES (NULL, $1, $2, $3::timestamptz, $4::timestamptz, 'confirmed', 'instructor_solo', $1, COALESCE((SELECT source FROM bookings LIMIT 1), 'production'))
+    VALUES (NULL, $1, $2, $3::timestamptz, $4::timestamptz, 'confirmed', 'instructor_solo', $1, $5)
     RETURNING id
-  `, [instructor.id, ac.id, soloPast.start_time, soloPast.end_time]);
+  `, [instructor.id, ac.id, soloPast.start_time, soloPast.end_time, getAppEnv()]);
   const soloId = soloIns.rows[0].id;
   created.push(soloId);
 

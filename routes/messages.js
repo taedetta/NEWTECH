@@ -4,6 +4,7 @@ const express = require('express');
 const messagesDb = require('../db/messages');
 const { authenticateToken } = require('../middleware/auth');
 const { notifyNewMessage } = require('../lib/app-notifications');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -52,7 +53,7 @@ router.post('/threads', authenticateToken, async (req, res) => {
     });
 
     const recipientId = req.user.id === studentId ? instructorId : studentId;
-    const sender = await require('../db/index').query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+    const sender = await require('../db/index').query('SELECT name FROM users WHERE id = $1 AND source = $2', [req.user.id, getAppEnv()]);
     notifyNewMessage(recipientId, {
       senderName: sender.rows[0]?.name || 'User',
       preview: body.trim(),
@@ -61,7 +62,7 @@ router.post('/threads', authenticateToken, async (req, res) => {
     res.status(201).json({ thread, message });
   } catch (err) {
     console.error('[messages] create thread:', err.message);
-    res.status(500).json({ error: 'Failed to send message' });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to send message' });
   }
 });
 
@@ -80,7 +81,7 @@ router.post('/threads/:id', authenticateToken, async (req, res) => {
 
     const t = check.thread;
     const recipientId = req.user.id === t.student_id ? t.instructor_id : t.student_id;
-    const sender = await require('../db/index').query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+    const sender = await require('../db/index').query('SELECT name FROM users WHERE id = $1 AND source = $2', [req.user.id, getAppEnv()]);
     notifyNewMessage(recipientId, {
       senderName: sender.rows[0]?.name || 'User',
       preview: body.trim(),

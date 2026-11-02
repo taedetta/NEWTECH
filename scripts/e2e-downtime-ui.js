@@ -103,7 +103,7 @@ async function main() {
   const maintErr = await page.locator('#maint-status-error:not(.hidden)').innerText().catch(() => '');
   ok('mark down saved without error', !maintErr, maintErr);
 
-  const modalHidden = await page.locator('#maint-status-modal.hidden').isVisible().catch(() => false);
+  const modalHidden = await page.locator('#maint-status-modal').evaluate((el) => el.classList.contains('hidden')).catch(() => false);
   ok('maint modal closed after save', modalHidden);
 
   await browser.close();

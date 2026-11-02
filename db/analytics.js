@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('./index');
+const { getAppEnv } = require('../lib/app-env');
 
 /**
  * Insert a single page view record asynchronously (fire-and-forget).
@@ -8,9 +9,10 @@ const pool = require('./index');
  */
 async function insertPageView({ path, referrer, userAgent, ipHash, country }) {
   try {
+    const source = getAppEnv();
     await pool.query(
-      `INSERT INTO page_views (path, referrer, user_agent, ip_hash, country) VALUES ($1, $2, $3, $4, $5)`,
-      [path, referrer || null, userAgent || null, ipHash || null, country || null]
+      `INSERT INTO page_views (path, referrer, user_agent, ip_hash, country, source) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [path, referrer || null, userAgent || null, ipHash || null, country || null, source]
     );
   } catch (err) {
     // Silently swallow — tracking failures must not affect user requests
@@ -22,11 +24,13 @@ async function insertPageView({ path, referrer, userAgent, ipHash, country }) {
  * Get total page views for a given number of trailing days.
  */
 async function getTotalViews(days) {
+  const source = getAppEnv();
   const result = await pool.query(
     `SELECT COUNT(*)::int as total
      FROM page_views
-     WHERE created_at >= NOW() - INTERVAL '1 day' * $1`,
-    [days]
+     WHERE created_at >= NOW() - INTERVAL '1 day' * $1
+       AND source = $2`,
+    [days, source]
   );
   return result.rows[0].total;
 }
@@ -36,14 +40,16 @@ async function getTotalViews(days) {
  * Returns { path, count } rows sorted by count descending.
  */
 async function getViewsByPath(days, limit = 50) {
+  const source = getAppEnv();
   const result = await pool.query(
     `SELECT path, COUNT(*)::int as count
      FROM page_views
      WHERE created_at >= NOW() - INTERVAL '1 day' * $1
+       AND source = $3
      GROUP BY path
      ORDER BY count DESC
      LIMIT $2`,
-    [days, limit]
+    [days, limit, source]
   );
   return result.rows;
 }
@@ -53,6 +59,7 @@ async function getViewsByPath(days, limit = 50) {
  * Returns { referrer, count } rows sorted by count descending.
  */
 async function getTopReferrers(days, limit = 20) {
+  const source = getAppEnv();
   const result = await pool.query(
     `SELECT
        CASE
@@ -68,10 +75,11 @@ async function getTopReferrers(days, limit = 20) {
      FROM page_views
      WHERE created_at >= NOW() - INTERVAL '1 day' * $1
        AND referrer IS DISTINCT FROM ''
+       AND source = $3
      GROUP BY 1
      ORDER BY count DESC
      LIMIT $2`,
-    [days, limit]
+    [days, limit, source]
   );
   return result.rows;
 }
@@ -88,15 +96,17 @@ async function getPopularPages(limit = 10) {
  * Returns { date, count } rows ordered by date ascending.
  */
 async function getDailyViews(days) {
+  const source = getAppEnv();
   const result = await pool.query(
     `SELECT
        DATE(created_at AT TIME ZONE 'UTC') AS date,
        COUNT(*)::int AS count
      FROM page_views
      WHERE created_at >= NOW() - INTERVAL '1 day' * $1
+       AND source = $2
      GROUP BY 1
      ORDER BY 1 ASC`,
-    [days]
+    [days, source]
   );
   return result.rows;
 }

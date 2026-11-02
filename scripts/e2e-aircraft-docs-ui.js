@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Browser E2E: Fleet Docs button opens modal for each role.
+ * Browser E2E: Fleet Docs button opens only for roles with aircraft document access.
  * Usage: QA_BASE=http://localhost:3000 node scripts/e2e-aircraft-docs-ui.js
  */
 const { chromium } = require('playwright');
@@ -10,11 +10,11 @@ const BASE = process.env.QA_BASE || 'http://localhost:3000';
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 
 const ROLES = [
-  { email: 'qa-admin@test.local', role: 'admin', canUpload: true },
-  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false },
-  { email: 'qa-student@test.local', role: 'student', canUpload: false },
-  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false },
-  { email: 'qa-renter@test.local', role: 'renter', canUpload: false },
+  { email: 'qa-admin@test.local', role: 'admin', canUpload: true, canViewDocs: true },
+  { email: 'qa-instructor@test.local', role: 'instructor', canUpload: false, canViewDocs: true },
+  { email: 'qa-student@test.local', role: 'student', canUpload: false, canViewDocs: false },
+  { email: 'qa-maintenance@test.local', role: 'maintenance', canUpload: false, canViewDocs: true },
+  { email: 'qa-renter@test.local', role: 'renter', canUpload: false, canViewDocs: false },
 ];
 
 const failures = [];
@@ -48,6 +48,13 @@ async function openFleetDocs(page) {
   const hidden = await modal.evaluate((el) => el.classList.contains('hidden'));
   ok('modal visible after click', !hidden, hidden ? 'still hidden' : '');
   return modal;
+}
+
+async function assertFleetDocsHidden(page, role) {
+  await page.click('[data-page="fleet"]');
+  await page.waitForSelector('#fleet-table tr', { timeout: 10000 });
+  const docsBtn = page.locator('#fleet-table [data-aircraft-docs-id]').first();
+  ok(`${role} docs button hidden`, (await docsBtn.count()) === 0);
 }
 
 async function main() {
@@ -91,8 +98,11 @@ async function main() {
   const viewLink = page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).first();
   ok('admin sees View link after upload', (await viewLink.count()) > 0);
   const viewHref = await viewLink.getAttribute('href');
-  ok('View link has URL', !!viewHref && viewHref.startsWith('http'));
-  const viewRes = await page.request.get(viewHref);
+  ok('View link has protected URL', !!viewHref && viewHref.includes('/api/aircraft/'));
+  const adminToken = await page.evaluate(() => localStorage.getItem('fs_token'));
+  const viewRes = await page.request.get(new URL(viewHref, BASE).toString(), {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
   ok('View URL returns PDF', viewRes.ok(), `status=${viewRes.status()}`);
   await page.locator('#aircraft-docs-modal .modal').locator('button.btn-secondary', { hasText: 'Close' }).click().catch(() => {});
 
@@ -101,13 +111,20 @@ async function main() {
     await page.evaluate(() => { localStorage.removeItem('fs_token'); location.reload(); });
     await page.waitForTimeout(500);
     await login(page, user.email);
+    if (!user.canViewDocs) {
+      await assertFleetDocsHidden(page, user.role);
+      continue;
+    }
     await openFleetDocs(page);
     const hiddenUpload = await page.locator('#aircraft-docs-upload-wrap').evaluate((el) => el.classList.contains('hidden'));
     ok(`${user.role} upload hidden`, hiddenUpload === !user.canUpload);
     ok(`${user.role} sees uploaded doc`, (await page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).count()) > 0);
     const roleView = page.locator('#aircraft-docs-list a.btn', { hasText: 'View' }).first();
     const roleHref = await roleView.getAttribute('href');
-    const roleRes = await page.request.get(roleHref);
+    const roleToken = await page.evaluate(() => localStorage.getItem('fs_token'));
+    const roleRes = await page.request.get(new URL(roleHref, BASE).toString(), {
+      headers: { Authorization: `Bearer ${roleToken}` },
+    });
     ok(`${user.role} can fetch document`, roleRes.ok(), `status=${roleRes.status()}`);
     await page.locator('#aircraft-docs-modal').evaluate((el) => el.classList.add('hidden')).catch(() => {});
   }

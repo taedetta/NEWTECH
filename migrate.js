@@ -74,13 +74,17 @@ async function runCoreMigrations(client) {
       subscription_status VARCHAR(50),
       subscription_plan VARCHAR(255),
       subscription_expires_at TIMESTAMPTZ,
-      subscription_updated_at TIMESTAMPTZ
+      subscription_updated_at TIMESTAMPTZ,
+      source VARCHAR(20) DEFAULT 'production'
     )
   `);
 
-  // Unique constraint on email (required for UPSERT)
+  // Unique constraint on email per deployment source (required for source-isolated staging).
+  await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production'");
+  await client.query("UPDATE users SET source = 'production' WHERE source IS NULL");
+  await client.query('DROP INDEX IF EXISTS users_email_unique_idx');
   await client.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx ON users (LOWER(email))
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users (LOWER(email), source)
   `);
 
   // Index for subscription lookups

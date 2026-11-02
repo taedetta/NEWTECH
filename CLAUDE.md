@@ -48,7 +48,7 @@ Express.js + PostgreSQL + vanilla JS frontend, deployed on Railway.
 - `maneuver_progress` — per-enrollment per-maneuver grading (proficient/practiced/introduced, instructor, graded_at)
 - `debriefs` — CFI post-flight notes per enrollment + stage
 - `endorsements` — FAA endorsements with instructor cert numbers and aircraft refs
-- `page_views` — lightweight analytics tracking (path, referrer, user_agent, ip_hash, country, created_at). IP stored as SHA-256 hash only. Bot UAs excluded.
+- `page_views` — lightweight analytics tracking (path, referrer, user_agent, ip_hash, country, created_at, source). IP stored as SHA-256 hash only. Bot UAs excluded.
 - `aircraft_downtime` — scheduled maintenance windows per aircraft (start_date, end_date, reason, created_by). Blocks aircraft from booking calendar during window.
 - `flight_hobbs_readings` — per-booking Hobbs readings per role (student/instructor); one row per booking per role; auto-triggers discrepancy check.
 - `flight_discrepancies` — flagged Hobbs mismatches (delta > 0.1 hrs) between student and instructor; status pending/resolved; resolution stores which reading to use.

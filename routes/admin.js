@@ -1,19 +1,29 @@
 'use strict';
 
 const express = require('express');
-const archiver = require('archiver');
 const path = require('path');
 const fs = require('fs');
 const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getAllOverrides } = require('../db/file-overrides');
 const { emailFullDataBackup } = require('../lib/full-data-backup');
+const { createZipFile, addBuffer, addFile, pipeToResponse } = require('../lib/zip-archive');
 const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue, timeToComparable } = require('../lib/instructors');
 const { getAllInstructorsDayAvailability } = require('../lib/instructor-availability');
 const { calendarDateFromDate } = require('../lib/school-timezone');
+const { getAppEnv, isStaging } = require('../lib/app-env');
 const { execSync, spawn } = require('child_process');
 
 const router = express.Router();
+
+async function ensureInstructorInCurrentSource(client, instructorId) {
+  const result = await client.query(
+    `SELECT id FROM users
+     WHERE id = $1 AND deleted_at IS NULL AND is_instructor = TRUE AND source = $2`,
+    [instructorId, getAppEnv()]
+  );
+  return result.rows.length > 0;
+}
 
 /** Tables cleared by reset-all-data — order respects foreign keys */
 const RESET_DELETE_TABLES = [
@@ -40,6 +50,10 @@ const RESET_DELETE_TABLES = [
 // ─── ADMIN: RESET ALL DATA ───────────────────────────────
 
 router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
+  if (isStaging()) {
+    return res.status(403).json({ error: 'Reset all data is disabled on staging.' });
+  }
+
   const client = await pool.connect();
   try {
     // Safety backup before any deletion — abort if email fails
@@ -49,22 +63,26 @@ router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'),
     });
 
     await client.query('BEGIN');
+    const source = getAppEnv();
 
     for (const table of RESET_DELETE_TABLES) {
       try {
-        await client.query(`DELETE FROM ${table}`);
+        await client.query(`DELETE FROM ${table} WHERE source = $1`, [source]);
       } catch (err) {
         // Skip tables that don't exist in this schema version
         if (err.code === '42P01') {
           console.warn(`[reset-all-data] Skipping missing table: ${table}`);
           continue;
         }
+        if (err.code === '42703') {
+          throw new Error(`Unsafe reset aborted: ${table} is missing source isolation`);
+        }
         throw err;
       }
     }
 
-    await client.query('UPDATE users SET total_hobbs_hours = 0, total_tach_hours = 0');
-    await client.query('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0');
+    await client.query('UPDATE users SET total_hobbs_hours = 0, total_tach_hours = 0 WHERE source = $1', [source]);
+    await client.query('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0 WHERE source = $1', [source]);
 
     await client.query(
       'INSERT INTO admin_audit_log (action, performed_by, details, performed_at) VALUES ($1, $2, $3, NOW())',
@@ -150,12 +168,11 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     const overrideMap = {};
     for (const o of overrides) overrideMap[o.file_path] = o.content;
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => {
+    const archive = createZipFile();
+    pipeToResponse(archive, res, (err) => {
       console.error('[download-source] Archive error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to create archive' });
     });
-    archive.pipe(res);
 
     const excludeDirs = new Set(['node_modules', '.git', '.claude', '.tmp', 'debug', 'shell-snapshots', 'session-env', 'todos', 'projects']);
     const excludeFiles = new Set(['.env', '.claude.json', '.npmrc']);
@@ -181,9 +198,9 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
           addedPaths.add(relPath);
           // Use DB override content when available (guaranteed fresh)
           if (overrideMap[relPath] !== undefined) {
-            archive.append(Buffer.from(overrideMap[relPath], 'utf8'), { name: zipPath });
+            addBuffer(archive, overrideMap[relPath], zipPath);
           } else {
-            archive.file(fullPath, { name: zipPath });
+            addFile(archive, fullPath, zipPath);
           }
         }
       }
@@ -193,7 +210,7 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     // Add any override files that don't exist on disk (editor-created files)
     for (const [fp, content] of Object.entries(overrideMap)) {
       if (!addedPaths.has(fp)) {
-        archive.append(Buffer.from(content, 'utf8'), { name: `src/${fp}` });
+        addBuffer(archive, content, `src/${fp}`);
       }
     }
 
@@ -231,7 +248,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 AUTO_BACKUP_ON_START=
 BACKUP_EMAIL=owner@yourdomain.com
 `;
-    archive.append(envExample, { name: 'src/.env.example' });
+    addBuffer(archive, envExample, 'src/.env.example');
 
     // Database schema
     let schemaSQL = `-- FlightSlate Database Schema\n-- Generated: ${new Date().toISOString()}\n-- Database: PostgreSQL (Neon)\n\n`;
@@ -294,9 +311,9 @@ BACKUP_EMAIL=owner@yourdomain.com
       }
     } catch (_) { /* schema query failed */ }
 
-    archive.append(schemaSQL, { name: 'docs/database-schema.sql' });
-    archive.append(structureMd, { name: 'docs/database-structure.md' });
-    archive.append(`# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, { name: 'docs/README.md' });
+    addBuffer(archive, schemaSQL, 'docs/database-schema.sql');
+    addBuffer(archive, structureMd, 'docs/database-structure.md');
+    addBuffer(archive, `# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, 'docs/README.md');
 
     let gitCommit = 'unknown';
     let gitBranch = 'unknown';
@@ -304,7 +321,8 @@ BACKUP_EMAIL=owner@yourdomain.com
       gitCommit = execSync('git rev-parse HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
       gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
     } catch (_) { /* not a git repo on deploy */ }
-    archive.append(
+    addBuffer(
+      archive,
       [
         'FlightSlate Source Archive',
         `Generated: ${new Date().toISOString()}`,
@@ -314,10 +332,10 @@ BACKUP_EMAIL=owner@yourdomain.com
         '',
         'This ZIP reflects the deployed codebase plus any editor file overrides.',
       ].join('\n'),
-      { name: 'BUILD_INFO.txt' }
+      'BUILD_INFO.txt'
     );
 
-    archive.finalize();
+    archive.end();
   } catch (err) {
     console.error('[download-source] error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to create download' });
@@ -334,6 +352,9 @@ router.get('/instructor-availability', authenticateToken, async (req, res) => {
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) {
       return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!(await ensureInstructorInCurrentSource(client, instructorId))) {
+      return res.status(404).json({ error: 'Instructor not found' });
     }
 
     const weekly = await client.query(
@@ -366,6 +387,7 @@ router.post('/instructor-availability', authenticateToken, requireRole('instruct
     const isOwnProfile = iid === req.user.id;
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) return res.status(403).json({ error: 'Can only set your own availability' });
+    if (!(await ensureInstructorInCurrentSource(client, iid))) return res.status(404).json({ error: 'Instructor not found' });
     if (day_of_week === undefined || day_of_week === null || !start_time || !end_time) {
       return res.status(400).json({ error: 'day_of_week, start_time, end_time are required' });
     }
@@ -389,7 +411,13 @@ router.delete('/instructor-availability/:id', authenticateToken, requireRole('in
   const client = await pool.connect();
   try {
     const { id } = req.params;
-    const row = await client.query('SELECT instructor_id FROM instructor_availability WHERE id=$1', [id]);
+    const row = await client.query(
+      `SELECT ia.instructor_id
+       FROM instructor_availability ia
+       JOIN users u ON u.id = ia.instructor_id
+       WHERE ia.id = $1 AND u.source = $2`,
+      [id, getAppEnv()]
+    );
     if (row.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const iid = row.rows[0].instructor_id;
     const isOwnProfile = iid === req.user.id;
@@ -412,6 +440,7 @@ router.delete('/instructor-availability', authenticateToken, requireRole('instru
     const isOwnProfile = instructorId === req.user.id;
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+    if (!(await ensureInstructorInCurrentSource(client, instructorId))) return res.status(404).json({ error: 'Instructor not found' });
     await client.query('DELETE FROM instructor_availability WHERE instructor_id=$1', [instructorId]);
     res.json({ ok: true });
   } catch (err) {
@@ -431,6 +460,7 @@ router.post('/instructor-availability/overrides', authenticateToken, requireRole
     const isOwnProfile = iid === req.user.id;
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
     if (!isOwnProfile && !isAdmin) return res.status(403).json({ error: 'Can only set your own availability' });
+    if (!(await ensureInstructorInCurrentSource(client, iid))) return res.status(404).json({ error: 'Instructor not found' });
     if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date are required' });
     if (start_date > end_date) return res.status(400).json({ error: 'end_date must be >= start_date' });
     if (start_time && end_time && start_time >= end_time) return res.status(400).json({ error: 'end_time must be after start_time when specifying a range' });
@@ -464,7 +494,13 @@ router.delete('/instructor-availability/overrides/:id', authenticateToken, requi
   const client = await pool.connect();
   try {
     const { id } = req.params;
-    const row = await client.query('SELECT instructor_id FROM instructor_availability_overrides WHERE id=$1', [id]);
+    const row = await client.query(
+      `SELECT iao.instructor_id
+       FROM instructor_availability_overrides iao
+       JOIN users u ON u.id = iao.instructor_id
+       WHERE iao.id = $1 AND u.source = $2`,
+      [id, getAppEnv()]
+    );
     if (row.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const iid = row.rows[0].instructor_id;
     const isOwnProfile = iid === req.user.id;
@@ -494,7 +530,9 @@ router.get('/instructor-availability/directory', authenticateToken, async (req, 
        FROM instructor_availability ia
        JOIN users u ON u.id = ia.instructor_id
        WHERE ${BOOKABLE_INSTRUCTOR_WHERE}
-       ORDER BY ia.instructor_id, ia.day_of_week, ia.start_time`
+         AND u.source = $1
+       ORDER BY ia.instructor_id, ia.day_of_week, ia.start_time`,
+      [getAppEnv()]
     );
     const weeklyByInstructor = {};
     for (const row of weeklyRows.rows) {
@@ -535,8 +573,9 @@ router.get('/instructor-availability/all', authenticateToken, requireRole('admin
         `SELECT b.start_time, b.end_time, u.name as student_name
          FROM bookings b LEFT JOIN users u ON b.student_id = u.id
          WHERE b.instructor_id = $1 AND b.status = 'confirmed' AND b.end_time > NOW()
-           AND DATE(b.start_time AT TIME ZONE 'UTC') = $2::date`,
-        [inst.id, date]
+           AND DATE(b.start_time AT TIME ZONE 'UTC') = $2::date
+           AND b.source = $3`,
+        [inst.id, date, getAppEnv()]
       );
 
       result.push({
@@ -603,8 +642,8 @@ router.post('/reset-reminders', authenticateToken, requireRole('owner', 'admin')
   }
   try {
     const result = await pool.query(
-      'UPDATE bookings SET reminder_sent = false, updated_at = NOW() WHERE id = ANY($1) RETURNING id',
-      [booking_ids]
+      'UPDATE bookings SET reminder_sent = false, updated_at = NOW() WHERE id = ANY($1) AND source = $2 RETURNING id',
+      [booking_ids, getAppEnv()]
     );
     res.json({ ok: true, reset: result.rows.length });
   } catch (err) {
@@ -626,9 +665,12 @@ router.get('/debug-schema/:table', authenticateToken, requireRole('owner', 'admi
   }
 });
 
-router.post('/clone-database', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
-  const targetUrl = req.body?.target_url || process.env.TARGET_DATABASE_URL;
-  if (!targetUrl) return res.status(400).json({ error: 'target_url required in body or TARGET_DATABASE_URL env' });
+router.post('/clone-database', authenticateToken, requireRole('owner'), async (req, res) => {
+  if (req.body?.target_url) {
+    return res.status(400).json({ error: 'Database clone targets must be configured by TARGET_DATABASE_URL' });
+  }
+  const targetUrl = process.env.TARGET_DATABASE_URL;
+  if (!targetUrl) return res.status(400).json({ error: 'TARGET_DATABASE_URL is not configured' });
   try {
     const { cloneDatabase } = require('../scripts/clone-render-db');
     console.log('[clone-database] Starting clone to external target...');
