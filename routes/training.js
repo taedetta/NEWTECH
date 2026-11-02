@@ -8,6 +8,13 @@ const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
+function parseRequiredId(value) {
+  const str = String(value ?? '').trim();
+  if (!/^\d+$/.test(str)) return null;
+  const parsed = Number(str);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function isTrainingStaff(user) {
   return ['owner', 'admin', 'instructor'].includes(user.role);
 }
@@ -252,9 +259,10 @@ router.post('/enroll', authenticateToken, requireRole('owner', 'admin', 'instruc
 });
 
 router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
-    const enrollmentId = parseInt(req.params.id, 10);
-    if (!Number.isFinite(enrollmentId)) return res.status(400).json({ error: 'Invalid enrollment ID' });
+    const enrollmentId = parseRequiredId(req.params.id);
+    if (!enrollmentId) return res.status(400).json({ error: 'Invalid enrollment ID' });
     const { current_stage_id } = req.body;
     const enrollmentResult = await pool.query(
       'SELECT id, student_id, instructor_id, program_id FROM student_training WHERE id = $1 AND source = $2',
@@ -263,19 +271,65 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
     if (enrollmentResult.rows.length === 0) return res.status(404).json({ error: 'Enrollment not found' });
     const enrollment = enrollmentResult.rows[0];
     if (!(await canWriteStudentTraining(req.user, enrollment.student_id))) return res.status(403).json({ error: 'Only assigned instructors or admins can update enrollment stages' });
-    const stageId = current_stage_id ? parseInt(current_stage_id, 10) : null;
-    if (stageId) {
-      const stageResult = await pool.query('SELECT id FROM program_stages WHERE id = $1 AND program_id = $2', [stageId, enrollment.program_id]);
-      if (stageResult.rows.length === 0) return res.status(400).json({ error: 'Stage not found in this program' });
+
+    const stageId = parseRequiredId(current_stage_id);
+    if (!stageId) return res.status(400).json({ error: 'Valid current_stage_id is required' });
+
+    await client.query('BEGIN');
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`training-stage:${getAppEnv()}:${enrollmentId}`]
+    );
+
+    const lockedEnrollmentResult = await client.query(
+      'SELECT id, student_id, program_id FROM student_training WHERE id = $1 AND source = $2 FOR UPDATE',
+      [enrollmentId, getAppEnv()]
+    );
+    if (lockedEnrollmentResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Enrollment not found' });
     }
-    const result = await pool.query(
+    const lockedEnrollment = lockedEnrollmentResult.rows[0];
+
+    const stageResult = await client.query(
+      'SELECT id, order_index FROM program_stages WHERE id = $1 AND program_id = $2',
+      [stageId, lockedEnrollment.program_id]
+    );
+    if (stageResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Stage not found in this program' });
+    }
+
+    const missingPrior = await client.query(
+      `SELECT ps.id
+       FROM program_stages ps
+       LEFT JOIN milestone_completions mc
+         ON mc.stage_id = ps.id
+        AND mc.student_id = $1
+        AND mc.source = $4
+       WHERE ps.program_id = $2
+         AND ps.order_index < $3
+         AND mc.id IS NULL
+       LIMIT 1`,
+      [lockedEnrollment.student_id, lockedEnrollment.program_id, stageResult.rows[0].order_index, getAppEnv()]
+    );
+    if (missingPrior.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Previous stages must be signed off first' });
+    }
+
+    const result = await client.query(
       `UPDATE student_training SET current_stage_id = $1, updated_at = NOW() WHERE id = $2 AND source = $3 RETURNING *`,
       [stageId, enrollmentId, getAppEnv()]
     );
+    await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Enrollment stage update error:', err);
     res.status(500).json({ error: 'Failed to update enrollment stage' });
+  } finally {
+    client.release();
   }
 });
 
@@ -920,16 +974,22 @@ router.post('/milestones', authenticateToken, async (req, res) => {
     if (!student_id || !stage_id || !enrollment_id) {
       return res.status(400).json({ error: 'student_id, stage_id, and enrollment_id are required' });
     }
-    const studentId = parseInt(student_id, 10);
-    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    const studentId = parseRequiredId(student_id);
+    const stageId = parseRequiredId(stage_id);
+    const enrollmentId = parseRequiredId(enrollment_id);
+    const debriefId = debrief_id ? parseRequiredId(debrief_id) : null;
+    if (!studentId) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!stageId) return res.status(400).json({ error: 'Invalid stage ID' });
+    if (!enrollmentId) return res.status(400).json({ error: 'Invalid enrollment ID' });
+    if (debrief_id && !debriefId) return res.status(400).json({ error: 'Invalid debrief ID' });
     if (!(await canWriteStudentTraining(req.user, studentId))) return res.status(403).json({ error: 'Only assigned instructors or admins can sign off stages' });
     const result = await trainingDb.completeStageMilestone({
       studentId,
-      stageId: parseInt(stage_id, 10),
-      enrollmentId: parseInt(enrollment_id, 10),
+      stageId,
+      enrollmentId,
       completedBy: req.user.id,
       notes: notes || null,
-      debriefId: debrief_id ? parseInt(debrief_id, 10) : null,
+      debriefId,
     });
     res.status(201).json(result);
   } catch (err) {

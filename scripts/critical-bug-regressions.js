@@ -956,6 +956,15 @@ function testTrainingAndGroundSourceIsolationGuards() {
       && trainingDbSrc.includes("WHERE st.program_id = $1 AND st.status = 'active' AND st.source = $2"),
     'training DB helpers must source-scope progress, debriefs, milestones, and enrollments'
   );
+  assert(
+    trainingDbSrc.includes('training-stage:${getAppEnv()}:${enrollmentId}')
+      && trainingDbSrc.includes('WHERE id = $1 AND student_id = $2 AND source = $3 FOR UPDATE')
+      && trainingDbSrc.includes('Only the current stage can be signed off')
+      && trainingDbSrc.includes('Previous stages must be signed off first')
+      && trainingDbSrc.includes('AND ps.order_index < $3')
+      && trainingDbSrc.includes('AND mc.id IS NULL'),
+    'stage milestone sign-off must serialize by enrollment and reject out-of-order stage completion'
+  );
 
   const trainingRouteSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'training.js'), 'utf8');
   assert(
@@ -966,6 +975,15 @@ function testTrainingAndGroundSourceIsolationGuards() {
       && trainingRouteSrc.includes('SELECT completed_at FROM milestone_completions WHERE student_id = $1 AND stage_id = $2 AND source = $3 LIMIT 1')
       && trainingRouteSrc.includes('LEFT JOIN student_maneuver_progress smp ON smp.maneuver_id = sm.id AND smp.student_id = u.id AND smp.source = $${canViewAll ? 1 : 2}'),
     'training routes must source-scope maneuver progress, debrief, and milestone reads/writes'
+  );
+  assert(
+    trainingRouteSrc.includes('Valid current_stage_id is required')
+      && trainingRouteSrc.includes('training-stage:${getAppEnv()}:${enrollmentId}')
+      && trainingRouteSrc.includes('WHERE id = $1 AND source = $2 FOR UPDATE')
+      && trainingRouteSrc.includes('Previous stages must be signed off first')
+      && trainingRouteSrc.includes('AND ps.order_index < $3')
+      && trainingRouteSrc.includes('AND mc.id IS NULL'),
+    'manual enrollment stage changes must be locked and may not skip unsigned prerequisite stages'
   );
 
   const bootstrapSchema = fs.readFileSync(path.join(__dirname, 'bootstrap-schema.sql'), 'utf8');
@@ -1150,7 +1168,7 @@ function testDelayedAuditFixesRemainInPlace() {
   const groundSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ground.js'), 'utf8');
   const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
   assert(
-    trainingDbSrc.includes('milestone:${getAppEnv()}:${studentId}:${stageId}')
+    trainingDbSrc.includes('training-stage:${getAppEnv()}:${enrollmentId}')
       && trainingDbSrc.includes('ON CONFLICT (student_id, stage_id, source) DO NOTHING')
       && bootstrapSchema.includes('milestone_completions_student_stage_source_unique')
       && schemaPatches.includes('milestone_completions_student_stage_source_unique')

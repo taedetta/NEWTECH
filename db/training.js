@@ -399,35 +399,36 @@ async function getProgramEnrollments(programId) {
  * Instructor sign-off: record stage milestone and advance enrollment to next stage.
  */
 async function completeStageMilestone({ studentId, stageId, enrollmentId, completedBy, notes, debriefId }) {
-  const enrollResult = await pool.query(
-    'SELECT * FROM student_training WHERE id = $1 AND student_id = $2 AND source = $3',
-    [enrollmentId, studentId, getAppEnv()]
-  );
-  if (enrollResult.rows.length === 0) {
-    const err = new Error('Enrollment not found');
-    err.status = 404;
-    throw err;
-  }
-  const enroll = enrollResult.rows[0];
-
-  const stageResult = await pool.query(
-    'SELECT id, program_id, order_index FROM program_stages WHERE id = $1',
-    [stageId]
-  );
-  if (stageResult.rows.length === 0 || stageResult.rows[0].program_id !== enroll.program_id) {
-    const err = new Error('Stage not found in this program');
-    err.status = 400;
-    throw err;
-  }
-  const stage = stageResult.rows[0];
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtext($1))',
-      [`milestone:${getAppEnv()}:${studentId}:${stageId}`]
+      [`training-stage:${getAppEnv()}:${enrollmentId}`]
     );
+
+    const enrollResult = await client.query(
+      'SELECT * FROM student_training WHERE id = $1 AND student_id = $2 AND source = $3 FOR UPDATE',
+      [enrollmentId, studentId, getAppEnv()]
+    );
+    if (enrollResult.rows.length === 0) {
+      const err = new Error('Enrollment not found');
+      err.status = 404;
+      throw err;
+    }
+    const enroll = enrollResult.rows[0];
+
+    const stageResult = await client.query(
+      'SELECT id, program_id, order_index FROM program_stages WHERE id = $1',
+      [stageId]
+    );
+    if (stageResult.rows.length === 0 || stageResult.rows[0].program_id !== enroll.program_id) {
+      const err = new Error('Stage not found in this program');
+      err.status = 400;
+      throw err;
+    }
+    const stage = stageResult.rows[0];
+
     const existing = await client.query(
       `SELECT id FROM milestone_completions
        WHERE student_id = $1 AND stage_id = $2 AND source = $3
@@ -437,6 +438,31 @@ async function completeStageMilestone({ studentId, stageId, enrollmentId, comple
     if (existing.rows.length > 0) {
       await client.query('COMMIT');
       return { ok: true, next_stage_id: enroll.current_stage_id, already_completed: true };
+    }
+
+    if (stage.id !== enroll.current_stage_id) {
+      const err = new Error('Only the current stage can be signed off');
+      err.status = 409;
+      throw err;
+    }
+
+    const missingPrior = await client.query(
+      `SELECT ps.id
+       FROM program_stages ps
+       LEFT JOIN milestone_completions mc
+         ON mc.stage_id = ps.id
+        AND mc.student_id = $1
+        AND mc.source = $4
+       WHERE ps.program_id = $2
+         AND ps.order_index < $3
+         AND mc.id IS NULL
+       LIMIT 1`,
+      [studentId, enroll.program_id, stage.order_index, getAppEnv()]
+    );
+    if (missingPrior.rows.length > 0) {
+      const err = new Error('Previous stages must be signed off first');
+      err.status = 409;
+      throw err;
     }
 
     const nextStage = await client.query(
