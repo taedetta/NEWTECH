@@ -255,6 +255,10 @@ if (/DB persist failed[\s\S]*res\.json\(\{ success: true, path: filePath, persis
 if (!cmsSrc.includes("router.post('/site-content/upload-image'")) {
   fail('Website Editor image upload endpoint is missing');
 } else ok('Website Editor image upload endpoint present');
+if (!startupSrc.includes('isStaging()')
+  || !startupSrc.includes('Skipping on staging to protect shared production CMS data')) {
+  fail('Startup CMS image migration can mutate shared production CMS data from staging');
+} else ok('Startup CMS image migration is disabled on staging');
 
 const analyticsAdminSrc = fs.readFileSync(path.join(root, 'public', 'admin', 'analytics.html'), 'utf8');
 if (!analyticsAdminSrc.includes("localStorage.getItem('fs_token')")
@@ -415,6 +419,10 @@ if (!aircraftSrc.includes('FOR UPDATE')
   fail('Fleet manual Hobbs/Tach update can roll back aircraft meters');
 } else ok('Fleet manual Hobbs/Tach updates are monotonic');
 const aircraftMeterSrc = fs.readFileSync(path.join(root, 'lib/aircraft-meter.js'), 'utf8');
+const syncAllMeterSource = aircraftMeterSrc.slice(aircraftMeterSrc.indexOf('async function syncAllAircraftMeterFields'));
+if (!/UPDATE aircraft[\s\S]+WHERE source = \$1[\s\S]+\[getAppEnv\(\)\]/.test(syncAllMeterSource)) {
+  fail('Startup aircraft meter sync is not source-scoped');
+} else ok('Startup aircraft meter sync is source-scoped');
 if (!aircraftMeterSrc.includes('async function rollbackAircraftMeterForDeletedBooking')
   || !bookingHistorySrc.includes('rollbackAircraftMeterForDeletedBooking(client, b.aircraft_id, bookingId, log)')) {
   fail('Completed history deletion does not reconcile aircraft meters');

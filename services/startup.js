@@ -11,7 +11,7 @@ const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
 const { getPlatformAdminEmail } = require('../lib/platform-admin');
 const { syncAllAircraftMeterFields } = require('../lib/aircraft-meter');
-const { getAppEnv } = require('../lib/app-env');
+const { getAppEnv, isStaging } = require('../lib/app-env');
 const { upsertFullUserPermissions } = require('../lib/user-permissions-db');
 
 // backup-service.js removed from services/ — backup scheduling skipped
@@ -187,6 +187,10 @@ async function ensureDefaultAdminAccount(pool) {
 
 async function migrateDataUriImagesToR2Inline(pool) {
   const { uploadBuffer, isConfigured } = require('../lib/r2-storage');
+  if (isStaging()) {
+    console.log('[image-migration] Skipping on staging to protect shared production CMS data');
+    return;
+  }
   if (!isConfigured()) { console.log('[image-migration] Skipping — R2 env vars not set'); return; }
   try {
     const result = await pool.query("SELECT key, value FROM site_content WHERE key LIKE '%image%' AND value LIKE 'data:%'");

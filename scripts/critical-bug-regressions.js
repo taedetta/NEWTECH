@@ -1081,13 +1081,26 @@ function testDelayedAuditSourceAndMeterGuards() {
 function testStartupSeedersStaySourceScoped() {
   const startupSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'startup.js'), 'utf8');
   assert(
-    startupSrc.includes("const { getAppEnv } = require('../lib/app-env')")
+    /const \{[^}]*\bgetAppEnv\b[^}]*\} = require\('\.\.\/lib\/app-env'\)/.test(startupSrc)
       && startupSrc.includes('WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND source = $2')
       && startupSrc.includes('INSERT INTO users (email, name, password_hash, role, approval_status, is_instructor, source)')
       && startupSrc.includes('SELECT COUNT(*) as cnt FROM training_programs WHERE source = $1')
       && startupSrc.includes('ON CONFLICT (code, source) DO NOTHING')
       && startupSrc.includes('SELECT id FROM training_programs WHERE code = $1 AND source = $2'),
     'startup admin and training program seeders must create/update rows only for the active APP_ENV source'
+  );
+
+  assert(
+    /const \{[^}]*\bisStaging\b[^}]*\} = require\('\.\.\/lib\/app-env'\)/.test(startupSrc)
+      && startupSrc.includes('Skipping on staging to protect shared production CMS data'),
+    'startup CMS image migration must not mutate shared production CMS data from staging'
+  );
+
+  const aircraftMeterSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'aircraft-meter.js'), 'utf8');
+  const syncAllMeterSource = aircraftMeterSrc.slice(aircraftMeterSrc.indexOf('async function syncAllAircraftMeterFields'));
+  assert(
+    /UPDATE aircraft[\s\S]+WHERE source = \$1[\s\S]+\[getAppEnv\(\)\]/.test(syncAllMeterSource),
+    'startup aircraft meter sync must only update the active APP_ENV source'
   );
 
   const syllabusSrc = fs.readFileSync(path.join(__dirname, 'seed-ppl-pm-syllabus.js'), 'utf8');
