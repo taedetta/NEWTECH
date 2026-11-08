@@ -28,6 +28,11 @@ const {
 const { downtimeOverlapsBooking } = require('../lib/downtime-overlap');
 const { syncCompletedBookingSideEffects } = require('../lib/sync-completed-booking');
 const { overlapWhere } = require('../lib/booking-overlap');
+const {
+  isHistoricalBookingStatus,
+  needsScheduleConflictCheck,
+  restrictedHistoricalUpdateFields,
+} = require('../lib/booking-status');
 
 const router = express.Router();
 
@@ -838,11 +843,20 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
     const b = existing.rows[0];
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
-    const isHistoricalBooking = b.status === 'completed' || b.status === 'cancelled';
+    const isHistoricalBooking = isHistoricalBookingStatus(b.status);
     const isAssignedInstructor = req.user.role === 'instructor' && b.instructor_id === req.user.id;
-    const isStaffHistoricalEdit = isAdmin || isHistoricalBooking || (isAssignedInstructor && isHistoricalBooking);
+    const isStaffHistoricalEdit = isAdmin || (isAssignedInstructor && isHistoricalBooking);
     if (!canAccessBooking(req.user, b)) return res.status(403).json({ error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
+    if (isHistoricalBooking && !isAdmin) {
+      if (!isAssignedInstructor) {
+        return res.status(403).json({ error: 'Completed or cancelled bookings can only be edited by staff' });
+      }
+      const restrictedFields = restrictedHistoricalUpdateFields(req.body);
+      if (restrictedFields.length > 0) {
+        return res.status(403).json({ error: 'Only admins can change historical booking schedule, status, lesson type, participants, or aircraft' });
+      }
+    }
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
     if (!isAdmin && (sid !== b.student_id || iid !== b.instructor_id)) {
@@ -885,9 +899,18 @@ router.put('/:id', authenticateToken, async (req, res) => {
       || iid !== b.instructor_id
       || stIso !== new Date(b.start_time).toISOString()
       || etIso !== new Date(b.end_time).toISOString();
-    const skipConflictCheck = isStaffHistoricalEdit;
-    const needsConflictCheck = scheduleChanged && !skipConflictCheck;
-    if (needsConflictCheck || (scheduleChanged && isAdmin)) {
+    const completedSideEffectsChanged = lesson_type !== undefined
+      || acId !== b.aircraft_id
+      || sid !== b.student_id
+      || iid !== b.instructor_id
+      || (isAdmin && req.body.booking_type !== undefined);
+    const nextStatus = status !== undefined && status !== null && status !== '' ? status : b.status;
+    const needsConflictCheck = needsScheduleConflictCheck({
+      previousStatus: b.status,
+      nextStatus,
+      scheduleChanged,
+    });
+    if (needsConflictCheck || scheduleChanged) {
       await client.query('BEGIN');
       try {
         if (needsConflictCheck) {
@@ -915,7 +938,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
           [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
         );
         const updated = result.rows[0];
-        await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+        if (updated.status === 'completed' && completedSideEffectsChanged) {
+          await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+        }
         await client.query('COMMIT');
         return res.json(updated);
       } catch (err) {
@@ -942,7 +967,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       [sid, iid, acId, stIso, etIso, lesson_type, notes, status, booking_type, bookingId]
     );
     const updated = result.rows[0];
-    await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+    if (updated.status === 'completed' && completedSideEffectsChanged) {
+      await syncCompletedBookingSideEffects(client, updated, effectiveLessonType);
+    }
     await client.query('COMMIT');
     res.json(updated);
   } catch (err) {
