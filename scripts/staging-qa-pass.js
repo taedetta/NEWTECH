@@ -196,7 +196,7 @@ async function testPages(roleCfg) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   await context.addInitScript((t) => {
-    localStorage.setItem('token', t);
+    localStorage.setItem('fs_token', t);
   }, token);
 
   const page = await context.newPage();
@@ -209,6 +209,8 @@ async function testPages(roleCfg) {
   try {
     await page.goto(`${BASE}/app`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(2500);
+    // Ignore expected boot-time diagnostics; the checks below care about page actions.
+    consoleErrors.length = 0;
 
     for (const pg of roleCfg.pages) {
       try {

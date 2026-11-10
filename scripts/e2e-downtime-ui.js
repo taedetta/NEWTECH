@@ -26,6 +26,20 @@ async function getMaintenanceToken() {
   return jwt.sign({ id: u.id, email: u.email, role: u.role, name: u.name }, JWT_SECRET, { expiresIn: '1h' });
 }
 
+async function cleanupPlaywrightFixtures() {
+  const pool = new Pool({
+    connectionString: DB,
+    ssl: /\.rlwy\.net|railway\.internal/i.test(DB || '') ? false : undefined,
+  });
+  try {
+    await pool.query("DELETE FROM aircraft_downtime WHERE reason IN ('Playwright UI test', 'Playwright mark down')");
+    await pool.query("DELETE FROM squawks WHERE description IN ('Playwright UI test', 'Playwright mark down')");
+    await pool.query("UPDATE aircraft SET status = 'available', maintenance_reason = NULL WHERE maintenance_reason IN ('Playwright UI test', 'Playwright mark down')");
+  } finally {
+    await pool.end();
+  }
+}
+
 async function main() {
   const failures = [];
   const ok = (name, cond, detail = '') => {
@@ -34,6 +48,7 @@ async function main() {
   };
 
   console.log('Downtime UI E2E —', BASE);
+  await cleanupPlaywrightFixtures();
   const token = await getMaintenanceToken();
 
   const browser = await chromium.launch({ headless: true });
@@ -103,10 +118,11 @@ async function main() {
   const maintErr = await page.locator('#maint-status-error:not(.hidden)').innerText().catch(() => '');
   ok('mark down saved without error', !maintErr, maintErr);
 
-  const modalHidden = await page.locator('#maint-status-modal.hidden').isVisible().catch(() => false);
+  const modalHidden = await page.locator('#maint-status-modal').evaluate((el) => el.classList.contains('hidden')).catch(() => false);
   ok('maint modal closed after save', modalHidden);
 
   await browser.close();
+  await cleanupPlaywrightFixtures();
 
   if (failures.length) {
     console.error('\nFailures:', failures.join(', '));
