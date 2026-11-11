@@ -1,12 +1,12 @@
 'use strict';
 
 const express = require('express');
-const archiver = require('archiver');
 const path = require('path');
 const fs = require('fs');
 const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getAllOverrides } = require('../db/file-overrides');
+const { createZipFile, addFileToZip, addBufferToZip } = require('../lib/zip-writer');
 const { emailFullDataBackup } = require('../lib/full-data-backup');
 const { BOOKABLE_INSTRUCTOR_WHERE, normalizeTimeValue, timeToComparable } = require('../lib/instructors');
 const { getAllInstructorsDayAvailability } = require('../lib/instructor-availability');
@@ -150,12 +150,13 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     const overrideMap = {};
     for (const o of overrides) overrideMap[o.file_path] = o.content;
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => {
+    const archive = createZipFile();
+    archive.outputStream.on('error', (err) => {
       console.error('[download-source] Archive error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to create archive' });
+      else res.destroy(err);
     });
-    archive.pipe(res);
+    archive.outputStream.pipe(res);
 
     const excludeDirs = new Set(['node_modules', '.git', '.claude', '.tmp', 'debug', 'shell-snapshots', 'session-env', 'todos', 'projects']);
     const excludeFiles = new Set(['.env', '.claude.json', '.npmrc']);
@@ -181,9 +182,9 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
           addedPaths.add(relPath);
           // Use DB override content when available (guaranteed fresh)
           if (overrideMap[relPath] !== undefined) {
-            archive.append(Buffer.from(overrideMap[relPath], 'utf8'), { name: zipPath });
+            addBufferToZip(archive, overrideMap[relPath], zipPath);
           } else {
-            archive.file(fullPath, { name: zipPath });
+            addFileToZip(archive, fullPath, zipPath);
           }
         }
       }
@@ -193,7 +194,7 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     // Add any override files that don't exist on disk (editor-created files)
     for (const [fp, content] of Object.entries(overrideMap)) {
       if (!addedPaths.has(fp)) {
-        archive.append(Buffer.from(content, 'utf8'), { name: `src/${fp}` });
+        addBufferToZip(archive, content, `src/${fp}`);
       }
     }
 
@@ -231,7 +232,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 AUTO_BACKUP_ON_START=
 BACKUP_EMAIL=owner@yourdomain.com
 `;
-    archive.append(envExample, { name: 'src/.env.example' });
+    addBufferToZip(archive, envExample, 'src/.env.example');
 
     // Database schema
     let schemaSQL = `-- FlightSlate Database Schema\n-- Generated: ${new Date().toISOString()}\n-- Database: PostgreSQL (Neon)\n\n`;
@@ -294,9 +295,9 @@ BACKUP_EMAIL=owner@yourdomain.com
       }
     } catch (_) { /* schema query failed */ }
 
-    archive.append(schemaSQL, { name: 'docs/database-schema.sql' });
-    archive.append(structureMd, { name: 'docs/database-structure.md' });
-    archive.append(`# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, { name: 'docs/README.md' });
+    addBufferToZip(archive, schemaSQL, 'docs/database-schema.sql');
+    addBufferToZip(archive, structureMd, 'docs/database-structure.md');
+    addBufferToZip(archive, `# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, 'docs/README.md');
 
     let gitCommit = 'unknown';
     let gitBranch = 'unknown';
@@ -304,7 +305,8 @@ BACKUP_EMAIL=owner@yourdomain.com
       gitCommit = execSync('git rev-parse HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
       gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
     } catch (_) { /* not a git repo on deploy */ }
-    archive.append(
+    addBufferToZip(
+      archive,
       [
         'FlightSlate Source Archive',
         `Generated: ${new Date().toISOString()}`,
@@ -314,10 +316,10 @@ BACKUP_EMAIL=owner@yourdomain.com
         '',
         'This ZIP reflects the deployed codebase plus any editor file overrides.',
       ].join('\n'),
-      { name: 'BUILD_INFO.txt' }
+      'BUILD_INFO.txt'
     );
 
-    archive.finalize();
+    archive.end();
   } catch (err) {
     console.error('[download-source] error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to create download' });
