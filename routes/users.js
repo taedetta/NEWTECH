@@ -19,6 +19,9 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { role } = req.query;
     const requesterRole = req.user.role;
+    if (requesterRole === 'maintenance') {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
     if (['student', 'renter'].includes(requesterRole)) {
       // Renters and students only see instructors/admins/owners in their user list
       const result = await pool.query(
