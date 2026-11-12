@@ -97,12 +97,12 @@ async function main() {
   });
   const hash = await bcrypt.hash(PASSWORD, 12);
   try {
-    await pool.query(`DELETE FROM users WHERE email LIKE '%@test.local'`);
     await ensureUserSequence(pool);
     for (const user of TEST_USERS) {
       const id = await upsertUser(pool, user, hash);
       console.log(`Seeded ${user.role}: ${user.email} (id=${id})`);
     }
+    await ensureUserSequence(pool);
     await ensureSampleAircraft(pool);
     console.log(`\nAll test users use password: ${PASSWORD}`);
   } finally {
