@@ -1,6 +1,13 @@
 'use strict';
 
-const pool = require('./index');
+const { isRequiredEmailType } = require('../lib/email-types');
+
+let sharedPool = null;
+
+function getPool() {
+  if (!sharedPool) sharedPool = require('./index');
+  return sharedPool;
+}
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -26,7 +33,7 @@ const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
 
 let schemaPromise = null;
 
-async function ensureEmailPrefsSchema(db = pool) {
+async function ensureEmailPrefsSchema(db = getPool()) {
   if (!schemaPromise) {
     schemaPromise = (async () => {
       await db.query(`
@@ -72,7 +79,7 @@ function rowToPrefs(row) {
   return out;
 }
 
-async function ensureDefaultPrefs(userId, db = pool) {
+async function ensureDefaultPrefs(userId, db = getPool()) {
   await ensureEmailPrefsSchema(db);
   await db.query(
     `INSERT INTO user_email_preferences (user_id)
@@ -82,7 +89,7 @@ async function ensureDefaultPrefs(userId, db = pool) {
   );
 }
 
-async function getPrefs(userId, db = pool) {
+async function getPrefs(userId, db = getPool()) {
   await ensureDefaultPrefs(userId, db);
   const result = await db.query(
     'SELECT * FROM user_email_preferences WHERE user_id = $1',
@@ -91,12 +98,13 @@ async function getPrefs(userId, db = pool) {
   return rowToPrefs(result.rows[0]);
 }
 
-async function updatePrefs(userId, patch, db = pool) {
+async function updatePrefs(userId, patch, db = getPool()) {
   await ensureDefaultPrefs(userId, db);
   const sets = [];
   const vals = [];
   let i = 1;
   for (const col of PREF_COLUMNS) {
+    if (col !== 'email_all_off' && isRequiredEmailType(col)) continue;
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
