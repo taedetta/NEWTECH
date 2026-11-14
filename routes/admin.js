@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const archiver = require('archiver');
+const yazl = require('yazl');
 const path = require('path');
 const fs = require('fs');
 const pool = require('../db/index');
@@ -150,12 +150,12 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     const overrideMap = {};
     for (const o of overrides) overrideMap[o.file_path] = o.content;
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => {
+    const archive = new yazl.ZipFile();
+    archive.outputStream.on('error', (err) => {
       console.error('[download-source] Archive error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to create archive' });
     });
-    archive.pipe(res);
+    archive.outputStream.pipe(res);
 
     const excludeDirs = new Set(['node_modules', '.git', '.claude', '.tmp', 'debug', 'shell-snapshots', 'session-env', 'todos', 'projects']);
     const excludeFiles = new Set(['.env', '.claude.json', '.npmrc']);
@@ -181,9 +181,9 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
           addedPaths.add(relPath);
           // Use DB override content when available (guaranteed fresh)
           if (overrideMap[relPath] !== undefined) {
-            archive.append(Buffer.from(overrideMap[relPath], 'utf8'), { name: zipPath });
+            archive.addBuffer(Buffer.from(overrideMap[relPath], 'utf8'), zipPath);
           } else {
-            archive.file(fullPath, { name: zipPath });
+            archive.addFile(fullPath, zipPath);
           }
         }
       }
@@ -193,7 +193,7 @@ router.get('/download-source', authenticateToken, requireRole('owner', 'admin'),
     // Add any override files that don't exist on disk (editor-created files)
     for (const [fp, content] of Object.entries(overrideMap)) {
       if (!addedPaths.has(fp)) {
-        archive.append(Buffer.from(content, 'utf8'), { name: `src/${fp}` });
+        archive.addBuffer(Buffer.from(content, 'utf8'), `src/${fp}`);
       }
     }
 
@@ -231,7 +231,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 AUTO_BACKUP_ON_START=
 BACKUP_EMAIL=owner@yourdomain.com
 `;
-    archive.append(envExample, { name: 'src/.env.example' });
+    archive.addBuffer(Buffer.from(envExample, 'utf8'), 'src/.env.example');
 
     // Database schema
     let schemaSQL = `-- FlightSlate Database Schema\n-- Generated: ${new Date().toISOString()}\n-- Database: PostgreSQL (Neon)\n\n`;
@@ -294,9 +294,12 @@ BACKUP_EMAIL=owner@yourdomain.com
       }
     } catch (_) { /* schema query failed */ }
 
-    archive.append(schemaSQL, { name: 'docs/database-schema.sql' });
-    archive.append(structureMd, { name: 'docs/database-structure.md' });
-    archive.append(`# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, { name: 'docs/README.md' });
+    archive.addBuffer(Buffer.from(schemaSQL, 'utf8'), 'docs/database-schema.sql');
+    archive.addBuffer(Buffer.from(structureMd, 'utf8'), 'docs/database-structure.md');
+    archive.addBuffer(
+      Buffer.from(`# FlightSlate API Documentation\n\nGenerated: ${new Date().toISOString()}\n\nSee routes/ for API endpoints.\n`, 'utf8'),
+      'docs/README.md'
+    );
 
     let gitCommit = 'unknown';
     let gitBranch = 'unknown';
@@ -304,8 +307,8 @@ BACKUP_EMAIL=owner@yourdomain.com
       gitCommit = execSync('git rev-parse HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
       gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
     } catch (_) { /* not a git repo on deploy */ }
-    archive.append(
-      [
+    archive.addBuffer(
+      Buffer.from([
         'FlightSlate Source Archive',
         `Generated: ${new Date().toISOString()}`,
         `Git commit: ${gitCommit}`,
@@ -313,11 +316,11 @@ BACKUP_EMAIL=owner@yourdomain.com
         'Repository: https://github.com/taedetta/NEWTECH',
         '',
         'This ZIP reflects the deployed codebase plus any editor file overrides.',
-      ].join('\n'),
-      { name: 'BUILD_INFO.txt' }
+      ].join('\n'), 'utf8'),
+      'BUILD_INFO.txt'
     );
 
-    archive.finalize();
+    archive.end();
   } catch (err) {
     console.error('[download-source] error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to create download' });

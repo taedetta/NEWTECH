@@ -348,6 +348,29 @@ async function testMaintenanceRole(tokens, ac) {
   ok('maintenance role pages defined', maintPages.length === 4);
 }
 
+async function testMaintenanceCannotDeleteAircraft(tokens) {
+  console.log('\n=== Maintenance role cannot delete aircraft ===');
+  const { maintTok, adminTok } = tokens;
+
+  const created = await api(adminTok, '/api/aircraft', {
+    method: 'POST',
+    body: JSON.stringify({
+      tail_number: `QAD${Date.now().toString().slice(-6)}`,
+      make_model: 'QA Delete Guard',
+      type: 'single_engine',
+      hourly_rate: 100,
+    }),
+  });
+  ok('admin creates temp aircraft for delete guard', created.status === 201, JSON.stringify(created.data));
+  if (created.status !== 201 || !created.data?.id) return;
+
+  const denied = await api(maintTok, `/api/aircraft/${created.data.id}`, { method: 'DELETE' });
+  ok('maintenance aircraft delete blocked', denied.status === 403, JSON.stringify(denied.data));
+
+  const cleanup = await api(adminTok, `/api/aircraft/${created.data.id}`, { method: 'DELETE' });
+  ok('admin cleanup temp aircraft', cleanup.status === 200 || cleanup.status === 404, JSON.stringify(cleanup.data));
+}
+
 async function ensureFleetBookable(adminTok, acList) {
   console.log('\n=== Ensure fleet bookable (annual dates) ===');
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -355,11 +378,13 @@ async function ensureFleetBookable(adminTok, acList) {
   for (const ac of acList) {
     if (ac.status !== 'available') continue;
     const due = ac.next_annual_due ? String(ac.next_annual_due).slice(0, 10) : null;
-    if (!due || due <= todayStr) {
+    const currentTach = parseFloat(ac.current_tach || ac.total_tach_hours || ac.current_hobbs || 0);
+    const next100HrDue = parseFloat(ac.next_100hr_due || 0);
+    if (!due || due <= todayStr || !next100HrDue || next100HrDue <= currentTach) {
       const res = await api(adminTok, `/api/aircraft/${ac.id}/inspections`, {
         method: 'PUT',
         body: JSON.stringify({
-          next_100hr_due: ac.next_100hr_due || 125,
+          next_100hr_due: Math.max(next100HrDue, currentTach + 100),
           next_annual_due: nextAnnual,
         }),
       });
@@ -464,6 +489,7 @@ async function main() {
   await testCancelFlow(tokens, { renter }, ac);
   await testEndEarlyFlow(pool, tokens, userMap, ac);
   await testMaintenanceRole(tokens, ac);
+  await testMaintenanceCannotDeleteAircraft(tokens);
   await testDebriefWithRatings(tokens, userMap);
 
   await pool.end();
