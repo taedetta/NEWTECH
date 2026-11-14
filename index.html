@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>C172L Airworthiness Checkride Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --navy: #0b1f33;
+      --steel: #1f4e6b;
+      --amber: #c47a1a;
+      --paper: #f4f7fa;
+      --ink: #1a1f24;
+      --muted: #5a6570;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, #d6e6f2 0%, transparent 55%),
+        radial-gradient(ellipse 60% 40% at 100% 0%, #f0e2c8 0%, transparent 45%),
+        linear-gradient(180deg, #eef3f7 0%, var(--paper) 40%, #e7eef4 100%);
+    }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 12vh 1.5rem 4rem;
+    }
+    .eyebrow {
+      font-size: 0.75rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--amber);
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+    h1 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(2.4rem, 6vw, 3.4rem);
+      line-height: 1.05;
+      color: var(--navy);
+      font-weight: 400;
+      margin: 0 0 1rem;
+    }
+    h1 em { font-style: italic; color: var(--steel); }
+    .lede {
+      font-size: 1.05rem;
+      line-height: 1.55;
+      color: var(--muted);
+      max-width: 38rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: rgba(255,255,255,0.78);
+      border: 1px solid #c9d5e0;
+      border-radius: 18px;
+      padding: 1.35rem 1.4rem;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 18px 40px rgba(11, 31, 51, 0.08);
+    }
+    .meta {
+      display: grid;
+      gap: 0.45rem;
+      margin-bottom: 1.25rem;
+      font-size: 0.92rem;
+    }
+    .meta div { display: flex; gap: 0.75rem; }
+    .meta span { color: var(--muted); min-width: 7.5rem; }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      border-radius: 999px;
+      padding: 0.85rem 1.35rem;
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: transform 160ms ease, background 160ms ease;
+    }
+    a.btn:hover { transform: translateY(-1px); }
+    a.primary {
+      background: var(--navy);
+      color: #fff;
+    }
+    a.secondary {
+      background: transparent;
+      color: var(--steel);
+      border: 1.5px solid #9db3c4;
+    }
+    .note {
+      margin-top: 1.5rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    ul {
+      margin: 0.8rem 0 0;
+      padding-left: 1.1rem;
+      color: var(--ink);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Private Pilot ACS · FAA-S-ACS-6C</p>
+    <h1>Cessna 172L <em>airworthiness</em> checkride guide</h1>
+    <p class="lede">
+      A 20-page oral study PDF for N9858G: AROW, AV1ATE, MEL vs §91.213(d),
+      landing-light go/no-go, full PAVE, and DPE questions with FAR/AIM/ACS citations.
+    </p>
+    <section class="card">
+      <div class="meta">
+        <div><span>Aircraft</span><strong>1971 Cessna 172L · N9858G · S/N 17259758</strong></div>
+        <div><span>File</span><strong>C172L_Private_Pilot_Airworthiness_Checkride_Guide.pdf</strong></div>
+        <div><span>Focus</span><strong>AOI Task B — Airworthiness Requirements</strong></div>
+      </div>
+      <div class="actions">
+        <a class="btn primary" href="./C172L_Private_Pilot_Airworthiness_Checkride_Guide.pdf" download>
+          Download PDF
+        </a>
+        <a class="btn secondary" href="./C172L_Private_Pilot_Airworthiness_Checkride_Guide.pdf" target="_blank" rel="noopener">
+          Open in browser
+        </a>
+      </div>
+      <ul>
+        <li>Required docs (AROW) and inspection cascade (AV1ATE)</li>
+        <li>Does your airplane have an MEL? — answered for a typical 172L</li>
+        <li>Broken landing light: day / night / for-hire branching answer</li>
+        <li>Complete PAVE checklist written for a checkride flight</li>
+        <li>25+ DPE-style Q&amp;As with official references beside each</li>
+      </ul>
+      <p class="note">
+        Study aid only. Verify current FARs, ACS, ADs, and aircraft records before flight.
+        Temporary hosting for download — not an official FAA publication.
+      </p>
+    </section>
+  </main>
+</body>
+</html>
