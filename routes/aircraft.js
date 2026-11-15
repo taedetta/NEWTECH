@@ -60,7 +60,7 @@ router.put('/:id', authenticateToken, requirePermission('can_manage_aircraft'), 
 });
 
 // DELETE /api/aircraft/:id — Owner/Admin only. Cancels future bookings, removes related downtime/squawks, then deletes the aircraft.
-router.delete('/:id', authenticateToken, requireRole('owner', 'admin', 'maintenance'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner', 'admin'), async (req, res) => {
   const client = await pool.connect();
   try {
     const aircraft = await client.query('SELECT id, tail_number FROM aircraft WHERE id = $1', [req.params.id]);

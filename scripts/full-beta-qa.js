@@ -17,6 +17,7 @@ const BASE = process.argv.includes('--base')
 
 const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
+const QA_SOURCE = process.env.APP_ENV === 'staging' ? 'staging' : 'production';
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
   || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null)
@@ -95,7 +96,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
   const slot = pastSlot(hoursAgo, 90);
   const r = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', $6, $7, $8)
     RETURNING id
   `, [
     studentId || null,
@@ -105,6 +106,7 @@ async function insertPastBooking(pool, { studentId, instructorId, aircraftId, ty
     slot.end_time,
     type,
     instructorId || studentId,
+    QA_SOURCE,
   ]);
   return r.rows[0].id;
 }
@@ -292,9 +294,9 @@ async function testEndEarlyFlow(pool, tokens, users, ac) {
 
   const ins = await pool.query(`
     INSERT INTO bookings (student_id, instructor_id, aircraft_id, start_time, end_time, status, booking_type, created_by, source)
-    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, 'production')
+    VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, 'confirmed', 'dual', $2, $6)
     RETURNING id
-  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time]);
+  `, [student.id, instructor.id, ac.id, slot.start_time, slot.end_time, QA_SOURCE]);
   const bid = ins.rows[0].id;
 
   const early = await api(adminTok, `/api/bookings/${bid}/end-early`, {
@@ -348,6 +350,29 @@ async function testMaintenanceRole(tokens, ac) {
   ok('maintenance role pages defined', maintPages.length === 4);
 }
 
+async function testMaintenanceCannotDeleteAircraft(tokens) {
+  console.log('\n=== Maintenance role cannot delete aircraft ===');
+  const { maintTok, adminTok } = tokens;
+
+  const created = await api(adminTok, '/api/aircraft', {
+    method: 'POST',
+    body: JSON.stringify({
+      tail_number: `QAD${Date.now().toString().slice(-6)}`,
+      make_model: 'QA Delete Guard',
+      type: 'single_engine',
+      hourly_rate: 100,
+    }),
+  });
+  ok('admin creates temp aircraft for delete guard', created.status === 201, JSON.stringify(created.data));
+  if (created.status !== 201 || !created.data?.id) return;
+
+  const denied = await api(maintTok, `/api/aircraft/${created.data.id}`, { method: 'DELETE' });
+  ok('maintenance aircraft delete blocked', denied.status === 403, JSON.stringify(denied.data));
+
+  const cleanup = await api(adminTok, `/api/aircraft/${created.data.id}`, { method: 'DELETE' });
+  ok('admin cleanup temp aircraft', cleanup.status === 200 || cleanup.status === 404, JSON.stringify(cleanup.data));
+}
+
 async function ensureFleetBookable(adminTok, acList) {
   console.log('\n=== Ensure fleet bookable (annual dates) ===');
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -355,11 +380,13 @@ async function ensureFleetBookable(adminTok, acList) {
   for (const ac of acList) {
     if (ac.status !== 'available') continue;
     const due = ac.next_annual_due ? String(ac.next_annual_due).slice(0, 10) : null;
-    if (!due || due <= todayStr) {
+    const currentTach = parseFloat(ac.current_tach || ac.total_tach_hours || ac.current_hobbs || 0);
+    const next100HrDue = parseFloat(ac.next_100hr_due || 0);
+    if (!due || due <= todayStr || !next100HrDue || next100HrDue <= currentTach) {
       const res = await api(adminTok, `/api/aircraft/${ac.id}/inspections`, {
         method: 'PUT',
         body: JSON.stringify({
-          next_100hr_due: ac.next_100hr_due || 125,
+          next_100hr_due: Math.max(next100HrDue, currentTach + 100),
           next_annual_due: nextAnnual,
         }),
       });
@@ -464,6 +491,7 @@ async function main() {
   await testCancelFlow(tokens, { renter }, ac);
   await testEndEarlyFlow(pool, tokens, userMap, ac);
   await testMaintenanceRole(tokens, ac);
+  await testMaintenanceCannotDeleteAircraft(tokens);
   await testDebriefWithRatings(tokens, userMap);
 
   await pool.end();

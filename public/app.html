@@ -5089,7 +5089,10 @@ window.onerror = function(msg, url, line, col, err) {
 };
 // ─── STATE ───
 let currentUser = null;
-let token = localStorage.getItem('fs_token');
+let token = localStorage.getItem('fs_token') || localStorage.getItem('token');
+if (token && !localStorage.getItem('fs_token')) {
+  localStorage.setItem('fs_token', token);
+}
 let currentPage = 'dashboard';
 /** Deep-link target (e.g. My Account from email) — captured before enterApp clears the URL */
 let pendingStartupPage = null;
@@ -5873,6 +5876,7 @@ function logout() {
   currentUser = null;
   clearAppState();
   localStorage.removeItem('fs_token');
+  localStorage.removeItem('token');
   syncSidebarAuth(false);
   const appEl = document.getElementById('app-screen');
   if (appEl) appEl.classList.add('hidden', 'app-booting');
@@ -5951,6 +5955,7 @@ async function enterAppBody() {
   } catch (meErr) {
     token = null;
     localStorage.removeItem('fs_token');
+    localStorage.removeItem('token');
     if (appEl) appEl.classList.remove('app-booting');
     openAuthModal('signin');
     const errEl = document.getElementById('login-error');
@@ -6960,7 +6965,7 @@ function navigate(page) {
     while (parent && depth < 5) {
       var pStyle = window.getComputedStyle(parent);
       if (pStyle.display === 'none' || pStyle.visibility === 'hidden') {
-        console.error('[NAV] PARENT HIDDEN! id=' + parent.id + ' class=' + parent.className + ' display=' + pStyle.display + ' visibility=' + pStyle.visibility);
+        console.warn('[NAV] PARENT HIDDEN! id=' + parent.id + ' class=' + parent.className + ' display=' + pStyle.display + ' visibility=' + pStyle.visibility);
       }
       parent = parent.parentElement;
       depth++;
@@ -9344,9 +9349,10 @@ async function loadDashboard() {
   const studentCount = allUsers.filter(u => u.role === 'student').length;
   const availableAircraft = allAircraft.filter(a => !isAircraftCurrentlyDown(a)).length;
 
-  const hobbsHrs = parseFloat(currentUser.total_hobbs_hours || 0).toFixed(1);
-  const tachHrs = parseFloat(currentUser.total_tach_hours || 0).toFixed(1);
-  const showHours = currentUser.role === 'student' || currentUser.role === 'instructor';
+  const dashboardUser = currentUser || {};
+  const hobbsHrs = parseFloat(dashboardUser.total_hobbs_hours || 0).toFixed(1);
+  const tachHrs = parseFloat(dashboardUser.total_tach_hours || 0).toFixed(1);
+  const showHours = dashboardUser.role === 'student' || dashboardUser.role === 'instructor';
 
   const statsEl = document.getElementById('dashboard-stats');
   if (actualStats) actualStats.classList.remove('hidden');
@@ -11720,7 +11726,7 @@ async function loadFleet() {
   const perms = currentUser.permissions || {};
   const canEdit = ['owner', 'admin', 'maintenance'].includes(currentUser.role) || perms.can_manage_aircraft;
   const canEditHours = ['owner', 'instructor', 'admin', 'maintenance'].includes(currentUser.role);
-  const canDelete = ['owner', 'admin', 'maintenance'].includes(currentUser.role);
+  const canDelete = ['owner', 'admin'].includes(currentUser.role);
 
   document.getElementById('schedule-downtime-btn').classList.toggle('hidden', !canEdit);
 
@@ -15771,6 +15777,7 @@ async function init() {
     } catch {
       token = null;
       localStorage.removeItem('fs_token');
+      localStorage.removeItem('token');
       openAuthModal('signin');
     }
   } else {
@@ -20503,6 +20510,13 @@ async function loadRenterPortal() {
   const loadingEl = document.getElementById('portal-loading');
   const contentEl = document.getElementById('portal-content');
   const emptyEl = document.getElementById('portal-empty');
+  if (!currentUser) {
+    try {
+      const meData = await api('/api/auth/me');
+      currentUser = meData.user || currentUser;
+    } catch {}
+  }
+  const portalUser = currentUser || {};
   // Update page title to Renter Portal
   const titleEl = document.querySelector('#page-portal h1');
   if (titleEl) titleEl.textContent = 'My Rental Portal';
@@ -20517,13 +20531,13 @@ async function loadRenterPortal() {
     contentEl.classList.remove('hidden');
     const heroEl = document.getElementById('portal-hero-area');
     const tabsEl = document.getElementById('portal-tabs');
-    const hobbsHrs = parseFloat(currentUser.total_hobbs_hours || 0).toFixed(1);
-    const tachHrs = parseFloat(currentUser.total_tach_hours || 0).toFixed(1);
+    const hobbsHrs = parseFloat(portalUser.total_hobbs_hours || 0).toFixed(1);
+    const tachHrs = parseFloat(portalUser.total_tach_hours || 0).toFixed(1);
     heroEl.innerHTML = `
       <div style="background:var(--dark-blue);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.5rem;margin-bottom:1.25rem;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
         <div style="flex:1;min-width:200px">
           <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--gray-500);font-weight:600;margin-bottom:0.35rem">Welcome back</div>
-          <div style="font-size:1.25rem;font-weight:700;color:var(--white);margin-bottom:0.2rem">${escHtml(currentUser.name)}</div>
+          <div style="font-size:1.25rem;font-weight:700;color:var(--white);margin-bottom:0.2rem">${escHtml(portalUser.name || 'Renter')}</div>
           <div style="font-size:0.82rem;color:var(--gray-400)">Renter Account · <span style="color:var(--sky)">${logs.length} flight${logs.length !== 1 ? 's' : ''} logged</span></div>
         </div>
         <div style="display:flex;gap:1.5rem;flex-wrap:wrap">

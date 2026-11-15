@@ -118,7 +118,7 @@ router.get('/export/fsp', authenticateToken, async (req, res) => {
       return res.send(buf);
     }
 
-    const buf = buildFspWorkbook(users, exportOptions);
+    const buf = await buildFspWorkbook(users, exportOptions);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
     return res.send(buf);
