@@ -39,16 +39,33 @@ const {
 } = require('../lib/aircraft-meter');
 
 function testRequiredEmailPreferences() {
-  assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
-  assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(EMAIL_TYPES.password_reset), false);
-  assert.strictEqual(rowToPrefs({ password_reset: false }).password_reset, true);
+  const requiredTypes = [
+    EMAIL_TYPES.password_reset,
+    EMAIL_TYPES.account_approved,
+    EMAIL_TYPES.account_rejected,
+    EMAIL_TYPES.signup_pending,
+    EMAIL_TYPES.account_invite,
+    EMAIL_TYPES.profile_change,
+    EMAIL_TYPES.welcome,
+  ];
+  for (const type of requiredTypes) {
+    assert.strictEqual(isRequiredEmailType(type), true);
+    assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(type), false);
+    assert.strictEqual(rowToPrefs({ [type]: false })[type], true);
+  }
 
   const catalogTypes = getPreferenceCatalog('student', false).flatMap((category) => category.types.map((type) => type.key));
-  assert.strictEqual(catalogTypes.includes(EMAIL_TYPES.password_reset), false);
+  for (const type of requiredTypes) {
+    assert.strictEqual(catalogTypes.includes(type), false);
+  }
 
   const email = appendUnsubscribeFooter('<p>Reset</p>', 'Reset', 42, EMAIL_TYPES.password_reset);
   assert.strictEqual(email.html, '<p>Reset</p>');
   assert.strictEqual(email.text, 'Reset');
+
+  const textOnlyOptional = appendUnsubscribeFooter(null, 'Booking confirmed', 42, EMAIL_TYPES.booking_confirmation);
+  assert.strictEqual(textOnlyOptional.html, null);
+  assert(textOnlyOptional.text.includes('Unsubscribe from Booking confirmations'));
 }
 
 function testUnsubscribeTokenScope() {
