@@ -6,8 +6,21 @@ const pool = require('../db/index');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { sendEmail } = require('../email-templates');
 const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
+
+async function canCreateEndorsementForStudent(user, studentId) {
+  if (['owner', 'admin'].includes(user.role)) return true;
+  if (user.role !== 'instructor') return false;
+  const assigned = await pool.query(
+    `SELECT 1 FROM student_training
+     WHERE student_id = $1 AND instructor_id = $2 AND status = 'active' AND source = $3
+     LIMIT 1`,
+    [studentId, user.id, getAppEnv()]
+  );
+  return assigned.rows.length > 0;
+}
 
 // ─── ENDORSEMENT TEMPLATES ──────────────────────────────
 
@@ -207,9 +220,9 @@ router.get('/', authenticateToken, async (req, res) => {
       FROM endorsements e
       LEFT JOIN users s ON s.id = e.student_id
       JOIN users i ON i.id = e.instructor_id
-      WHERE 1=1
+      WHERE e.source = $1
     `;
-    const params = [];
+    const params = [getAppEnv()];
 
     if (req.user.role === 'student') {
       params.push(req.user.id);
@@ -224,11 +237,13 @@ router.get('/', authenticateToken, async (req, res) => {
         params.push(req.user.id);
         query += ` AND e.instructor_id = $${params.length}`;
       }
-    } else {
+    } else if (['owner', 'admin'].includes(req.user.role)) {
       if (student_id) {
         params.push(parseInt(student_id));
         query += ` AND e.student_id = $${params.length}`;
       }
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     if (status === 'active') {
@@ -258,17 +273,22 @@ router.post('/', authenticateToken, requireRole('instructor', 'owner', 'admin'),
     if (!student_id || !template_key || !endorsement_date) {
       return res.status(400).json({ error: 'student_id, template_key, and endorsement_date are required' });
     }
+    const studentId = parseInt(student_id, 10);
+    if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+    if (!(await canCreateEndorsementForStudent(req.user, studentId))) {
+      return res.status(403).json({ error: 'Only assigned instructors or admins can endorse this student' });
+    }
 
     const template = ENDORSEMENT_TEMPLATES[template_key];
     if (!template) return res.status(400).json({ error: 'Unknown template key' });
 
-    const studentRes = await pool.query('SELECT id, name FROM users WHERE id = $1', [student_id]);
+    const studentRes = await pool.query('SELECT id, name FROM users WHERE id = $1 AND source = $2', [studentId, getAppEnv()]);
     if (studentRes.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
     const student = studentRes.rows[0];
 
     const instructorRes = await pool.query(
-      'SELECT id, name, cfi_cert_number FROM users WHERE id = $1',
-      [req.user.id]
+      'SELECT id, name, cfi_cert_number FROM users WHERE id = $1 AND source = $2',
+      [req.user.id, getAppEnv()]
     );
     const instructor = instructorRes.rows[0];
     if (!instructor.cfi_cert_number) {
@@ -303,8 +323,8 @@ router.post('/', authenticateToken, requireRole('instructor', 'owner', 'admin'),
          student_name, instructor_name, instructor_cert_number,
          endorsement_date, expiration_date, endorsement_text,
          aircraft_make_model, aircraft_id, instructor_signature, signed_at,
-         ip_address, user_agent, metadata)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         ip_address, user_agent, metadata, source)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING *
     `, [
       student.id, instructor.id, template_key, template.label,
@@ -314,7 +334,7 @@ router.post('/', authenticateToken, requireRole('instructor', 'owner', 'admin'),
       aircraft_id ? parseInt(aircraft_id) : null,
       instructor_signature || null,
       instructor_signature ? new Date() : null,
-      ip, ua, JSON.stringify(metadata || {}),
+      ip, ua, JSON.stringify(metadata || {}), getAppEnv(),
     ]);
 
     res.json({ endorsement: result.rows[0] });
@@ -336,8 +356,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
       FROM endorsements e
       JOIN users s ON s.id = e.student_id
       JOIN users i ON i.id = e.instructor_id
-      WHERE e.id = $1
-    `, [req.params.id]);
+      WHERE e.id = $1 AND e.source = $2
+    `, [req.params.id, getAppEnv()]);
 
     if (result.rows.length === 0) return res.status(404).json({ error: 'Endorsement not found' });
     const e = result.rows[0];
@@ -361,8 +381,8 @@ router.post('/:id/student-sign', authenticateToken, async (req, res) => {
     const { student_signature } = req.body;
 
     const result = await pool.query(
-      'SELECT * FROM endorsements WHERE id = $1',
-      [req.params.id]
+      'SELECT * FROM endorsements WHERE id = $1 AND source = $2',
+      [req.params.id, getAppEnv()]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Endorsement not found' });
     const endorsement = result.rows[0];
@@ -372,8 +392,8 @@ router.post('/:id/student-sign', authenticateToken, async (req, res) => {
     }
 
     await pool.query(
-      'UPDATE endorsements SET student_signature = $1, student_signed_at = $2 WHERE id = $3',
-      [student_signature, new Date(), req.params.id]
+      'UPDATE endorsements SET student_signature = $1, student_signed_at = $2 WHERE id = $3 AND source = $4',
+      [student_signature, new Date(), req.params.id, getAppEnv()]
     );
 
     res.json({ success: true });
@@ -385,7 +405,7 @@ router.post('/:id/student-sign', authenticateToken, async (req, res) => {
 
 router.delete('/:id', authenticateToken, requireRole('instructor', 'owner', 'admin'), async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM endorsements WHERE id = $1', [req.params.id]);
+    const result = await pool.query('SELECT * FROM endorsements WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const e = result.rows[0];
 
@@ -393,7 +413,7 @@ router.delete('/:id', authenticateToken, requireRole('instructor', 'owner', 'adm
       return res.status(403).json({ error: 'Can only delete your own endorsements' });
     }
 
-    await pool.query('DELETE FROM endorsements WHERE id = $1', [req.params.id]);
+    await pool.query('DELETE FROM endorsements WHERE id = $1 AND source = $2', [req.params.id, getAppEnv()]);
     res.json({ success: true });
   } catch (err) {
     console.error('Delete endorsement error:', err);
@@ -410,8 +430,8 @@ router.get('/:id/pdf', authenticateToken, async (req, res) => {
       FROM endorsements e
       JOIN users s ON s.id = e.student_id
       JOIN users i ON i.id = e.instructor_id
-      WHERE e.id = $1
-    `, [req.params.id]);
+      WHERE e.id = $1 AND e.source = $2
+    `, [req.params.id, getAppEnv()]);
 
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const e = result.rows[0];
@@ -566,7 +586,8 @@ async function sendEndorsementExpiryAlerts() {
         JOIN users i ON i.id = e.instructor_id
         WHERE e.expiration_date = $1
           AND e.instructor_signature IS NOT NULL
-      `, [dateStr]);
+          AND e.source = $2
+      `, [dateStr, getAppEnv()]);
 
       for (const e of result.rows) {
         const subject = `Endorsement Expiring in ${days} Day${days > 1 ? 's' : ''}: ${e.endorsement_type}`;

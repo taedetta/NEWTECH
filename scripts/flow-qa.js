@@ -5,6 +5,8 @@
  */
 const BASE = process.env.QA_BASE || 'http://localhost:3000';
 const PASSWORD = process.env.TEST_USER_PASSWORD || 'TestPass123!';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'qa-admin@test.local';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || PASSWORD;
 
 const failures = [];
 
@@ -40,7 +42,7 @@ function ok(name, cond, detail = '') {
 async function main() {
   console.log('Flow tests:', BASE);
 
-  const admin = await login('evaughntaemw@gmail.com', process.env.ADMIN_PASSWORD || 'NewTech2026!');
+  const admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   ok('admin login', admin.user.role === 'admin');
 
   const aircraft = await api(admin.token, '/api/aircraft');

@@ -10,13 +10,37 @@ const { getMeterHobbs } = require('../lib/aircraft-meter');
 const { getInspectionHours, hoursUntilDue } = require('../lib/aircraft-inspection-hours');
 const pool = require('../db/index');
 const { authenticateToken } = require('../middleware/auth');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
+
+function flightScopeForUser(user, startingIndex = 1) {
+  if (['owner', 'admin', 'maintenance'].includes(user.role)) {
+    return { clause: '', params: [], nextIndex: startingIndex };
+  }
+  if (user.role === 'instructor') {
+    return {
+      clause: ` AND b.instructor_id = $${startingIndex}`,
+      params: [user.id],
+      nextIndex: startingIndex + 1,
+    };
+  }
+  if (user.role === 'student' || user.role === 'renter') {
+    return {
+      clause: ` AND b.student_id = $${startingIndex}`,
+      params: [user.id],
+      nextIndex: startingIndex + 1,
+    };
+  }
+  return { clause: ' AND 1 = 0', params: [], nextIndex: startingIndex };
+}
 
 // GET /api/track-flights/live — bookings currently in progress
 // "In progress" = active booking window OR hobbs started but not ended
 router.get('/live', authenticateToken, async (req, res) => {
   try {
+    const scope = flightScopeForUser(req.user, 2);
+    const params = [getAppEnv(), ...scope.params];
     const result = await pool.query(
       `SELECT
          b.id,
@@ -40,11 +64,14 @@ router.get('/live', authenticateToken, async (req, res) => {
        LEFT JOIN users i ON i.id = b.instructor_id
        JOIN aircraft a ON a.id = b.aircraft_id
        WHERE b.status NOT IN ('cancelled', 'completed')
+         AND b.source = $1
          AND (
            (b.start_time <= NOW() AND b.end_time >= NOW())
            OR (b.hobbs_start IS NOT NULL AND b.hobbs_end IS NULL)
          )
-       ORDER BY b.start_time ASC`
+         ${scope.clause}
+       ORDER BY b.start_time ASC`,
+      params
     );
     res.json({ flights: result.rows });
   } catch (err) {
@@ -56,6 +83,8 @@ router.get('/live', authenticateToken, async (req, res) => {
 // GET /api/track-flights/recent — flights completed in the last 8 hours
 router.get('/recent', authenticateToken, async (req, res) => {
   try {
+    const scope = flightScopeForUser(req.user, 2);
+    const params = [getAppEnv(), ...scope.params];
     const result = await pool.query(
       `SELECT
          b.id,
@@ -73,13 +102,16 @@ router.get('/recent', authenticateToken, async (req, res) => {
          a.tail_number,
          a.make_model
        FROM bookings b
-       JOIN users s ON s.id = b.student_id
-       JOIN users i ON i.id = b.instructor_id
+       LEFT JOIN users s ON s.id = b.student_id
+       LEFT JOIN users i ON i.id = b.instructor_id
        JOIN aircraft a ON a.id = b.aircraft_id
        WHERE b.status = 'completed'
+         AND b.source = $1
          AND b.completed_at >= NOW() - INTERVAL '8 hours'
+         ${scope.clause}
        ORDER BY b.completed_at DESC
-       LIMIT 20`
+       LIMIT 20`,
+      params
     );
     res.json({ flights: result.rows });
   } catch (err) {
@@ -107,7 +139,9 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
          a.maintenance_reason
        FROM aircraft a
        WHERE a.status != 'deleted'
-       ORDER BY a.tail_number`
+         AND a.source = $1
+       ORDER BY a.tail_number`,
+      [getAppEnv()]
     );
 
     // Open squawks per aircraft
@@ -125,7 +159,9 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
        FROM squawks s
        JOIN users u ON u.id = s.reported_by
        WHERE s.status IN ('open', 'reviewed', 'deferred')
-       ORDER BY s.reported_at DESC`
+         AND s.source = $1
+       ORDER BY s.reported_at DESC`,
+      [getAppEnv()]
     );
 
     // Last resolved squawk per aircraft as proxy for "last maintenance"
@@ -138,7 +174,9 @@ router.get('/maintenance-schedule', authenticateToken, async (req, res) => {
        FROM squawks s
        LEFT JOIN users u ON u.id = s.reviewed_by
        WHERE s.status = 'resolved'
-       ORDER BY s.aircraft_id, s.reviewed_at DESC NULLS LAST`
+         AND s.source = $1
+       ORDER BY s.aircraft_id, s.reviewed_at DESC NULLS LAST`,
+      [getAppEnv()]
     );
 
     // Group squawks by aircraft_id

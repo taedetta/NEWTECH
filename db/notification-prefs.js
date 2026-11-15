@@ -24,6 +24,7 @@ const DEFAULT_PREFS = {
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
 
 const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
+const WRITABLE_PREF_COLUMNS = PREF_COLUMNS.filter((c) => c === 'email_all_off' || !isRequiredEmailType(c));
 
 let schemaPromise = null;
 
@@ -68,11 +69,9 @@ function rowToPrefs(row) {
   if (!row) return { ...DEFAULT_PREFS };
   const out = {};
   for (const col of PREF_COLUMNS) {
-    if (isRequiredEmailType(col)) {
-      out[col] = true;
-      continue;
-    }
-    out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
+    out[col] = isRequiredEmailType(col)
+      ? true
+      : (row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col]);
   }
   return out;
 }
@@ -101,8 +100,7 @@ async function updatePrefs(userId, patch, db = pool) {
   const sets = [];
   const vals = [];
   let i = 1;
-  for (const col of PREF_COLUMNS) {
-    if (isRequiredEmailType(col)) continue;
+  for (const col of WRITABLE_PREF_COLUMNS) {
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
@@ -121,6 +119,7 @@ async function updatePrefs(userId, patch, db = pool) {
 module.exports = {
   DEFAULT_PREFS,
   PREF_COLUMNS,
+  WRITABLE_PREF_COLUMNS,
   ensureEmailPrefsSchema,
   ensureDefaultPrefs,
   getPrefs,
