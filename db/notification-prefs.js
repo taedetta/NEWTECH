@@ -1,28 +1,13 @@
 'use strict';
 
 const pool = require('./index');
-
-const DEFAULT_PREFS = {
-  email_all_off: false,
-  booking_confirmation: true,
-  booking_cancelled: true,
-  preflight_reminder: true,
-  flight_completed: true,
-  instructor_briefing: true,
-  endorsement_expiry: true,
-  maintenance_alert: true,
-  password_reset: true,
-  account_approved: true,
-  account_rejected: true,
-  signup_pending: true,
-  account_invite: true,
-  profile_change: true,
-  welcome: true,
-};
-
-const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
-
-const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
+const {
+  DEFAULT_PREFS,
+  PREF_COLUMNS,
+  OPTIONAL_BOOL_COLUMNS,
+  rowToPrefs,
+  sanitizePreferencePatch,
+} = require('../lib/notification-prefs-policy');
 
 let schemaPromise = null;
 
@@ -63,15 +48,6 @@ async function ensureEmailPrefsSchema(db = pool) {
   return schemaPromise;
 }
 
-function rowToPrefs(row) {
-  if (!row) return { ...DEFAULT_PREFS };
-  const out = {};
-  for (const col of PREF_COLUMNS) {
-    out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
-  }
-  return out;
-}
-
 async function ensureDefaultPrefs(userId, db = pool) {
   await ensureEmailPrefsSchema(db);
   await db.query(
@@ -96,10 +72,11 @@ async function updatePrefs(userId, patch, db = pool) {
   const sets = [];
   const vals = [];
   let i = 1;
+  const sanitizedPatch = sanitizePreferencePatch(patch);
   for (const col of PREF_COLUMNS) {
-    if (patch[col] !== undefined) {
+    if (sanitizedPatch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
-      vals.push(!!patch[col]);
+      vals.push(sanitizedPatch[col]);
     }
   }
   if (sets.length === 0) return getPrefs(userId, db);
@@ -120,4 +97,5 @@ module.exports = {
   getPrefs,
   updatePrefs,
   rowToPrefs,
+  sanitizePreferencePatch,
 };
