@@ -1,6 +1,6 @@
 'use strict';
 
-const pool = require('./index');
+const { isRequiredEmailType } = require('../lib/email-types');
 
 const DEFAULT_PREFS = {
   email_all_off: false,
@@ -23,10 +23,15 @@ const DEFAULT_PREFS = {
 const PREF_COLUMNS = Object.keys(DEFAULT_PREFS);
 
 const OPTIONAL_BOOL_COLUMNS = PREF_COLUMNS.filter((c) => c !== 'email_all_off');
+const UPDATABLE_PREF_COLUMNS = PREF_COLUMNS.filter((c) => c === 'email_all_off' || !isRequiredEmailType(c));
 
 let schemaPromise = null;
 
-async function ensureEmailPrefsSchema(db = pool) {
+function getPool() {
+  return require('./index');
+}
+
+async function ensureEmailPrefsSchema(db = getPool()) {
   if (!schemaPromise) {
     schemaPromise = (async () => {
       await db.query(`
@@ -67,12 +72,14 @@ function rowToPrefs(row) {
   if (!row) return { ...DEFAULT_PREFS };
   const out = {};
   for (const col of PREF_COLUMNS) {
-    out[col] = row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
+    out[col] = isRequiredEmailType(col)
+      ? true
+      : row[col] !== undefined ? !!row[col] : DEFAULT_PREFS[col];
   }
   return out;
 }
 
-async function ensureDefaultPrefs(userId, db = pool) {
+async function ensureDefaultPrefs(userId, db = getPool()) {
   await ensureEmailPrefsSchema(db);
   await db.query(
     `INSERT INTO user_email_preferences (user_id)
@@ -82,7 +89,7 @@ async function ensureDefaultPrefs(userId, db = pool) {
   );
 }
 
-async function getPrefs(userId, db = pool) {
+async function getPrefs(userId, db = getPool()) {
   await ensureDefaultPrefs(userId, db);
   const result = await db.query(
     'SELECT * FROM user_email_preferences WHERE user_id = $1',
@@ -91,12 +98,12 @@ async function getPrefs(userId, db = pool) {
   return rowToPrefs(result.rows[0]);
 }
 
-async function updatePrefs(userId, patch, db = pool) {
+async function updatePrefs(userId, patch, db = getPool()) {
   await ensureDefaultPrefs(userId, db);
   const sets = [];
   const vals = [];
   let i = 1;
-  for (const col of PREF_COLUMNS) {
+  for (const col of UPDATABLE_PREF_COLUMNS) {
     if (patch[col] !== undefined) {
       sets.push(`${col} = $${i++}`);
       vals.push(!!patch[col]);
