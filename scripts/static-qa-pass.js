@@ -481,6 +481,20 @@ if (!pageViewsSchema.includes("source VARCHAR(20) DEFAULT 'production'")
   fail('Analytics page views are not source-isolated');
 } else ok('Analytics page views are source-isolated');
 
+const auditStart = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS admin_audit_log');
+const nextCreateAfterAudit = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS', auditStart + 1);
+const auditSchema = auditStart >= 0
+  ? bootstrapSchema.slice(auditStart, nextCreateAfterAudit)
+  : '';
+const historySrc = fs.readFileSync(path.join(root, 'routes', 'booking-history.js'), 'utf8');
+if (!auditSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+  || !schemaPatches.includes('ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS source')
+  || !adminSrc.includes('admin_audit_log (action, performed_by, details, performed_at, source)')
+  || !usersSrc.includes('admin_audit_log (action, performed_by, details, source)')
+  || !historySrc.includes('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1 AND source = $2')) {
+  fail('Admin audit log is not source-isolated');
+} else ok('Admin audit log is source-isolated');
+
 const seedUsersSrc = fs.readFileSync(path.join(root, 'scripts', 'seed-test-users.js'), 'utf8');
 if (!/for \(const user of TEST_USERS\)[\s\S]*await ensureUserSequence\(pool\);[\s\S]*await ensureSampleAircraft/.test(seedUsersSrc)) {
   fail('QA user seeding does not reset users sequence after explicit IDs');

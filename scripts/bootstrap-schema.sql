@@ -377,7 +377,8 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
   performed_by INTEGER REFERENCES users(id),
   details TEXT,
   booking_id INTEGER REFERENCES bookings(id),
-  performed_at TIMESTAMPTZ DEFAULT NOW()
+  performed_at TIMESTAMPTZ DEFAULT NOW(),
+  source VARCHAR(20) DEFAULT 'production'
 );
 
 CREATE TABLE IF NOT EXISTS discovery_flight_leads (

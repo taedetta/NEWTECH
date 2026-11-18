@@ -418,7 +418,7 @@ router.delete('/flights/:id', authenticateToken, async (req, res) => {
       await client.query('DELETE FROM instructor_hours WHERE booking_id = $1 AND source = $2', [bookingId, getAppEnv()]);
       await client.query('DELETE FROM billing_entries WHERE booking_id = $1', [bookingId]);
       // Null out FK refs in audit/training tables (default RESTRICT would block delete)
-      await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
+      await client.query('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1 AND source = $2', [bookingId, getAppEnv()]);
       await client.query('UPDATE training_progress SET booking_id = NULL WHERE booking_id = $1', [bookingId]);
       await client.query('DELETE FROM bookings WHERE id = $1 AND source = $2', [bookingId, getAppEnv()]);
       await client.query('COMMIT');

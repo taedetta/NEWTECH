@@ -1057,6 +1057,12 @@ function testDelayedAuditSourceAndMeterGuards() {
   const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
   const cmsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'cms.js'), 'utf8');
   const atRiskSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'at-risk.js'), 'utf8');
+  const bootstrapSchema = fs.readFileSync(path.join(__dirname, 'bootstrap-schema.sql'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, 'schema-patches.sql'), 'utf8');
+  const auditStart = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS admin_audit_log');
+  const auditSchema = auditStart >= 0
+    ? bootstrapSchema.slice(auditStart, bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS', auditStart + 1))
+    : '';
   assert(
     remindersSrc.includes('AND b.source = $3')
       && remindersSrc.includes('WHERE id = $1 AND source = $2')
@@ -1064,6 +1070,14 @@ function testDelayedAuditSourceAndMeterGuards() {
       && cmsSrc.includes('Website content edits are disabled on staging')
       && atRiskSrc.includes("return getAppEnv() === 'staging' ? `${key}:staging` : key;"),
     'reminders, CMS writes, and at-risk thresholds must not cross staging/production data'
+  );
+  assert(
+    auditSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+      && schemaPatches.includes('ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS source')
+      && adminSrc.includes('admin_audit_log (action, performed_by, details, performed_at, source)')
+      && usersSrc.includes('admin_audit_log (action, performed_by, details, source)')
+      && historySrc.includes('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1 AND source = $2'),
+    'admin audit log schema and writes must be source-scoped'
   );
 
   const sanitySrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'flight-hour-sanity.js'), 'utf8');

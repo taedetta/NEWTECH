@@ -89,6 +89,10 @@ DROP INDEX IF EXISTS users_email_unique_idx;
 DROP INDEX IF EXISTS users_email_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_source_unique_idx ON users(LOWER(email), source);
 
+-- ── Admin audit log source isolation ──
+ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'production';
+UPDATE admin_audit_log SET source = 'production' WHERE source IS NULL;
+
 -- ── Leads: program interest + activity history ──
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS program_interest VARCHAR(100);
 ALTER TABLE discovery_flight_leads ADD COLUMN IF NOT EXISTS source_label VARCHAR(100);
