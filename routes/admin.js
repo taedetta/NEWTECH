@@ -85,8 +85,8 @@ router.post('/reset-all-data', authenticateToken, requireRole('owner', 'admin'),
     await client.query('UPDATE aircraft SET total_hobbs_hours = 0, total_tach_hours = 0, current_hobbs = 0, current_tach = 0 WHERE source = $1', [source]);
 
     await client.query(
-      'INSERT INTO admin_audit_log (action, performed_by, details, performed_at) VALUES ($1, $2, $3, NOW())',
-      ['reset_all_data', req.user.id, JSON.stringify({ triggered_by: req.user.name, role: req.user.role })]
+      'INSERT INTO admin_audit_log (action, performed_by, details, performed_at, source) VALUES ($1, $2, $3, NOW(), $4)',
+      ['reset_all_data', req.user.id, JSON.stringify({ triggered_by: req.user.name, role: req.user.role }), getAppEnv()]
     );
 
     await client.query('COMMIT');

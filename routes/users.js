@@ -447,7 +447,7 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
     transactionStarted = false;
 
     pool.query(
-      `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
+      `INSERT INTO admin_audit_log (action, performed_by, details, source) VALUES ($1, $2, $3, $4)`,
       ['change_privileges', req.user.id, JSON.stringify({
         user_id: targetId,
         user_name: target.name,
@@ -455,7 +455,7 @@ router.patch('/:id/privileges', authenticateToken, async (req, res) => {
         to: newRole,
         admin_access,
         owner_access,
-      })]
+      }), getAppEnv()]
     ).catch(e => console.error('[audit] privilege change log failed:', e.message));
 
     res.json({
@@ -549,8 +549,8 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     transactionStarted = false;
 
     pool.query(
-      `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
-      ['change_role', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, from: target.role, to: role })]
+      `INSERT INTO admin_audit_log (action, performed_by, details, source) VALUES ($1, $2, $3, $4)`,
+      ['change_role', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, from: target.role, to: role }), getAppEnv()]
     ).catch(e => console.error('[audit] role change log failed:', e.message));
     res.json({ ok: true, id: targetId, role });
   } catch (err) {
@@ -596,8 +596,8 @@ router.patch('/:id/instructor-status', authenticateToken, async (req, res) => {
       [is_instructor, targetId, getAppEnv()]
     );
     pool.query(
-      `INSERT INTO admin_audit_log (action, performed_by, details) VALUES ($1, $2, $3)`,
-      ['change_instructor_status', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, is_instructor })]
+      `INSERT INTO admin_audit_log (action, performed_by, details, source) VALUES ($1, $2, $3, $4)`,
+      ['change_instructor_status', req.user.id, JSON.stringify({ user_id: targetId, user_name: target.name, is_instructor }), getAppEnv()]
     ).catch(e => console.error('[audit] instructor status change log failed:', e.message));
     res.json({ ok: true, id: targetId, is_instructor });
   } catch (err) {

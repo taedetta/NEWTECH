@@ -282,7 +282,7 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
     );
 
     const lockedEnrollmentResult = await client.query(
-      'SELECT id, student_id, program_id FROM student_training WHERE id = $1 AND source = $2 FOR UPDATE',
+      'SELECT id, student_id, program_id, current_stage_id FROM student_training WHERE id = $1 AND source = $2 FOR UPDATE',
       [enrollmentId, getAppEnv()]
     );
     if (lockedEnrollmentResult.rows.length === 0) {
@@ -298,6 +298,18 @@ router.put('/enrollment/:id/stage', authenticateToken, async (req, res) => {
     if (stageResult.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Stage not found in this program' });
+    }
+
+    if (lockedEnrollment.current_stage_id && lockedEnrollment.current_stage_id !== stageId) {
+      const currentStageResult = await client.query(
+        'SELECT order_index FROM program_stages WHERE id = $1 AND program_id = $2',
+        [lockedEnrollment.current_stage_id, lockedEnrollment.program_id]
+      );
+      const currentOrder = currentStageResult.rows[0]?.order_index;
+      if (currentOrder != null && stageResult.rows[0].order_index < currentOrder) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Enrollment stage cannot move backward without a rollback workflow' });
+      }
     }
 
     const missingPrior = await client.query(

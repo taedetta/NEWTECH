@@ -201,6 +201,10 @@ if (!trainingSrc.includes('canWriteStudentTraining(req.user, studentId)')) {
 if (!/router\.post\('\/enroll'[\s\S]+canWriteStudentTraining\(req\.user, studentId\)/.test(trainingSrc)) {
   fail('Training enrollment missing assigned-instructor/admin guard');
 } else ok('Training enrollment is scoped');
+if (!trainingSrc.includes('Enrollment stage cannot move backward without a rollback workflow')
+  || !trainingSrc.includes('current_stage_id FROM student_training WHERE id = $1 AND source = $2 FOR UPDATE')) {
+  fail('Training enrollment stage can move backward without rollback handling');
+} else ok('Training stage regression is blocked');
 
 const bookingsSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
 const activeBookingsRoute = bookingsSrc.slice(bookingsSrc.indexOf("router.get('/',"), bookingsSrc.indexOf("router.get('/history'"));
@@ -213,6 +217,9 @@ if (!bookingsSrc.includes('Only owners and admins can force bookings')) {
 if (!bookingsSrc.includes('FOR UPDATE') || !bookingsSrc.includes('Only confirmed bookings can be cancelled')) {
   fail('Booking cancellation missing row-lock/status guard');
 } else ok('Booking cancellation row-lock/status guard present');
+if (!bookingsSrc.includes('Completed or cancelled booking schedule edits must use the flight history correction workflow.')) {
+  fail('Completed booking schedule edits can bypass history sync workflow');
+} else ok('Completed booking schedule edits use history correction workflow');
 
 const completionSrc = fs.readFileSync(path.join(root, 'routes/bookings-completion.js'), 'utf8');
 if (!completionSrc.includes('FOR UPDATE') || !completionSrc.includes('canAccessBooking(req.user, result.rows[0])')) {
@@ -231,6 +238,12 @@ const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8')
 if (/total_hobbs_hours\s*=\s*total_hobbs_hours\s*-|current_hobbs\s*=\s*current_hobbs\s*-/.test(billingSrc)) {
   fail('Billing void still mutates operational hour totals');
 } else ok('Billing void is non-destructive');
+
+const maintenanceSrc = fs.readFileSync(path.join(root, 'routes/maintenance.js'), 'utf8');
+if (!maintenanceSrc.includes('Only aircraft managers can submit grounding squawks')
+  || !maintenanceSrc.includes('getUserPermissions(user.id, user.role)')) {
+  fail('Unprivileged users can submit schedule-blocking grounding squawks');
+} else ok('Grounding squawks require aircraft management permission');
 
 const sourceWrapperSrc = fs.readFileSync(path.join(root, 'db/source-wrapper.js'), 'utf8');
 if (sourceWrapperSrc.includes("return 'production'") || sourceWrapperSrc.includes('Filters are no-ops')) {
@@ -480,6 +493,20 @@ if (!pageViewsSchema.includes("source VARCHAR(20) DEFAULT 'production'")
   || !analyticsDbSrc.includes('AND source = $')) {
   fail('Analytics page views are not source-isolated');
 } else ok('Analytics page views are source-isolated');
+
+const auditStart = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS admin_audit_log');
+const nextCreateAfterAudit = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS', auditStart + 1);
+const auditSchema = auditStart >= 0
+  ? bootstrapSchema.slice(auditStart, nextCreateAfterAudit)
+  : '';
+const historySrc = fs.readFileSync(path.join(root, 'routes', 'booking-history.js'), 'utf8');
+if (!auditSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+  || !schemaPatches.includes('ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS source')
+  || !adminSrc.includes('admin_audit_log (action, performed_by, details, performed_at, source)')
+  || !usersSrc.includes('admin_audit_log (action, performed_by, details, source)')
+  || !historySrc.includes('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1 AND source = $2')) {
+  fail('Admin audit log is not source-isolated');
+} else ok('Admin audit log is source-isolated');
 
 const seedUsersSrc = fs.readFileSync(path.join(root, 'scripts', 'seed-test-users.js'), 'utf8');
 if (!/for \(const user of TEST_USERS\)[\s\S]*await ensureUserSequence\(pool\);[\s\S]*await ensureSampleAircraft/.test(seedUsersSrc)) {

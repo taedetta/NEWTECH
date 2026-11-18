@@ -985,6 +985,11 @@ function testTrainingAndGroundSourceIsolationGuards() {
       && trainingRouteSrc.includes('AND mc.id IS NULL'),
     'manual enrollment stage changes must be locked and may not skip unsigned prerequisite stages'
   );
+  assert(
+    trainingRouteSrc.includes('Enrollment stage cannot move backward without a rollback workflow')
+      && trainingRouteSrc.includes('current_stage_id FROM student_training WHERE id = $1 AND source = $2 FOR UPDATE'),
+    'manual enrollment stage changes must not regress progress while later milestones remain'
+  );
 
   const bootstrapSchema = fs.readFileSync(path.join(__dirname, 'bootstrap-schema.sql'), 'utf8');
   const schemaPatches = fs.readFileSync(path.join(__dirname, 'schema-patches.sql'), 'utf8');
@@ -1040,6 +1045,10 @@ function testDelayedAuditSourceAndMeterGuards() {
       && instructorHoursSrc.includes('SELECT id, tail_number, make_model, hourly_rate FROM aircraft WHERE source = $1 ORDER BY tail_number'),
     'booking create, manual history, and instructor-hours entity lookups must reject cross-source IDs'
   );
+  assert(
+    bookingRoutesSrc.includes('Completed or cancelled booking schedule edits must use the flight history correction workflow.'),
+    'completed/cancelled booking schedule edits must not bypass history sync workflow'
+  );
 
   const aircraftSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'aircraft.js'), 'utf8');
   const documentsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'documents.js'), 'utf8');
@@ -1057,6 +1066,13 @@ function testDelayedAuditSourceAndMeterGuards() {
   const adminSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
   const cmsSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'cms.js'), 'utf8');
   const atRiskSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'at-risk.js'), 'utf8');
+  const maintenanceSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'maintenance.js'), 'utf8');
+  const bootstrapSchema = fs.readFileSync(path.join(__dirname, 'bootstrap-schema.sql'), 'utf8');
+  const schemaPatches = fs.readFileSync(path.join(__dirname, 'schema-patches.sql'), 'utf8');
+  const auditStart = bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS admin_audit_log');
+  const auditSchema = auditStart >= 0
+    ? bootstrapSchema.slice(auditStart, bootstrapSchema.indexOf('CREATE TABLE IF NOT EXISTS', auditStart + 1))
+    : '';
   assert(
     remindersSrc.includes('AND b.source = $3')
       && remindersSrc.includes('WHERE id = $1 AND source = $2')
@@ -1064,6 +1080,19 @@ function testDelayedAuditSourceAndMeterGuards() {
       && cmsSrc.includes('Website content edits are disabled on staging')
       && atRiskSrc.includes("return getAppEnv() === 'staging' ? `${key}:staging` : key;"),
     'reminders, CMS writes, and at-risk thresholds must not cross staging/production data'
+  );
+  assert(
+    maintenanceSrc.includes('Only aircraft managers can submit grounding squawks')
+      && maintenanceSrc.includes('getUserPermissions(user.id, user.role)'),
+    'grounding squawks must require aircraft management permission'
+  );
+  assert(
+    auditSchema.includes("source VARCHAR(20) DEFAULT 'production'")
+      && schemaPatches.includes('ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS source')
+      && adminSrc.includes('admin_audit_log (action, performed_by, details, performed_at, source)')
+      && usersSrc.includes('admin_audit_log (action, performed_by, details, source)')
+      && historySrc.includes('UPDATE admin_audit_log SET booking_id = NULL WHERE booking_id = $1 AND source = $2'),
+    'admin audit log schema and writes must be source-scoped'
   );
 
   const sanitySrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'flight-hour-sanity.js'), 'utf8');
