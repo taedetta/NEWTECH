@@ -2,7 +2,7 @@
 
 const express = require('express');
 const pool = require('../db/index');
-const { authenticateToken, requirePermission } = require('../middleware/auth');
+const { authenticateToken, requirePermission, getUserPermissions } = require('../middleware/auth');
 const { sendEmail } = require('../email-templates');
 const { getAppEnv } = require('../lib/app-env');
 
@@ -11,6 +11,12 @@ const router = express.Router();
 const VALID_SQUAWK_STATUSES = ['open', 'reviewed', 'deferred', 'resolved'];
 const VALID_SQUAWK_SEVERITIES = ['minor', 'major', 'grounding'];
 const VALID_SQUAWK_DOWNTIMES = ['1 day', '2 days', '3 days', '4 days', '5 days', '1 week', '2 weeks', 'Unknown/TBD'];
+
+async function canManageAircraft(user) {
+  if (!user) return false;
+  const permissions = await getUserPermissions(user.id, user.role);
+  return !!permissions.can_manage_aircraft;
+}
 
 router.get('/squawks', authenticateToken, async (req, res) => {
   try {
@@ -44,6 +50,9 @@ router.post('/squawks', authenticateToken, async (req, res) => {
     const aircraft = await pool.query('SELECT id FROM aircraft WHERE id = $1 AND source = $2', [aircraft_id, getAppEnv()]);
     if (aircraft.rows.length === 0) return res.status(400).json({ error: 'Aircraft not found' });
     const validSeverity = VALID_SQUAWK_SEVERITIES.includes(severity) ? severity : 'minor';
+    if (validSeverity === 'grounding' && !(await canManageAircraft(req.user))) {
+      return res.status(403).json({ error: 'Only aircraft managers can submit grounding squawks' });
+    }
     const downtimeValue = (expected_downtime && VALID_SQUAWK_DOWNTIMES.includes(expected_downtime)) ? expected_downtime : null;
     const result = await pool.query(
       `INSERT INTO squawks (aircraft_id, reported_by, description, severity, expected_downtime, source)

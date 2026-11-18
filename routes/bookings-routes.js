@@ -976,6 +976,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const isStaffHistoricalEdit = isHistoricalBooking && (isAdmin || isAssignedInstructor);
     if (!canAccessBooking(req.user, b)) return abortTransaction(403, { error: 'Access denied' });
     const rescheduleRequested = start_time !== undefined || end_time !== undefined || aircraft_id !== undefined;
+    if (isHistoricalBooking && rescheduleRequested) {
+      return abortTransaction(400, {
+        error: 'Completed or cancelled booking schedule edits must use the flight history correction workflow.',
+      });
+    }
     const sid = student_id !== undefined ? normBookingUserId(student_id) : b.student_id;
     const iid = instructor_id !== undefined ? normBookingUserId(instructor_id) : b.instructor_id;
     if (!isAdmin && (sid !== b.student_id || iid !== b.instructor_id)) {
