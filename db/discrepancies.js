@@ -92,8 +92,66 @@ async function recordHobbsReading(bookingId, submittedBy, role, hobbsStart, hobb
                 instructor_hobbs_end   = EXCLUDED.instructor_hobbs_end,
                 instructor_hobbs_delta = EXCLUDED.instructor_hobbs_delta,
                 delta_hours            = EXCLUDED.delta_hours,
-                status                 = CASE WHEN flight_discrepancies.status = 'resolved' THEN 'resolved' ELSE 'pending' END,
-                flagged_at             = CASE WHEN flight_discrepancies.status = 'pending' THEN flight_discrepancies.flagged_at ELSE NOW() END
+                status                 = CASE
+                  WHEN flight_discrepancies.status = 'resolved'
+                    AND flight_discrepancies.student_hobbs_start IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start
+                    AND flight_discrepancies.student_hobbs_end IS NOT DISTINCT FROM EXCLUDED.student_hobbs_end
+                    AND flight_discrepancies.student_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.student_hobbs_delta
+                    AND flight_discrepancies.instructor_hobbs_start IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_start
+                    AND flight_discrepancies.instructor_hobbs_end IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_end
+                    AND flight_discrepancies.instructor_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_delta
+                    AND flight_discrepancies.delta_hours IS NOT DISTINCT FROM EXCLUDED.delta_hours
+                  THEN 'resolved' ELSE 'pending' END,
+                flagged_at             = CASE
+                  WHEN flight_discrepancies.status = 'pending' THEN flight_discrepancies.flagged_at
+                  WHEN flight_discrepancies.student_hobbs_start IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start
+                    AND flight_discrepancies.student_hobbs_end IS NOT DISTINCT FROM EXCLUDED.student_hobbs_end
+                    AND flight_discrepancies.student_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.student_hobbs_delta
+                    AND flight_discrepancies.instructor_hobbs_start IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_start
+                    AND flight_discrepancies.instructor_hobbs_end IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_end
+                    AND flight_discrepancies.instructor_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_delta
+                    AND flight_discrepancies.delta_hours IS NOT DISTINCT FROM EXCLUDED.delta_hours
+                  THEN flight_discrepancies.flagged_at ELSE NOW() END,
+                resolved_by            = CASE
+                  WHEN flight_discrepancies.status = 'resolved'
+                    AND flight_discrepancies.student_hobbs_start IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start
+                    AND flight_discrepancies.student_hobbs_end IS NOT DISTINCT FROM EXCLUDED.student_hobbs_end
+                    AND flight_discrepancies.student_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.student_hobbs_delta
+                    AND flight_discrepancies.instructor_hobbs_start IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_start
+                    AND flight_discrepancies.instructor_hobbs_end IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_end
+                    AND flight_discrepancies.instructor_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_delta
+                    AND flight_discrepancies.delta_hours IS NOT DISTINCT FROM EXCLUDED.delta_hours
+                  THEN flight_discrepancies.resolved_by ELSE NULL END,
+                resolved_at            = CASE
+                  WHEN flight_discrepancies.status = 'resolved'
+                    AND flight_discrepancies.student_hobbs_start IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start
+                    AND flight_discrepancies.student_hobbs_end IS NOT DISTINCT FROM EXCLUDED.student_hobbs_end
+                    AND flight_discrepancies.student_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.student_hobbs_delta
+                    AND flight_discrepancies.instructor_hobbs_start IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_start
+                    AND flight_discrepancies.instructor_hobbs_end IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_end
+                    AND flight_discrepancies.instructor_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_delta
+                    AND flight_discrepancies.delta_hours IS NOT DISTINCT FROM EXCLUDED.delta_hours
+                  THEN flight_discrepancies.resolved_at ELSE NULL END,
+                resolution_reading     = CASE
+                  WHEN flight_discrepancies.status = 'resolved'
+                    AND flight_discrepancies.student_hobbs_start IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start
+                    AND flight_discrepancies.student_hobbs_end IS NOT DISTINCT FROM EXCLUDED.student_hobbs_end
+                    AND flight_discrepancies.student_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.student_hobbs_delta
+                    AND flight_discrepancies.instructor_hobbs_start IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_start
+                    AND flight_discrepancies.instructor_hobbs_end IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_end
+                    AND flight_discrepancies.instructor_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_delta
+                    AND flight_discrepancies.delta_hours IS NOT DISTINCT FROM EXCLUDED.delta_hours
+                  THEN flight_discrepancies.resolution_reading ELSE NULL END,
+                resolution_note        = CASE
+                  WHEN flight_discrepancies.status = 'resolved'
+                    AND flight_discrepancies.student_hobbs_start IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start
+                    AND flight_discrepancies.student_hobbs_end IS NOT DISTINCT FROM EXCLUDED.student_hobbs_end
+                    AND flight_discrepancies.student_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.student_hobbs_delta
+                    AND flight_discrepancies.instructor_hobbs_start IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_start
+                    AND flight_discrepancies.instructor_hobbs_end IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_end
+                    AND flight_discrepancies.instructor_hobbs_delta IS NOT DISTINCT FROM EXCLUDED.instructor_hobbs_delta
+                    AND flight_discrepancies.delta_hours IS NOT DISTINCT FROM EXCLUDED.delta_hours
+                  THEN flight_discrepancies.resolution_note ELSE NULL END
           RETURNING *, (xmax = 0) AS inserted
         `, [
           bookingId,

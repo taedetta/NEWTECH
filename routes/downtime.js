@@ -16,6 +16,7 @@ const {
   findBookingsOverlappingDowntime,
 } = require('../lib/downtime-overlap');
 const { getAppEnv } = require('../lib/app-env');
+const { wallClockToUtc } = require('../lib/school-timezone');
 
 const router = express.Router();
 
@@ -146,8 +147,8 @@ router.get('/check', authenticateToken, async (req, res) => {
       if (hit) return res.json({ unavailable: true, downtime: normalizeDowntimeRow(hit), label: formatDowntimeLabel(hit) });
       return res.json({ unavailable: false });
     }
-    const bookingStart = new Date(`${dateStr}T${timeToHHMM(start_time) || '00:00'}:00`);
-    const bookingEnd = new Date(`${dateStr}T${timeToHHMM(end_time) || '23:59'}:00`);
+    const bookingStart = wallClockToUtc(dateStr, timeToHHMM(start_time) || '00:00');
+    const bookingEnd = wallClockToUtc(dateStr, timeToHHMM(end_time) || '23:59');
     const hit = rows.find((r) => downtimeOverlapsBooking(r, bookingStart, bookingEnd));
     if (hit) return res.json({ unavailable: true, downtime: normalizeDowntimeRow(hit), label: formatDowntimeLabel(hit) });
     return res.json({ unavailable: false });
