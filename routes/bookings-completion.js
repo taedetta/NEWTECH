@@ -11,7 +11,7 @@ const { recordHobbsReading } = require('../db/discrepancies');
 const { flightCompletedEmail } = require('../email-templates');
 const { sendEmailToUser, EMAIL_TYPES } = require('../lib/notification-prefs');
 const { syncInstructorHoursFromFlight } = require('../lib/sync-instructor-hours');
-const { computeFlightCharges } = require('../lib/flight-charges');
+const { computeFlightCharges, defaultDualInstructionHours } = require('../lib/flight-charges');
 const { syncFlightRecord } = require('../lib/sync-flight-record');
 const { getMeterHobbs, getMeterTach, applyAircraftMeterReadings } = require('../lib/aircraft-meter');
 const { parseStrictNumber } = require('../lib/strict-number');
@@ -350,7 +350,11 @@ router.patch('/:id/complete', authenticateToken, async (req, res) => {
     const tachFlown = (tStart != null && tEnd != null) ? parseFloat((tEnd - tStart).toFixed(2)) : null;
     const dualHrs = (dual_instruction_hours != null)
       ? parseStrictNumber(dual_instruction_hours, 'dual_instruction_hours').value
-      : 0;
+      : defaultDualInstructionHours({
+          bookingType: b.booking_type,
+          lessonType: b.lesson_type,
+          hobbsDelta: hobbsFlown,
+        });
     const flight_date = new Date(b.start_time).toISOString().slice(0, 10);
     // Flight type flags from post-flight wizard
     const nightFlag = !!is_night;

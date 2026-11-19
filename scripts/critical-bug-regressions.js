@@ -32,6 +32,9 @@ const { shouldRunUpdateConflictCheck } = require('../routes/bookings-routes');
 const { instructorHourRatesForUpdate } = require('../routes/instructor-hours');
 const { parseStrictNumber, parsePositiveNumber } = require('../lib/strict-number');
 const { getAppEnv } = require('../lib/app-env');
+const { wallClockToUtc } = require('../lib/school-timezone');
+const { downtimeOverlapsBooking, downtimeBounds } = require('../lib/downtime-overlap');
+const { defaultDualInstructionHours } = require('../lib/flight-charges');
 const {
   applyAircraftMeterReadings,
   reconcileAircraftMeterForFlightEdit,
@@ -77,6 +80,60 @@ function testBookingDateShift() {
   const shifted = shiftBookingTimesToFlightDate(booking, '2026-08-03');
   assert.strictEqual(shifted.startTime.toISOString(), '2026-08-03T18:30:00.000Z');
   assert.strictEqual(shifted.endTime.toISOString(), '2026-08-03T20:00:00.000Z');
+
+  const winterToSummer = shiftBookingTimesToFlightDate({
+    start_time: '2026-12-10T15:30:00.000Z', // 10:30 ET
+    end_time: '2026-12-10T17:00:00.000Z',
+  }, '2026-07-10');
+  assert.strictEqual(winterToSummer.startTime.toISOString(), '2026-07-10T14:30:00.000Z');
+  assert.strictEqual(winterToSummer.endTime.toISOString(), '2026-07-10T16:00:00.000Z');
+}
+
+function testDowntimeUsesSchoolTimezone() {
+  const downtime = {
+    start_date: '2026-12-10',
+    end_date: '2026-12-10',
+    start_time: '10:00',
+    end_time: '11:00',
+    all_day: false,
+  };
+  const bounds = downtimeBounds(downtime);
+  assert.strictEqual(bounds.start.toISOString(), '2026-12-10T15:00:00.000Z');
+  assert.strictEqual(bounds.end.toISOString(), '2026-12-10T16:00:00.000Z');
+  assert.strictEqual(
+    downtimeOverlapsBooking(
+      downtime,
+      wallClockToUtc('2026-12-10', '10:15').toISOString(),
+      wallClockToUtc('2026-12-10', '10:55').toISOString()
+    ),
+    true
+  );
+  assert.strictEqual(
+    downtimeOverlapsBooking(
+      downtime,
+      wallClockToUtc('2026-12-10', '12:00').toISOString(),
+      wallClockToUtc('2026-12-10', '12:45').toISOString()
+    ),
+    false
+  );
+}
+
+function testDualInstructionDefaults() {
+  assert.strictEqual(defaultDualInstructionHours({
+    bookingType: 'dual',
+    lessonType: 'Dual Instruction',
+    hobbsDelta: 1.3,
+  }), 1.3);
+  assert.strictEqual(defaultDualInstructionHours({
+    bookingType: 'student_solo',
+    lessonType: 'Solo',
+    hobbsDelta: 1.3,
+  }), 0);
+  assert.strictEqual(defaultDualInstructionHours({
+    bookingType: 'dual',
+    lessonType: 'Discovery Flight',
+    hobbsDelta: 0.4,
+  }), 0);
 }
 
 function testBookingConflictDecision() {
@@ -732,12 +789,14 @@ function testSubagentFollowUpGuards() {
   const downtimeSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'downtime.js'), 'utf8');
   assert(
     !downtimeSrc.includes("UPDATE aircraft SET status = 'available'")
+      && downtimeSrc.includes("const { wallClockToUtc } = require('../lib/school-timezone')")
+      && downtimeSrc.includes("const bookingStart = wallClockToUtc(dateStr, timeToHHMM(start_time) || '00:00')")
       && downtimeSrc.includes('SELECT id FROM aircraft WHERE id = $1 AND source = $2')
       && downtimeSrc.includes('(aircraft_id, start_date, end_date, start_time, end_time, all_day, reason, created_by, source)')
       && downtimeSrc.includes('WHERE d.source = $1')
       && downtimeSrc.includes('INSERT INTO squawks (aircraft_id, description, severity, status, expected_downtime, reported_by, source)')
       && downtimeSrc.includes('formatDowntimeLabel(result.rows[0]), req.user.id, getAppEnv()'),
-    'downtime creation must not clear maintenance status and downtime reads/writes/squawks must be source-scoped'
+    'downtime creation/checks must preserve maintenance state, use school-time windows, and source-scope reads/writes/squawks'
   );
 
   const maintenanceSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'maintenance.js'), 'utf8');
@@ -775,6 +834,13 @@ function testSubagentFollowUpGuards() {
       && !discrepanciesSrc.includes('syncPatch.aircraft_charge_amount')
       && !discrepanciesSrc.includes('syncPatch.instruction_charge_amount'),
     'discrepancy resolution must recompute charges from the selected Hobbs reading'
+  );
+  assert(
+    discrepanciesSrc.includes('IS NOT DISTINCT FROM EXCLUDED.student_hobbs_start')
+      && discrepanciesSrc.includes("THEN 'resolved' ELSE 'pending' END")
+      && discrepanciesSrc.includes('resolved_by            = CASE')
+      && discrepanciesSrc.includes('THEN flight_discrepancies.resolution_note ELSE NULL END'),
+    'changed readings on a resolved Hobbs discrepancy must reopen it and clear stale resolution metadata'
   );
 
   const historySrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'booking-history.js'), 'utf8');
@@ -1478,6 +1544,8 @@ async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
   testBookingDateShift();
+  testDowntimeUsesSchoolTimezone();
+  testDualInstructionDefaults();
   testBookingConflictDecision();
   testInstructorRatePreservation();
   testStrictNumberValidation();
