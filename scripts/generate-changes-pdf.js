@@ -215,7 +215,7 @@ bullet([
   'Update aircraft annual dates in Fleet when real inspections are done.',
   'Verify BREVO_API_KEY / SMTP settings if manual "Email Full Data Backup" fails.',
   'Re-run QA anytime: node scripts/full-role-qa-loop.js --base https://www.newtechaviation.com',
-  'Owner login: evaughntaemw@gmail.com · QA admin: qa-admin@test.local / TestPass123!',
+  'QA credentials must be provided through environment variables or seeded test accounts.',
 ]);
 
 doc.moveDown(1);

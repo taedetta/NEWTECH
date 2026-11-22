@@ -1039,6 +1039,10 @@
       background: #B45309;
       transform: translateY(-1px);
     }
+    .journey-captcha {
+      margin: 0.5rem 0 0.75rem;
+      min-height: 65px;
+    }
     .journey-form-note {
       margin-top: 0.75rem;
       font-size: 0.75rem;
@@ -1062,6 +1066,8 @@
       transform: translateY(0);
     }
   </style>
+  <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin>
+  <script src="/js/captcha.js"></script>
 </head>
 <body>
 
@@ -1171,8 +1177,9 @@
             <input type="email" name="email" placeholder="Email address" class="journey-input" required>
           </div>
           <div class="journey-form-row full">
-            <input type="tel" name="phone" placeholder="Phone (optional)" class="journey-input">
+            <input type="tel" name="phone" placeholder="Phone number" class="journey-input" required>
           </div>
+          <div id="journey-captcha" class="journey-captcha"></div>
           <button type="submit" class="journey-submit">Send Me Info — No Commitment</button>
           <p class="journey-form-note">We'll reply within 1 business day.</p>
         </form>
@@ -1592,16 +1599,40 @@
     });
   });
 
+  if (window.FSCaptcha) {
+    FSCaptcha.init().then(function () {
+      if (FSCaptcha.isEnabled()) FSCaptcha.mount('journey-captcha');
+    });
+  }
+
   // Journey form handler
-  function handleJourneyForm(e) {
+  async function handleJourneyForm(e) {
     e.preventDefault();
     const form = e.target;
     const btn = form.querySelector('.journey-submit');
     const formData = new FormData(form);
     const data = Object.fromEntries(formData.entries());
 
+    if (!data.phone || !data.phone.trim()) {
+      btn.textContent = 'Phone required';
+      btn.disabled = false;
+      return;
+    }
+
     btn.textContent = 'Sending…';
     btn.disabled = true;
+
+    let captchaToken = null;
+    try {
+      if (window.FSCaptcha) {
+        await FSCaptcha.init();
+        if (FSCaptcha.isEnabled()) captchaToken = await FSCaptcha.requireToken('journey-captcha');
+      }
+    } catch (captchaErr) {
+      btn.textContent = captchaErr.message || 'Complete security check';
+      btn.disabled = false;
+      return;
+    }
 
     fetch('/api/leads', {
       method: 'POST',
@@ -1609,9 +1640,10 @@
       body: JSON.stringify({
         name: data.firstName + ' ' + data.lastName,
         email: data.email,
-        phone: data.phone || '',
+        phone: data.phone.trim(),
         experience: 'beginner',
-        source: 'become-a-pilot-cta'
+        source: 'become-a-pilot-cta',
+        captchaToken: captchaToken
       })
     })
     .then(res => {
@@ -1619,14 +1651,17 @@
         btn.textContent = '✓ Sent!';
         btn.style.background = '#059669';
         form.innerHTML = '<p style="text-align:center;color:#0B1929;font-weight:700;font-size:1rem;padding:1.5rem;">Thanks — we will be in touch within 1 business day.</p>';
-      } else {
-        throw new Error('Failed');
+        return null;
       }
+      return res.json().catch(() => ({})).then(data => {
+        throw new Error(data.error || 'Failed');
+      });
     })
-    .catch(() => {
-      btn.textContent = 'Try again';
+    .catch((err) => {
+      btn.textContent = err.message && err.message !== 'Failed' ? err.message : 'Try again';
       btn.disabled = false;
       btn.style.background = '';
+      if (window.FSCaptcha) FSCaptcha.reset('journey-captcha');
     });
   }
 

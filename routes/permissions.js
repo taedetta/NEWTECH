@@ -3,6 +3,7 @@
 const express = require('express');
 const pool = require('../db/index');
 const { authenticateToken, getUserPermissions } = require('../middleware/auth');
+const { getAppEnv } = require('../lib/app-env');
 
 const router = express.Router();
 
@@ -24,9 +25,11 @@ router.get('/', authenticateToken, async (req, res) => {
         COALESCE(ip.can_edit_website, false) as can_edit_website
       FROM users u
       LEFT JOIN user_permissions ip ON ip.user_id = u.id
-      WHERE u.role IN ('instructor', 'admin') OR u.is_instructor = true
+      WHERE (u.role IN ('instructor', 'admin') OR u.is_instructor = true)
+        AND u.deleted_at IS NULL
+        AND u.source = $1
       ORDER BY u.name
-    `);
+    `, [getAppEnv()]);
     res.json(result.rows);
   } catch (err) {
     console.error('Permissions list error:', err);
@@ -44,7 +47,17 @@ router.patch('/:userId', authenticateToken, async (req, res) => {
       }
     }
     const targetId = parseInt(req.params.userId);
-    const target = await pool.query('SELECT role FROM users WHERE id = $1', [targetId]);
+    const requesterIsOwnerOrAdmin = ['owner', 'admin'].includes(req.user.role);
+    if (!requesterIsOwnerOrAdmin && targetId === req.user.id) {
+      return res.status(403).json({ error: 'You cannot modify your own permissions' });
+    }
+    if (!requesterIsOwnerOrAdmin && req.body.can_edit_website !== undefined) {
+      return res.status(403).json({ error: 'Only owners and admins can grant website editor access' });
+    }
+    const target = await pool.query(
+      'SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND source = $2',
+      [targetId, getAppEnv()]
+    );
     if (target.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (target.rows[0].role === 'owner') {
       return res.status(403).json({ error: 'Cannot modify owner permissions' });
