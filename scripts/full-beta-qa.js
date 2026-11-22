@@ -19,8 +19,12 @@ const PASS = process.env.TEST_USER_PASSWORD || 'TestPass123!';
 const ADMIN_PASS = process.env.ADMIN_PASSWORD || 'Frbaga12$$!!';
 
 process.env.DATABASE_URL = process.env.DATABASE_URL
-  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null)
-  || 'postgresql://postgres:cxrFQ1P3ZoQgtNWCIQn_c1a4sQIkaPij@shortline.proxy.rlwy.net:26871/railway';
+  || (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').match(/DATABASE_URL=(.+)/)?.[1]?.trim() : null);
+
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required for full-beta-qa because this suite mutates database records.');
+  process.exit(1);
+}
 
 const failures = [];
 const ok = (name, cond, detail = '') => {

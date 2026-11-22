@@ -66,9 +66,9 @@ function normBookingUserId(v) {
   return Number.isNaN(n) ? null : n;
 }
 
-/** Who may view/update/cancel a booking (staff or assigned participant). */
+/** Who may update/cancel a booking (schedulers/admins or assigned participant). */
 function canAccessBooking(user, booking) {
-  if (['owner', 'admin', 'maintenance'].includes(user.role)) return true;
+  if (['owner', 'admin'].includes(user.role)) return true;
   return user.id === booking.instructor_id || user.id === booking.student_id;
 }
 
@@ -693,6 +693,9 @@ async function createBookingInternal(client, req) {
 router.post('/', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
+    if (req.user.role === 'maintenance') {
+      return res.status(403).json({ error: 'Maintenance users cannot create bookings' });
+    }
     const { student_id, instructor_id, aircraft_id, start_time, end_time, lesson_type, notes, local_date, local_start, local_end } = req.body;
     let sid = student_id ? parseInt(student_id) : null;
     const iid = instructor_id ? parseInt(instructor_id) : null;

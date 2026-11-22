@@ -85,6 +85,39 @@ if (!appHtml.includes("'instructor-schedules': 'Instructor Availability'")) {
   fail('MOBILE_PAGE_TITLES missing instructor-schedules');
 } else ok('Mobile title for instructor-schedules');
 
+console.log('\n=== Booking write permissions ===');
+const bookingsSrc = fs.readFileSync(path.join(root, 'routes/bookings-routes.js'), 'utf8');
+const accessFn = bookingsSrc.match(/function canAccessBooking\(user, booking\) \{[\s\S]*?\n\}/)?.[0] || '';
+if (/maintenance/.test(accessFn)) {
+  fail('Maintenance role can update/cancel arbitrary bookings');
+} else ok('Maintenance excluded from booking update/cancel access helper');
+
+if (!bookingsSrc.includes("req.user.role === 'maintenance'") || !bookingsSrc.includes('Maintenance users cannot create bookings')) {
+  fail('Maintenance role missing explicit booking create guard');
+} else ok('Maintenance blocked from booking creation');
+
+console.log('\n=== Sensitive role gates ===');
+const billingSrc = fs.readFileSync(path.join(root, 'routes/billing.js'), 'utf8');
+if (!billingSrc.includes("['owner', 'admin', 'instructor'].includes(req.user.role)")) {
+  fail('Billing summary missing owner/admin/instructor role gate');
+} else ok('Billing summary role gate present');
+if (!billingSrc.includes("['owner', 'admin', 'instructor', 'student', 'renter'].includes(req.user.role)")) {
+  fail('Billing detail missing explicit allowed-role gate');
+} else ok('Billing detail role gate present');
+
+const usersSrc = fs.readFileSync(path.join(root, 'routes/users.js'), 'utf8');
+if (!usersSrc.includes("requesterRole === 'maintenance'")) {
+  fail('Users list missing maintenance access denial');
+} else ok('Maintenance blocked from users list');
+
+const trainingSrc = fs.readFileSync(path.join(root, 'routes/training.js'), 'utf8');
+if (!trainingSrc.includes('TRAINING_STAFF_ROLES') || !trainingSrc.includes('canViewStudentTraining')) {
+  fail('Training routes missing shared role helpers');
+} else ok('Training role helpers present');
+if (!trainingSrc.includes('Only instructors can update progress') || !trainingSrc.includes('Only instructors can create debriefs')) {
+  fail('Training write endpoints missing staff-only guards');
+} else ok('Training write guards present');
+
 console.log('\n=== Summary ===');
 if (failures.length === 0) {
   console.log('All static checks passed.');
