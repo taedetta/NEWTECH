@@ -39,16 +39,33 @@ const {
 } = require('../lib/aircraft-meter');
 
 function testRequiredEmailPreferences() {
-  assert.strictEqual(isRequiredEmailType(EMAIL_TYPES.password_reset), true);
-  assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(EMAIL_TYPES.password_reset), false);
-  assert.strictEqual(rowToPrefs({ password_reset: false }).password_reset, true);
+  const requiredTypes = [
+    EMAIL_TYPES.password_reset,
+    EMAIL_TYPES.account_approved,
+    EMAIL_TYPES.account_rejected,
+    EMAIL_TYPES.signup_pending,
+    EMAIL_TYPES.account_invite,
+    EMAIL_TYPES.profile_change,
+    EMAIL_TYPES.welcome,
+  ];
+  for (const requiredType of requiredTypes) {
+    assert.strictEqual(isRequiredEmailType(requiredType), true);
+    assert.strictEqual(WRITABLE_PREF_COLUMNS.includes(requiredType), false);
+    assert.strictEqual(rowToPrefs({ [requiredType]: false })[requiredType], true);
+  }
 
   const catalogTypes = getPreferenceCatalog('student', false).flatMap((category) => category.types.map((type) => type.key));
-  assert.strictEqual(catalogTypes.includes(EMAIL_TYPES.password_reset), false);
+  for (const requiredType of requiredTypes) {
+    assert.strictEqual(catalogTypes.includes(requiredType), false);
+  }
 
   const email = appendUnsubscribeFooter('<p>Reset</p>', 'Reset', 42, EMAIL_TYPES.password_reset);
   assert.strictEqual(email.html, '<p>Reset</p>');
   assert.strictEqual(email.text, 'Reset');
+
+  const textOnly = appendUnsubscribeFooter(null, 'Endorsement expiring', 42, EMAIL_TYPES.endorsement_expiry);
+  assert.strictEqual(textOnly.html, null);
+  assert(textOnly.text.includes('Unsubscribe from Endorsement expiry alerts'));
 }
 
 function testUnsubscribeTokenScope() {
@@ -59,11 +76,20 @@ function testUnsubscribeTokenScope() {
   });
 
   assert.throws(() => signUnsubscribeToken(42, EMAIL_TYPES.password_reset), /Invalid unsubscribe type/);
+  assert.throws(() => signUnsubscribeToken(42, EMAIL_TYPES.profile_change), /Invalid unsubscribe type/);
 
   const url = new URL(buildUnsubscribeUrl(42, EMAIL_TYPES.booking_cancelled));
   const verified = verifyUnsubscribeToken(url.searchParams.get('token'));
   assert.strictEqual(url.searchParams.get('type'), EMAIL_TYPES.booking_cancelled);
   assert.strictEqual(verified.type, EMAIL_TYPES.booking_cancelled);
+}
+
+function testLegacyCfiProfileMountOrder() {
+  const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const endorsementsMount = serverSrc.indexOf("app.use('/api/users/me', endorsementsRoutes)");
+  const profileMount = serverSrc.indexOf("app.use('/api/users/me', profileRoutes)");
+  assert(endorsementsMount >= 0 && profileMount >= 0, 'legacy CFI/profile mounts must exist');
+  assert(endorsementsMount < profileMount, 'CFI profile route must mount before profile catch-all');
 }
 
 function testBookingDateShift() {
@@ -1477,6 +1503,7 @@ function testAnalyticsSourceIsolationGuards() {
 async function main() {
   testRequiredEmailPreferences();
   testUnsubscribeTokenScope();
+  testLegacyCfiProfileMountOrder();
   testBookingDateShift();
   testBookingConflictDecision();
   testInstructorRatePreservation();
