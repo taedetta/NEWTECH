@@ -219,7 +219,8 @@ router.patch('/email-preferences', authenticateToken, async (req, res) => {
   }
 });
 
-router.use((req, res) => {
+router.use((req, res, next) => {
+  if (req.path === '/cfi-profile') return next('router');
   res.status(404).json({ error: 'Not found' });
 });
 
