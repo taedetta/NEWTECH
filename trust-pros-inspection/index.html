@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inspection Passed — Trust Pros Automotive</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --navy: #0b1f33;
+        --navy-2: #14324d;
+        --green: #1b7a4e;
+        --green-soft: #e7f4ec;
+        --steel: #4a6278;
+        --ink: #1a2330;
+        --paper: #f3f6f8;
+        --line: #d5dee6;
+        --white: #ffffff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Source Sans 3", system-ui, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 500px at 10% -10%, #1a3b57 0%, transparent 55%),
+          radial-gradient(900px 420px at 100% 0%, #174a35 0%, transparent 45%),
+          linear-gradient(165deg, #0b1f33 0%, #102838 42%, #0e2a22 100%);
+      }
+
+      .wrap {
+        width: min(920px, calc(100% - 2rem));
+        margin: 0 auto;
+        padding: 2.5rem 0 3.5rem;
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.75rem;
+        color: #d7e4ef;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-family: "Barlow Condensed", sans-serif;
+        font-size: clamp(1.8rem, 4vw, 2.4rem);
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--white);
+      }
+
+      .brand p {
+        margin: 0.2rem 0 0;
+        font-size: 0.92rem;
+        color: #9eb4c6;
+      }
+
+      .meta-tag {
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #8fa8bb;
+        white-space: nowrap;
+      }
+
+      .panel {
+        background: var(--paper);
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      .pass-banner {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1.25rem 1.5rem;
+        background: linear-gradient(90deg, #16653f, #1b7a4e 55%, #218a59);
+        color: var(--white);
+      }
+
+      .pass-pill {
+        flex: 0 0 auto;
+        background: rgba(255, 255, 255, 0.16);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 8px;
+        padding: 0.55rem 0.9rem;
+        font-family: "Barlow Condensed", sans-serif;
+        font-size: 1.35rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+      }
+
+      .pass-banner h2 {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+
+      .pass-banner p {
+        margin: 0.2rem 0 0;
+        font-size: 0.92rem;
+        opacity: 0.92;
+      }
+
+      .content {
+        padding: 1.5rem;
+      }
+
+      .vehicle {
+        display: grid;
+        grid-template-columns: 1.3fr 1fr;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      @media (max-width: 720px) {
+        .vehicle {
+          grid-template-columns: 1fr;
+        }
+        .brand {
+          flex-direction: column;
+        }
+      }
+
+      .cardish {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 1rem 1.1rem;
+      }
+
+      .cardish h3 {
+        margin: 0 0 0.75rem;
+        font-family: "Barlow Condensed", sans-serif;
+        font-size: 1.05rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--navy);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem 1rem;
+      }
+
+      .field span {
+        display: block;
+        font-size: 0.7rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--steel);
+      }
+
+      .field strong {
+        display: block;
+        margin-top: 0.15rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--navy);
+      }
+
+      .checklist {
+        margin-top: 0.25rem;
+      }
+
+      .checklist ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.35rem 1rem;
+      }
+
+      @media (max-width: 640px) {
+        .grid,
+        .checklist ul {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .checklist li {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.45rem;
+        font-size: 0.9rem;
+        color: var(--ink);
+      }
+
+      .check {
+        flex: 0 0 auto;
+        width: 1rem;
+        height: 1rem;
+        margin-top: 0.15rem;
+        border-radius: 3px;
+        background: var(--green);
+        position: relative;
+      }
+
+      .check::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 1px;
+        width: 4px;
+        height: 7px;
+        border: solid #fff;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1.35rem;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        min-height: 46px;
+        padding: 0.7rem 1.15rem;
+        border-radius: 10px;
+        border: none;
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+
+      .btn-primary {
+        background: var(--navy);
+        color: var(--white);
+      }
+
+      .btn-primary:hover {
+        background: var(--navy-2);
+      }
+
+      .btn-secondary {
+        background: var(--white);
+        color: var(--navy);
+        border: 1px solid var(--line);
+      }
+
+      .note {
+        margin-top: 1rem;
+        font-size: 0.82rem;
+        color: var(--steel);
+        line-height: 1.45;
+      }
+
+      .footer {
+        margin-top: 1.25rem;
+        text-align: center;
+        color: #8fa8bb;
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="brand">
+        <div>
+          <h1>Trust Pros Automotive</h1>
+          <p>Mobile mechanic · Uber / Lyft / Virginia vehicle inspections</p>
+        </div>
+        <div class="meta-tag">Report TPA-2026-1126-918</div>
+      </header>
+
+      <main class="panel">
+        <div class="pass-banner">
+          <div class="pass-pill">PASS</div>
+          <div>
+            <h2>2023 Tesla Model Y — inspection complete</h2>
+            <p>
+              All checklist items satisfactory · Inspected November 26, 2026 ·
+              Radford, VA
+            </p>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="vehicle">
+            <section class="cardish">
+              <h3>Vehicle</h3>
+              <div class="grid">
+                <div class="field">
+                  <span>Year / Make / Model</span>
+                  <strong>2023 Tesla Model Y</strong>
+                </div>
+                <div class="field">
+                  <span>Color / Body</span>
+                  <strong>Blue · 4D SDN</strong>
+                </div>
+                <div class="field">
+                  <span>VIN</span>
+                  <strong>7SAYGDEE7PF804918</strong>
+                </div>
+                <div class="field">
+                  <span>Plate</span>
+                  <strong>SSN8761 (PAVL)</strong>
+                </div>
+                <div class="field">
+                  <span>Fuel</span>
+                  <strong>Electric · Private use</strong>
+                </div>
+                <div class="field">
+                  <span>Odometer (titling)</span>
+                  <strong>116,444 actual</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="cardish">
+              <h3>Inspection</h3>
+              <div class="grid">
+                <div class="field">
+                  <span>Result</span>
+                  <strong style="color: var(--green)">PASSED</strong>
+                </div>
+                <div class="field">
+                  <span>Date</span>
+                  <strong>11/26/2026</strong>
+                </div>
+                <div class="field">
+                  <span>Owner</span>
+                  <strong>Evaughntae Malik White</strong>
+                </div>
+                <div class="field">
+                  <span>Locality</span>
+                  <strong>Radford, VA</strong>
+                </div>
+                <div class="field">
+                  <span>Company</span>
+                  <strong>Trust Pros Automotive</strong>
+                </div>
+                <div class="field">
+                  <span>Reg. expires</span>
+                  <strong>11/30/2027</strong>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="cardish checklist">
+            <h3>Checklist — all items good</h3>
+            <ul>
+              <li><span class="check" aria-hidden="true"></span>Headlights (high / low)</li>
+              <li><span class="check" aria-hidden="true"></span>Service &amp; parking brakes</li>
+              <li><span class="check" aria-hidden="true"></span>Turn signals &amp; hazards</li>
+              <li><span class="check" aria-hidden="true"></span>Tires, wheels &amp; lug nuts</li>
+              <li><span class="check" aria-hidden="true"></span>Brake / tail / reverse lights</li>
+              <li><span class="check" aria-hidden="true"></span>Steering &amp; suspension</li>
+              <li><span class="check" aria-hidden="true"></span>Horn</li>
+              <li><span class="check" aria-hidden="true"></span>No unsafe fluid leaks</li>
+              <li><span class="check" aria-hidden="true"></span>Windshield, wipers &amp; washers</li>
+              <li><span class="check" aria-hidden="true"></span>12V / EV systems OK</li>
+              <li><span class="check" aria-hidden="true"></span>Mirrors &amp; windows</li>
+              <li><span class="check" aria-hidden="true"></span>Charge port path clear</li>
+              <li><span class="check" aria-hidden="true"></span>Seat belts &amp; airbag lamp</li>
+              <li><span class="check" aria-hidden="true"></span>Body — no sharp hazards</li>
+              <li><span class="check" aria-hidden="true"></span>Dash warnings clear</li>
+              <li><span class="check" aria-hidden="true"></span>Plate &amp; registration present</li>
+            </ul>
+          </section>
+
+          <div class="actions">
+            <a
+              class="btn btn-primary"
+              href="./Trust-Pros-Automotive-Inspection-Report.pdf"
+              download="Trust-Pros-Automotive-Inspection-Report-7SAYGDEE7PF804918.pdf"
+            >
+              Download PDF report
+            </a>
+            <a
+              class="btn btn-secondary"
+              href="./Trust-Pros-Automotive-Inspection-Report.pdf"
+              target="_blank"
+              rel="noopener"
+            >
+              Open PDF in browser
+            </a>
+          </div>
+
+          <p class="note">
+            Temporary download page for Trust Pros Automotive report
+            TPA-2026-1126-918. This document certifies that the vehicle passed
+            the listed safety/compliance checklist for rideshare and
+            Virginia-related documentation.
+          </p>
+        </div>
+      </main>
+
+      <p class="footer">
+        Trust Pros Automotive · Mobile vehicle inspections · Generated
+        11/26/2026 (America/New_York)
+      </p>
+    </div>
+  </body>
+</html>
