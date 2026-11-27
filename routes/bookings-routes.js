@@ -171,6 +171,9 @@ router.get('/history', authenticateToken, async (req, res) => {
     if (req.user.role === 'student' || req.user.role === 'renter') {
       query += ` AND b.student_id = $${paramIdx++}`;
       params.push(req.user.id);
+    } else if (req.user.role === 'instructor') {
+      query += ` AND b.instructor_id = $${paramIdx++}`;
+      params.push(req.user.id);
     }
     query += ' ORDER BY b.start_time DESC';
     const result = await pool.query(query, params);
@@ -713,6 +716,10 @@ router.post('/', authenticateToken, async (req, res) => {
     if (durationHrs > MAX_BOOKING_DURATION_HOURS) return res.status(400).json({ error: `Booking cannot exceed ${MAX_BOOKING_DURATION_HOURS} hours` });
     const policy = await getPolicySettings();
     const isAdmin = ['owner', 'admin'].includes(req.user.role);
+    const forceBooking = req.body.force_booking === true || req.body.force_booking === 'true';
+    if (forceBooking && !isAdmin) {
+      return res.status(403).json({ error: 'Only owners and admins can force instructor availability overrides' });
+    }
     const timeCheck = validateBookingTimes({ start, end, local_start, local_end, policy, userRole: req.user.role, isAdmin, lesson_type });
     if (timeCheck.errors.length) return res.status(400).json({ error: timeCheck.errors[0], errors: timeCheck.errors });
 
@@ -767,7 +774,7 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'Scheduling conflict', conflicts });
     }
     const selfService = ['student', 'renter', 'instructor'].includes(req.user.role);
-    if (iid && req.body.force_booking !== true && req.body.force_booking !== 'true') {
+    if (iid && !forceBooking) {
       const localOpts = (local_date && local_start && local_end) ? { localDate: local_date, localStart: local_start, localEnd: local_end } : {};
       const availCheck = await isInstructorAvailable(client, iid, start_time, end_time, localOpts);
       if (!availCheck.available) {

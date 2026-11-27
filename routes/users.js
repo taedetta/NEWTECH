@@ -386,6 +386,10 @@ router.patch('/:id/role', authenticateToken, async (req, res) => {
     if (!role || !validRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role. Must be one of: ' + validRoles.join(', ') });
     }
+    const requesterRole = requester.rows[0].role;
+    if (role === 'owner' && requesterRole !== 'owner') {
+      return res.status(403).json({ error: 'Only owners can grant owner role' });
+    }
     const targetResult = await pool.query(
       'SELECT id, role, name, email FROM users WHERE id = $1 AND deleted_at IS NULL', [targetId]
     );

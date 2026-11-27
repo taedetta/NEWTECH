@@ -171,11 +171,29 @@ router.patch('/:id/hobbs', authenticateToken, async (req, res) => {
     let idx = 1;
     if (hobbs != null) {
       const hVal = parseFloat(hobbs);
+      if (!Number.isFinite(hVal) || hVal < 0 || hVal > 99999) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'hobbs must be a valid non-negative number' });
+      }
+      const currentHobbs = getMeterHobbs(acRow);
+      if (currentHobbs != null && hVal < currentHobbs - 0.1 && !['owner', 'admin'].includes(req.user.role)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `hobbs cannot be less than current reading (${currentHobbs.toFixed(1)})` });
+      }
       sets.push(`total_hobbs_hours = $${idx++}`, `current_hobbs = $${idx++}`);
       vals.push(hVal, hVal);
     }
     if (tach != null) {
       const tVal = parseFloat(tach);
+      if (!Number.isFinite(tVal) || tVal < 0 || tVal > 99999) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'tach must be a valid non-negative number' });
+      }
+      const currentTach = getMeterTach(acRow);
+      if (currentTach != null && tVal < currentTach - 0.1 && !['owner', 'admin'].includes(req.user.role)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `tach cannot be less than current reading (${currentTach.toFixed(1)})` });
+      }
       sets.push(`total_tach_hours = $${idx++}`, `current_tach = $${idx++}`);
       vals.push(tVal, tVal);
     }
